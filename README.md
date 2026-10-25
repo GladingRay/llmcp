@@ -17,6 +17,12 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 - 模型：`/Users/guorui/Work/models/qwen3.5-4b`
 - 主体语言：C++17；Python 仅用于参考实现和脚本
 
+## 环境
+
+- LLVM/MLIR 20.1.8（Homebrew `llvm@20`）
+- Python：`/Users/guorui/Work/models/venv314`（Python 3.14.8，`torch 2.14.1`，`transformers 5.20.2`）
+- 第三方依赖清单、用途与安装命令见 [设计文档 4.3 节](docs/design.md#43-依赖清单与用途)
+
 ## 文档
 
 - [技术路线与架构设计](docs/design.md)：分层架构、方言设计、pass pipeline、内核、运行时、里程碑、风险、ADR

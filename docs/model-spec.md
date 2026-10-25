@@ -486,7 +486,7 @@ mtp.*
 ### 12.3 Golden 数据
 
 - 固定 8 组 prompt（中文、英文、代码、长上下文、特殊 token、空 prompt、重复 token、多轮对话）。
-- 用 `transformers`（main 分支，含 `qwen3_5`）在 CPU 上以 `attn_implementation="eager"`、`torch_dtype=bfloat16` 跑参考。
+- 用 `transformers 5.20.2`（PyPI 版已含 `qwen3_5`）在 CPU 上以 `attn_implementation="eager"`、`dtype=torch.bfloat16` 跑参考；环境为 `/Users/guorui/Work/models/venv314`。
 - 通过 forward hook 导出每层输入/输出、q/k/v、attention 输出、mlp 输出、logits；只保存选定位置（例如首 token、末 token、中间 token）以控制体积。
 - 测试数据不入库；用脚本重新生成，记录模型 hash、transformers commit、prompt hash。
 

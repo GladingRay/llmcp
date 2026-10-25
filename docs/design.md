@@ -359,7 +359,8 @@ llmcp/
 │   ├── tools/
 │   │   ├── gen_unicode_tables.py      # 生成 Unicode 分类表
 │   │   └── inspect_model.py           # 打印配置/张量/参数量
-│   └── requirements.txt
+│   ├── requirements.txt               # 参考环境（torch/transformers/numpy）
+│   └── requirements-test.txt          # pytest / lit
 ├── tests/
 │   ├── lit/Dialect/LLMCP/*.mlir
 │   ├── lit/Conversion/*.mlir
@@ -392,15 +393,90 @@ llmcp/
 | `llmcp-pack` | 工具 | Model | 权重打包/量化 |
 | `llmcp-run` | 工具 | Runtime + dlopen | CLI |
 
-### 4.3 依赖策略
+### 4.3 依赖清单与用途
 
-- **核心只依赖 LLVM/MLIR**（Homebrew `llvm@20`）。不把 LLVM 源码纳入仓库，不构建第二份 LLVM。
-- `llvm/Support/JSON.h` 解析 config/manifest/tokenizer，不引入 nlohmann/json。
-- Unicode NFC / 字符分类：优先使用 **utf8proc**（MIT，可 vendor 到 `third_party/utf8proc/`）；不引入 PCRE2，也不依赖系统 ICU。
-- 线程：C++17 `std::thread` + 自研线程池；首期不引入 OpenMP（可选后续）。
-- 参考实现：Python venv + `torch` + `transformers`（main 分支，含 `qwen3_5`），仅用于生成 golden，不进入编译产物。
-- 测试：`lit` + `FileCheck`（通过 pip 安装 `lit`）；C++ 单测用 `gtest`（或 LLVM 自带 `gtest`）。
-- 可选：Accelerate/OpenBLAS 仅作为 `--enable-external-gemm` 的对标路径，默认关闭。
+**Python 环境固定使用 `/Users/guorui/Work/models/venv314`**（Python 3.14.8，pip 26.2.2），不要为 `llmcp` 另建 venv。该环境已安装 `torch 2.14.1`（macOS arm64 cp314 wheel）、`transformers 5.20.2`（PyPI 版已包含 `qwen3_5`）、`numpy 2.5.4`、`safetensors 0.8.0`、`tokenizers 0.23.3`、`huggingface_hub 2.2.0`、`accelerate 1.15.0`、`jinja2 3.1.6`。参考实现只用于生成 golden，不进入编译产物。
+
+#### 4.3.1 C++ 构建与测试
+
+| 依赖 | 本机版本 | 用途 | 必需性 | 状态 |
+|---|---|---|---|---|
+| LLVM/MLIR (`llvm@20`) | 20.1.8 | 方言、TableGen、Linalg/Vector/Bufferization、LLVM IR、JIT；同时提供 `FileCheck`、`llvm-mca`、`clang-tidy` | 必需 | 已安装 |
+| CMake | 4.1.1 | `find_package(MLIR)`、构建与测试 | 必需 | 已安装 |
+| Ninja | 1.13.2 | 构建后端 | 必需 | 已安装 |
+| Homebrew clang++ | 20.1.8 | 与 MLIR 同一工具链的 C++17 编译器 | 必需 | 已安装 |
+| utf8proc | 2.11.0 | tokenizer 的 NFC 归一化与 Unicode 分类（`\p{L}`/`\p{M}`/`\p{N}`） | 必需 | 已安装；建议 vendor |
+| GoogleTest | 1.18.0 | op verifier、layout、sampler、tokenizer 的 C++ 单测 | 测试必需 | **未安装** |
+| ccache | 4.14.2 | 编译缓存；MLIR/TableGen 重编译提速 | 可选（推荐） | **未安装** |
+| lit | 23.1.4 | `llmcp-opt` 的 IR 文件测试驱动 | 测试必需 | **未安装（装在 venv314）** |
+| `FileCheck` / `llvm-mca` / `clang-tidy` / `llvm-cov` | 20.1.8 | IR 断言 / 机器码分析 / 静态检查 / 覆盖率 | 开发测试 | 随 LLVM 安装，但不在 PATH |
+
+#### 4.3.2 Python 参考与测试
+
+| 依赖 | 本机版本 | 用途 | 必需性 | 状态 |
+|---|---|---|---|---|
+| Python | 3.14.8 | 运行参考实现与工具脚本 | 开发必需 | venv314 |
+| PyTorch | 2.14.1 | 在 CPU 上以 bf16 跑 HF 参考，导出 logits/逐层激活 | 参考必需 | 已安装 |
+| Transformers | 5.20.2 | `qwen3_5` 参考实现（`Qwen3_5ForConditionalGeneration`、tokenizer） | 参考必需 | 已安装 |
+| NumPy | 2.5.4 | 数值对比、tiny 模型参考、量化误差统计 | 参考必需 | 已安装 |
+| safetensors | 0.8.0 | Python 侧读取/校验权重；HF 依赖 | 参考/校验 | 已安装 |
+| tokenizers | 0.23.3 | HF tokenizer 的 Rust 后端；仅参考 | 参考 | 已安装 |
+| huggingface_hub | 2.2.0 | 模型加载与缓存；HF 依赖 | 参考 | 已安装 |
+| accelerate | 1.15.0 | `low_cpu_mem_usage` / device map，降低加载峰值内存 | 参考 | 已安装 |
+| jinja2 | 3.1.6 | HF chat template 渲染；参考 | 参考 | 已安装 |
+| pytest | 最新版 | 组织 e2e golden 对比、量化精度报告 | 可选 | **未安装** |
+| Pillow / torchvision | 最新版 | M5 视觉塔的图像预处理参考 | 可选 | 未安装 |
+
+#### 4.3.3 明确不引入
+
+- **PCRE2 / ICU / RE2**：tokenizer 的预分词正则用 utf8proc + 手写扫描器实现，避免引入重量级正则库。
+- **nlohmann/json / simdjson / RapidJSON**：用 `llvm/Support/JSON.h` 解析 config、manifest、tokenizer.json。
+- **CLI11 / fmt / spdlog**：用 `llvm::cl`、`llvm::formatv`、`llvm::errs`，保持与 MLIR 工具风格一致。
+- **Eigen / oneDNN / MKL / OpenBLAS**：主路径是 MLIR 生成 kernel；macOS 如需对标，用系统 `Accelerate.framework`（无需安装），不默认链接。
+- **OpenMP / TBB / Taskflow**：用 C++17 `std::thread` + 自研线程池。本机虽已装 `libomp 21.1.0`，但首期不链接，避免与 LLVM 20 运行时混淆。
+- **protobuf / flatbuffers / pybind11 / tokenizers-cpp**：无需要；权重格式自己解析，ABI 用 C，tokenizer 自己实现。
+- **Git LFS / valgrind / perf**：golden 不入库；内存检查用 ASan，性能分析用 Instruments/`sample`/`llvm-mca`。
+
+#### 4.3.4 安装命令
+
+```bash
+# 核心：只缺 googletest 和（可选的）ccache
+brew install googletest ccache
+
+# 让 llvm@20 的 clang-tidy/FileCheck/llvm-mca/llvm-cov 进入 PATH
+export PATH="/opt/homebrew/opt/llvm@20/bin:$PATH"
+
+# 如果装了 ccache，在 CMake 配置时启用
+# -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+# Python：使用已有的 venv314，不要新建 venv
+V=/Users/guorui/Work/models/venv314
+"$V/bin/python" -m pip install pytest lit
+
+# 可选：M5 视觉参考
+# "$V/bin/python" -m pip install pillow torchvision
+```
+
+`utf8proc` 已由 Homebrew 安装；它只提供 `libutf8proc.pc`（在 `/opt/homebrew/opt/utf8proc/lib/pkgconfig`），没有 CMake config，默认 `pkg-config` 也找不到。建议把同版本源码 vendor 到 `third_party/utf8proc/`（MIT），用 `add_subdirectory` 或直接编译一个静态库；若用 Homebrew 版本，则用 `find_path`/`find_library` 指定路径：
+
+```cmake
+find_path(UTF8PROC_INCLUDE_DIR utf8proc.h HINTS /opt/homebrew/opt/utf8proc/include)
+find_library(UTF8PROC_LIBRARY NAMES utf8proc HINTS /opt/homebrew/opt/utf8proc/lib)
+```
+
+`googletest` 安装后：
+
+```cmake
+find_package(GTest CONFIG REQUIRED)
+target_link_libraries(llmcp_unittests PRIVATE GTest::gtest_main)
+```
+
+#### 4.3.5 许可证提示
+
+- LLVM/MLIR、lit、clang-tools：Apache-2.0 WITH LLVM-exception。
+- utf8proc：MIT；GoogleTest：BSD-3-Clause。
+- ccache：GPL-3.0-or-later，仅作为构建期可执行工具，不链接进产物。
+- PyTorch：BSD-3-Clause；Transformers：Apache-2.0；NumPy：BSD-3-Clause；safetensors：Apache-2.0。
 
 ### 4.4 工具链验证（已在本机完成）
 
@@ -1466,7 +1542,7 @@ W4 (group g):
 
 ### 11.1 参考实现
 
-- Python venv：`torch`（CPU）+ `transformers` main（含 `qwen3_5`）。
+- Python：`/Users/guorui/Work/models/venv314`（Python 3.14.8，`torch 2.14.1` + `transformers 5.20.2`；PyPI 版已含 `qwen3_5`）。
 - 参考配置：`attn_implementation="eager"`、`torch_dtype=torch.bfloat16`、`device="cpu"`、`use_cache=True`。
 - 导出：
   - prompt token ids；
@@ -1573,7 +1649,7 @@ M0 权重布局/参考数据
 - [ ] `LLMCPDialect`/`LLMCPOps` 骨架（先 2 个 op：linear、rms_norm）。
 - [ ] `ModelConfig` 解析与校验；`WeightLayout`（bf16）；`llmcp-pack` 生成 manifest。
 - [ ] tokenizer：BPE + byte-level + added tokens + NFC；与 HF 对照。
-- [ ] Python venv、HF 参考脚本、8 组 prompt、golden 格式。
+- [ ] 确认 `venv314` 的依赖（补 `pytest`/`lit`）、HF 参考脚本、8 组 prompt、golden 格式。
 - [ ] tiny 模型（2 层、hidden 64）与 NumPy 参考。
 - [ ] 环境验证记录、CI 骨架。
 
@@ -1788,7 +1864,7 @@ Ninja:     1.13.2
 
 1. 搭 CMake + `llmcp-opt` + `LLMCPDialect`/`LLMCPOps` 骨架，跑通 `llmcp.linear` 的 parse/print。
 2. 写 `ModelConfig` + safetensors header 解析，打印 32 层类型与每层参数量，和本文档对齐。
-3. 搭 Python venv + HF 参考，导出 1 组 prompt 的逐层激活和 logits。
+3. 用 `venv314` 跑 HF 参考，导出 1 组 prompt 的逐层激活和 logits。
 4. 写 `WeightLayout` 与 `llmcp-pack` 的 bf16 版本，生成 manifest；校验张量总字节数与 checkpoint 的 9,319,737,856 一致（blob 另加 64B header）。
 5. 实现 tokenizer 的最小闭环（BPE + special tokens），与 HF 对比 20 条字符串。
 6. 用 tiny 模型（2 层、hidden 64）跑通“IR → linalg → LLVM → 可执行”的全链路，作为 CI 的 smoke test。

@@ -1,0 +1,3 @@
+# Test tooling, installed into the existing venv314 environment.
+pytest
+lit
