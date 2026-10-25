@@ -1,5 +1,4 @@
-//===- llmcp-inspect.cpp - Inspect a Qwen3.5 checkpoint
-//--------------------===//
+//===- llmcp-inspect.cpp - Inspect a Qwen3.5 checkpoint -------------------===//
 //
 // Reads only configuration and safetensors headers; tensor data is not read.
 //

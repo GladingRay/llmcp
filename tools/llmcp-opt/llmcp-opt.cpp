@@ -4,8 +4,10 @@
 
 #include "llmcp/Dialect/LLMCP/IR/LLMCPDialect.h"
 #include "llmcp/Dialect/LLMCP/IR/LLMCPOps.h"
+#include "llmcp/Dialect/LLMCP/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -16,8 +18,11 @@
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 
 int main(int argc, char **argv) {
+  mlir::llmcp::registerLowerToLinalgPass();
+
   mlir::DialectRegistry registry;
   registry.insert<mlir::llmcp::LLMCPDialect, mlir::arith::ArithDialect,
+                  mlir::bufferization::BufferizationDialect,
                   mlir::func::FuncDialect, mlir::linalg::LinalgDialect,
                   mlir::math::MathDialect, mlir::memref::MemRefDialect,
                   mlir::scf::SCFDialect, mlir::tensor::TensorDialect>();

@@ -41,7 +41,8 @@ M0 基础设施已落地：
 - `llmcp-inspect`：对真实 Qwen3.5-4B 输出 32 层 / 738 tensor / 8.41GB 文本布局
 - `ModelBuilder`：生成完整 prefill 计算图，包含 embedding、32 层、final norm、lm_head，以及 4 个入口函数
 - `llmcp-dump`：把完整计算图 dump 成 `.mlir`，支持 `--verify-module` 和 `--print-stats`
-- 测试：3 个 lit 用例 + 14 个 gtest 用例 + 真实模型 dump 集成测试，全部通过
+- `llmcp-lower-to-linalg`：把 `llmcp.linear` 降为 `linalg.matmul_transpose_b` + f32 累加 + truncf，把 `llmcp.rms_norm` 降为 linalg reduction/rsqrt
+- 测试：5 个 lit 用例 + 14 个 gtest 用例 + 真实模型 dump/lowering 集成测试，全部通过
 
 仍在 M0/M1 之间：tokenizer、HF golden 导出、`llmcp → linalg` lowering 尚未开始。
 
@@ -66,8 +67,9 @@ ctest --test-dir build --output-on-failure
 # 3. 检查真实模型配置与权重布局（只读 header）
 ./build/bin/llmcp-inspect --model /Users/guorui/Work/models/qwen3.5-4b
 
-# 4. 解析/打印 llmcp IR
+# 4. 解析/打印 llmcp IR，并测试 lowering
 ./build/bin/llmcp-opt tests/lit/Dialect/LLMCP/ops.mlir
+./build/bin/llmcp-opt tests/lit/Conversion/lower-linear.mlir --llmcp-lower-to-linalg
 
 # 5. dump 完整计算图
 ./build/bin/llmcp-dump --model /Users/guorui/Work/models/qwen3.5-4b \

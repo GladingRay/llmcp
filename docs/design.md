@@ -305,8 +305,7 @@ llmcp/
 │   │   ├── LLMCPTypes.h
 │   │   └── LLMCP.h                   # umbrella header
 │   ├── Dialect/LLMCP/Transforms/
-│   │   ├── Passes.td                 # pass 声明（-gen-pass-decls）
-│   │   └── Passes.h
+│   │   └── Passes.h                  # pass 工厂与注册声明
 │   ├── Conversion/LLMCPToLinalg/
 │   │   └── LLMCPToLinalg.h
 │   ├── Conversion/LLMCPToLLVM/
@@ -421,7 +420,6 @@ build/include/llmcp/Dialect/LLMCP/IR/
 | `LLMCPOps.td` | op 定义：operands/results/attributes/traits/assemblyFormat/verifier；也是 `mlir-tblgen` 的入口 |
 | `LLMCPTypes.td` | `!llmcp.*` 自定义类型；首期可以为空 |
 | `LLMCPAttrs.td` | `#llmcp.quant<...>` 等属性与枚举 |
-| `Transforms/Passes.td` | pass 声明，配合 `-gen-pass-decls` 生成注册代码 |
 
 > 只列 `.h/.cpp` 会漏掉“IR schema 从哪来”这一层；`.td` 才是 op/type/dialect 的单一真源，`.h/.cpp` 只是 include 生成物并补充 verifier/parser/printer 等手写逻辑。
 
@@ -431,7 +429,7 @@ build/include/llmcp/Dialect/LLMCP/IR/
 |---|---|---|---|
 | `MLIRLLMCPOpsIncGen` | TableGen | `LLMCP*.td` | 生成 op/type/dialect 的 `.inc` |
 | `MLIRLLMCPDialect` | 库 | MLIRIR, MLIRSupport | 方言 + ops + verifier |
-| `MLIRLLMCPTransforms` | 库 | Dialect, MLIRLinalgDialect/Transforms, MLIRSCF, MLIRVector | 语义降级与优化 pass |
+| `MLIRLLMCPTransforms` | 库 | Dialect, Linalg, Bufferization, Tensor, Math, Pass | 语义降级与优化 pass；当前含 `llmcp-lower-to-linalg` |
 | `MLIRLLMCPModel` | 库 | Dialect, LLVMSupport | 配置解析、权重布局、IR builder |
 | `MLIRLLMCPRuntime` | 库 | LLVMSupport, Threads | tokenizer/session/sampler |
 | `llmcp-opt` | 工具 | 上述 | `mlir-opt` 的专用替代 |
@@ -1055,7 +1053,7 @@ IREE 的 `iree_linalg_ext.attention` 等扩展值得借鉴，但不作为依赖�
 ### 7.1 阶段划分
 
 ```text
-[1] llmcp-lower-to-linalg      # 语义分解，消除 llmcp op
+[1] llmcp-lower-to-linalg      # 当前已降级 linear/rms_norm；其余 op 后续补齐
 [2] canonicalize / cse
 [3] llmcp-fuse-elementwise     # silu_mul、residual、norm 邻接融合
 [4] llmcp-tile-and-vectorize   # 自定义 tiling + vectorization
@@ -1783,7 +1781,7 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-inspect`、lit 与 C++ 单测已完成并通过；tokenizer、HF golden、tiny 模型尚未开始。
+> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（linear/rms_norm）、`llmcp-inspect`、lit 与 C++ 单测已完成并通过；tokenizer、HF golden、tiny 模型尚未开始。
 
 - [ ] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [ ] `LLMCPDialect`/`LLMCPOps` 骨架（先 2 个 op：linear、rms_norm）。

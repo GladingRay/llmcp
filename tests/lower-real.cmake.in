@@ -1,0 +1,22 @@
+execute_process(
+  COMMAND "@LLMCP_DUMP@" --model /Users/guorui/Work/models/qwen3.5-4b
+          --verify-module -o "@LLMCP_GRAPH@"
+  RESULT_VARIABLE dump_result)
+if(NOT dump_result EQUAL 0)
+  message(FATAL_ERROR "llmcp-dump failed with ${dump_result}")
+endif()
+
+execute_process(
+  COMMAND "@LLMCP_OPT@" "@LLMCP_GRAPH@" --llmcp-lower-to-linalg
+          -o "@LLMCP_LINALG@"
+  RESULT_VARIABLE lower_result)
+if(NOT lower_result EQUAL 0)
+  message(FATAL_ERROR "llmcp-lower-to-linalg failed with ${lower_result}")
+endif()
+
+file(READ "@LLMCP_LINALG@" contents)
+string(FIND "${contents}" "llmcp.linear" linear_pos)
+string(FIND "${contents}" "llmcp.rms_norm" rms_pos)
+if(NOT linear_pos EQUAL -1 OR NOT rms_pos EQUAL -1)
+  message(FATAL_ERROR "lowered graph still contains llmcp.linear/llmcp.rms_norm")
+endif()

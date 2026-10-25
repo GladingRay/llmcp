@@ -1,5 +1,4 @@
-//===- ModelBuilder.cpp - Build the llmcp model graph
-//----------------------===//
+//===- ModelBuilder.cpp - Build the llmcp model graph ---------------------===//
 //
 //===----------------------------------------------------------------------===//
 

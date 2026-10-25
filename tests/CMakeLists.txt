@@ -31,6 +31,19 @@ if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
       --verify-module --print-stats
       -o "${CMAKE_BINARY_DIR}/qwen35_graph.mlir")
   set_tests_properties(llmcp-dump-real PROPERTIES TIMEOUT 120)
+
+  set(LLMCP_DUMP "${CMAKE_BINARY_DIR}/bin/llmcp-dump")
+  set(LLMCP_OPT "${CMAKE_BINARY_DIR}/bin/llmcp-opt")
+  set(LLMCP_GRAPH "${CMAKE_BINARY_DIR}/qwen35_graph.mlir")
+  set(LLMCP_LINALG "${CMAKE_BINARY_DIR}/qwen35_linalg.mlir")
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/lower-real.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/lower-real.cmake"
+    @ONLY)
+  add_test(NAME llmcp-lower-real
+    COMMAND ${CMAKE_COMMAND} -P
+            "${CMAKE_CURRENT_BINARY_DIR}/lower-real.cmake")
+  set_tests_properties(llmcp-lower-real PROPERTIES TIMEOUT 120)
 endif()
 
 add_subdirectory(unittests)
