@@ -67,4 +67,101 @@ def LLMCP_RmsNormOp : LLMCP_Op<"rms_norm", [Pure]> {
   let hasVerifier = 1;
 }
 
+def LLMCP_AddOp : LLMCP_Op<"add", [Pure]> {
+  let summary = "Elementwise addition of two tensors";
+  let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs);
+  let results = (outs AnyTensor:$result);
+  let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def LLMCP_SiluMulOp : LLMCP_Op<"silu_mul", [Pure]> {
+  let summary = "SwiGLU activation: silu(gate) * up";
+  let arguments = (ins AnyTensor:$gate, AnyTensor:$up);
+  let results = (outs AnyTensor:$result);
+  let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def LLMCP_EmbeddingOp : LLMCP_Op<"embedding", [Pure]> {
+  let summary = "Token embedding lookup";
+  let arguments = (ins AnyTensor:$tokens, AnyMemRef:$table);
+  let results = (outs AnyTensor:$result);
+  let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def LLMCP_LmHeadOp : LLMCP_Op<"lm_head", [Pure]> {
+  let summary = "Tied embedding matrix product producing logits";
+  let arguments = (ins AnyTensor:$hidden, AnyMemRef:$table);
+  let results = (outs AnyTensor:$logits);
+  let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def LLMCP_CausalConv1dOp : LLMCP_Op<"causal_conv1d"> {
+  let summary = "Depthwise causal convolution with persistent state";
+  let arguments = (ins AnyTensor:$input,
+                       AnyMemRef:$weight,
+                       AnyMemRef:$state,
+                       I64Attr:$layer_index,
+                       I64Attr:$kernel_size,
+                       StrAttr:$activation);
+  let results = (outs AnyTensor:$result);
+  let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def LLMCP_GatedDeltaNetOp : LLMCP_Op<"gated_delta_net"> {
+  let summary = "Gated DeltaNet recurrence with persistent state";
+  let arguments = (ins AnyTensor:$conv,
+                       AnyTensor:$a,
+                       AnyTensor:$b,
+                       AnyMemRef:$a_log,
+                       AnyMemRef:$dt_bias,
+                       AnyMemRef:$state,
+                       I64Attr:$layer_index,
+                       I64Attr:$num_k_heads,
+                       I64Attr:$num_v_heads,
+                       I64Attr:$head_k_dim,
+                       I64Attr:$head_v_dim,
+                       StrAttr:$mode);
+  let results = (outs AnyTensor:$output);
+  let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def LLMCP_AttentionOp : LLMCP_Op<"attention"> {
+  let summary = "GQA attention with KV cache, q/k norm, RoPE, and output gate";
+  let arguments = (ins AnyTensor:$qg,
+                       AnyTensor:$k,
+                       AnyTensor:$v,
+                       AnyMemRef:$q_norm,
+                       AnyMemRef:$k_norm,
+                       AnyTensor:$cos,
+                       AnyTensor:$sin,
+                       AnyMemRef:$kv_cache,
+                       I64Attr:$layer_index,
+                       I64Attr:$num_heads,
+                       I64Attr:$num_kv_heads,
+                       I64Attr:$head_dim,
+                       I64Attr:$rotary_dim,
+                       StrAttr:$mode);
+  let results = (outs AnyTensor:$output);
+  let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
+def LLMCP_GatedRmsNormOp : LLMCP_Op<"gated_rms_norm", [Pure]> {
+  let summary = "Per-head RMSNorm followed by a SiLU gate";
+  let arguments = (ins AnyTensor:$input,
+                       AnyTensor:$gate,
+                       AnyMemRef:$weight,
+                       I64Attr:$group_size,
+                       F64Attr:$eps);
+  let results = (outs AnyTensor:$result);
+  let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
 #endif // LLMCP_OPS_TD

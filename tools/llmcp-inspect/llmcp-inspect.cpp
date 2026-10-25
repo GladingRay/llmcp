@@ -9,20 +9,13 @@
 #include "llmcp/Model/Safetensors.h"
 #include "llmcp/Model/WeightLayout.h"
 
-#include "llvm/ADT/StringSet.h"
-#include "llvm/ADT/Twine.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <algorithm>
-#include <filesystem>
 #include <string>
-#include <system_error>
-#include <vector>
 
 using namespace mlir::llmcp;
-using llvm::StringRef;
 
 namespace {
 
@@ -39,39 +32,6 @@ int fail(llvm::Error error) {
   return 1;
 }
 
-llvm::Expected<std::vector<std::string>> collectShards(StringRef modelDir) {
-  const std::string indexPath =
-      (llvm::Twine(modelDir) + "/model.safetensors.index.json").str();
-  auto indexOrErr = readSafetensorsIndex(indexPath);
-  if (indexOrErr) {
-    llvm::StringSet<> seen;
-    std::vector<std::string> shards;
-    for (const auto &entry : indexOrErr->weightMap) {
-      StringRef file = entry.second;
-      if (seen.insert(file).second)
-        shards.push_back(file.str());
-    }
-    std::sort(shards.begin(), shards.end());
-    return shards;
-  }
-  llvm::consumeError(indexOrErr.takeError());
-
-  std::vector<std::string> shards;
-  std::error_code ec;
-  for (const auto &entry :
-       std::filesystem::directory_iterator(modelDir.str(), ec)) {
-    if (!entry.is_regular_file())
-      continue;
-    const std::string name = entry.path().filename().string();
-    if (StringRef(name).ends_with(".safetensors"))
-      shards.push_back(name);
-  }
-  if (ec)
-    return llvm::createStringError(ec, "cannot scan model directory");
-  std::sort(shards.begin(), shards.end());
-  return shards;
-}
-
 } // namespace
 
 int main(int argc, char **argv) {
@@ -84,27 +44,10 @@ int main(int argc, char **argv) {
     return fail(configOrErr.takeError());
   const ModelConfig &config = *configOrErr;
 
-  auto shardsOrErr = collectShards(modelDir);
-  if (!shardsOrErr)
-    return fail(shardsOrErr.takeError());
-  if (shardsOrErr->empty())
-    return fail(llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                        "no safetensors shards found"));
-
-  TensorMap tensors;
-  for (const std::string &shard : *shardsOrErr) {
-    const std::string path = (llvm::Twine(modelDir) + "/" + shard).str();
-    auto shardTensors = readSafetensorsFile(path);
-    if (!shardTensors)
-      return fail(shardTensors.takeError());
-    for (const auto &entry : *shardTensors) {
-      auto inserted = tensors.try_emplace(entry.first(), entry.second);
-      if (!inserted.second)
-        return fail(llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                            llvm::Twine("duplicate tensor '") +
-                                                entry.first() + "'"));
-    }
-  }
+  auto tensorsOrErr = readModelTensors(modelDir);
+  if (!tensorsOrErr)
+    return fail(tensorsOrErr.takeError());
+  TensorMap tensors = std::move(*tensorsOrErr);
 
   auto layoutOrErr = WeightLayout::build(config, tensors);
   if (!layoutOrErr)

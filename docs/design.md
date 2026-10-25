@@ -357,6 +357,7 @@ llmcp/
 │   ├── llmcp-opt/llmcp-opt.cpp        # 注册方言 + pass，lit 测试入口
 │   ├── llmcp-compile/llmcp-compile.cpp # 模型 → .mlir → .dylib
 │   ├── llmcp-inspect/llmcp-inspect.cpp # 只读 header 的配置/布局检查
+│   ├── llmcp-dump/llmcp-dump.cpp      # 生成并 dump 完整 llmcp 计算图
 │   ├── llmcp-pack/llmcp-pack.cpp      # safetensors → weights.bin + manifest
 │   ├── llmcp-run/llmcp-run.cpp        # CLI 推理
 │   └── llmcp-tokenize/                # tokenizer 对照工具（可选）
@@ -378,7 +379,9 @@ llmcp/
 │   ├── lit/Conversion/*.mlir
 │   ├── unittests/
 │   │   ├── ModelConfigTest.cpp
+│   │   ├── ModelBuilderTest.cpp
 │   │   ├── SafetensorsTest.cpp
+│   │   ├── TestModel.h
 │   │   └── WeightLayoutTest.cpp
 │   ├── tiny/                          # 小模型端到端（CI 用）
 │   ├── e2e/                           # 真实模型 golden（本地）
@@ -434,6 +437,7 @@ build/include/llmcp/Dialect/LLMCP/IR/
 | `llmcp-opt` | 工具 | 上述 | `mlir-opt` 的专用替代 |
 | `llmcp-compile` | 工具 | 上述 + MLIRExecutionEngine/TargetLLVMIR | 端到端编译 |
 | `llmcp-inspect` | 工具 | Model | 只读 header，打印配置/层类型/权重布局 |
+| `llmcp-dump` | 工具 | Model, Dialect | 生成完整计算图并写 `.mlir` |
 | `llmcp-pack` | 工具 | Model | 权重打包/量化 |
 | `llmcp-run` | 工具 | Runtime + dlopen | CLI |
 
@@ -813,31 +817,37 @@ manifest 示例：
 
 > 运行时不解析每个 tensor 的 offset；编译产物里已经是常量。manifest 用于工具链、校验和调试。
 
-### 5.4 IR 构建：层组循环
+### 5.4 IR 构建：完整图 dump 与层组循环
 
-`ModelBuilder` 生成两个公开函数：
+`ModelBuilder` 当前生成 4 个函数，`llmcp-dump` 可以一次性把整个模块写出来：
 
 ```mlir
-func.func @llmcp_forward_decode(
-    %hidden: tensor<1x2560xbf16>,
-    %pos: index,
-    %weights: memref<?xi8>,          // arena
-    %kv: memref<8x4x?x256xbf16>,
-    %delta_state: memref<24x32x128x128xf32>,
-    %conv_state: memref<24x3x8192xbf16>,
-    %workspace: memref<?xi8>) -> tensor<1x2560xbf16>
+// Embedding lookup.
+func.func @llmcp_embed(%tokens: tensor<?xindex>, %arena: memref<?xi8>)
+    -> tensor<?x2560xbf16>
 
-func.func @llmcp_forward_prefill(
+// Unrolled decoder layers (current dump is the prefill graph).
+func.func @llmcp_forward(
     %hidden: tensor<?x2560xbf16>,
-    %pos: index,
-    %weights: memref<?xi8>,
+    %cos: tensor<?x64xf32>, %sin: tensor<?x64xf32>,
+    %arena: memref<?xi8>,
     %kv: memref<8x4x?x256xbf16>,
     %delta_state: memref<24x32x128x128xf32>,
-    %conv_state: memref<24x3x8192xbf16>,
-    %workspace: memref<?xi8>) -> tensor<?x2560xbf16>
+    %conv_state: memref<24x3x8192xbf16>) -> tensor<?x2560xbf16>
+
+// Tied lm_head.
+func.func @llmcp_lm_head(%hidden: tensor<?x2560xbf16>, %arena: memref<?xi8>)
+    -> tensor<?x248320xf32>
+
+// End-to-end wrapper: embed -> forward -> lm_head.
+func.func @llmcp_model(...) -> tensor<?x248320xf32>
 ```
 
-层组循环（伪 IR）：
+当前 `llmcp_forward` **展开 32 层**，便于 dump、diff 和单层测试；每个权重都是 `memref.view %arena[%offset][]` 的静态视图。`layer_index` 在 delta/conv 上是线性层 slot（0..23），在 attention 上是 full 层 slot（0..7）。
+
+> 这是“可读/可测”的 dump 形式。M3 做代码尺寸优化时，可以切换为下面的层组循环；decode 图也会复用同一套 layer builder。
+
+层组循环（后续 codegen，伪 IR）：
 
 ```mlir
 %c0 = arith.constant 0 : index
@@ -1773,7 +1783,7 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言骨架、`ModelConfig`/`Safetensors`/`WeightLayout`、`llmcp-inspect`、lit 与 C++ 单测已完成并通过；tokenizer、HF golden、tiny 模型尚未开始。
+> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-inspect`、lit 与 C++ 单测已完成并通过；tokenizer、HF golden、tiny 模型尚未开始。
 
 - [ ] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [ ] `LLMCPDialect`/`LLMCPOps` 骨架（先 2 个 op：linear、rms_norm）。

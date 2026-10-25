@@ -56,6 +56,9 @@ llvm::Expected<TensorMap> readSafetensorsFile(llvm::StringRef path);
 /// Reads `model.safetensors.index.json`.
 llvm::Expected<SafetensorsIndex> readSafetensorsIndex(llvm::StringRef path);
 
+/// Reads all shard headers of a model directory into one tensor map.
+llvm::Expected<TensorMap> readModelTensors(llvm::StringRef modelDir);
+
 } // namespace llmcp
 } // namespace mlir
 

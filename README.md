@@ -34,14 +34,16 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 M0 基础设施已落地：
 
 - CMake + MLIR 20 构建，`llmcp-opt` 可解析/打印/校验 IR
-- `llmcp` 方言：`llmcp.linear`、`llmcp.rms_norm`，含 TableGen 定义与 C++ verifier
+- `llmcp` 方言：`linear`/`rms_norm`/`add`/`silu_mul`/`embedding`/`lm_head`/`causal_conv1d`/`gated_delta_net`/`attention`/`gated_rms_norm`，含 TableGen 定义与 C++ verifier
 - `ModelConfig`：解析并校验 `config.json`（层类型、GQA、RoPE、mRoPE、线性注意力头数等）
 - `Safetensors`：只读 header，不加载 tensor 数据
 - `WeightLayout`：文本权重 arena 的确定性偏移、64B 对齐、group stride
 - `llmcp-inspect`：对真实 Qwen3.5-4B 输出 32 层 / 738 tensor / 8.41GB 文本布局
-- 测试：3 个 lit 用例 + 3 组 C++ 单测（ModelConfig / Safetensors / WeightLayout）全部通过
+- `ModelBuilder`：生成完整 prefill 计算图，包含 embedding、32 层、final norm、lm_head，以及 4 个入口函数
+- `llmcp-dump`：把完整计算图 dump 成 `.mlir`，支持 `--verify-module` 和 `--print-stats`
+- 测试：3 个 lit 用例 + 14 个 gtest 用例 + 真实模型 dump 集成测试，全部通过
 
-仍在 M0/M1 之间：tokenizer、HF golden 导出、单层 lowering 尚未开始。
+仍在 M0/M1 之间：tokenizer、HF golden 导出、`llmcp → linalg` lowering 尚未开始。
 
 ## 构建与测试
 
@@ -66,6 +68,19 @@ ctest --test-dir build --output-on-failure
 
 # 4. 解析/打印 llmcp IR
 ./build/bin/llmcp-opt tests/lit/Dialect/LLMCP/ops.mlir
+
+# 5. dump 完整计算图
+./build/bin/llmcp-dump --model /Users/guorui/Work/models/qwen3.5-4b \
+  --verify-module --print-stats -o build/qwen35_graph.mlir
+```
+
+当前 dump 的是 **prefill 图**（32 层展开）。`--print-stats` 输出：
+
+```text
+functions: 4
+linear: 248, rms_norm: 65, delta: 24, attention: 8, conv: 24,
+gated_norm: 24, embedding: 1, lm_head: 1, silu_mul: 32, add: 64,
+weight_views: 427
 ```
 
 `llmcp-inspect` 当前输出：

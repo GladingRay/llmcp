@@ -4,17 +4,21 @@
 
 #include "llmcp/Model/Safetensors.h"
 
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace mlir::llmcp;
 using llvm::StringRef;
@@ -196,4 +200,52 @@ mlir::llmcp::readSafetensorsIndex(StringRef path) {
   }
 
   return index;
+}
+
+llvm::Expected<TensorMap> mlir::llmcp::readModelTensors(StringRef modelDir) {
+  std::vector<std::string> shards;
+  const std::string indexPath =
+      (llvm::Twine(modelDir) + "/model.safetensors.index.json").str();
+  auto indexOrErr = readSafetensorsIndex(indexPath);
+  if (indexOrErr) {
+    llvm::StringSet<> seen;
+    for (const auto &entry : indexOrErr->weightMap) {
+      StringRef file = entry.second;
+      if (seen.insert(file).second)
+        shards.push_back(file.str());
+    }
+    std::sort(shards.begin(), shards.end());
+  } else {
+    llvm::consumeError(indexOrErr.takeError());
+    std::error_code ec;
+    for (const auto &entry :
+         std::filesystem::directory_iterator(modelDir.str(), ec)) {
+      if (!entry.is_regular_file())
+        continue;
+      const std::string name = entry.path().filename().string();
+      if (StringRef(name).ends_with(".safetensors"))
+        shards.push_back(name);
+    }
+    if (ec)
+      return llvm::createStringError(ec, "cannot scan model directory");
+    std::sort(shards.begin(), shards.end());
+  }
+
+  if (shards.empty())
+    return makeError("no safetensors shards found");
+
+  TensorMap tensors;
+  for (const std::string &shard : shards) {
+    const std::string path = (llvm::Twine(modelDir) + "/" + shard).str();
+    auto shardTensors = readSafetensorsFile(path);
+    if (!shardTensors)
+      return shardTensors.takeError();
+    for (const auto &entry : *shardTensors) {
+      auto inserted = tensors.try_emplace(entry.first(), entry.second);
+      if (!inserted.second)
+        return makeError(llvm::Twine("duplicate tensor '") + entry.first() +
+                         "'");
+    }
+  }
+  return tensors;
 }

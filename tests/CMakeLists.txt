@@ -24,4 +24,13 @@ else()
     "lit or FileCheck not found; the llmcp-lit test will not be registered")
 endif()
 
+if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
+  add_test(NAME llmcp-dump-real
+    COMMAND $<TARGET_FILE:llmcp-dump>
+      --model /Users/guorui/Work/models/qwen3.5-4b
+      --verify-module --print-stats
+      -o "${CMAKE_BINARY_DIR}/qwen35_graph.mlir")
+  set_tests_properties(llmcp-dump-real PROPERTIES TIMEOUT 120)
+endif()
+
 add_subdirectory(unittests)
