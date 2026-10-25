@@ -487,6 +487,7 @@ struct LowerToLinalgPass
 
     RewritePatternSet patterns(context);
     populateCausalConv1dLoweringPatterns(patterns);
+    populateGatedDeltaNetLoweringPatterns(patterns);
     patterns.add<LinearOpLowering, RmsNormOpLowering, AddOpLowering,
                  SiluMulOpLowering, EmbeddingOpLowering, GatedRmsNormOpLowering,
                  LmHeadOpLowering>(context);

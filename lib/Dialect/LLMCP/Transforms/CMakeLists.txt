@@ -1,6 +1,7 @@
 add_mlir_library(MLIRLLMCPTransforms
   LowerToLinalg.cpp
   LowerCausalConv1d.cpp
+  LowerGatedDeltaNet.cpp
 
   ADDITIONAL_HEADER_DIRS
     ${PROJECT_SOURCE_DIR}/include/llmcp/Dialect/LLMCP/Transforms

@@ -17,6 +17,7 @@ namespace llmcp {
 std::unique_ptr<Pass> createLowerToLinalgPass();
 
 void populateCausalConv1dLoweringPatterns(RewritePatternSet &patterns);
+void populateGatedDeltaNetLoweringPatterns(RewritePatternSet &patterns);
 
 void registerLowerToLinalgPass();
 
