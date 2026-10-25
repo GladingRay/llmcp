@@ -413,7 +413,7 @@ llmcp/
 | utf8proc | 2.11.0 | tokenizer 的 NFC 归一化与 Unicode 分类（`\p{L}`/`\p{M}`/`\p{N}`） | 必需 | 已 vendor（submodule v2.11.0） |
 | GoogleTest | 1.18.0 | op verifier、layout、sampler、tokenizer 的 C++ 单测 | 测试必需 | 已 vendor（submodule v1.18.0） |
 | ccache | 4.14.2 | 编译缓存；MLIR/TableGen 重编译提速 | 可选（推荐） | **未安装** |
-| lit | 23.1.4 | `llmcp-opt` 的 IR 文件测试驱动 | 测试必需 | **未安装（装在 venv314）** |
+| lit | 23.1.4 | `llmcp-opt` 的 IR 文件测试驱动 | 测试必需 | 已安装（venv314） |
 | `FileCheck` / `llvm-mca` / `clang-tidy` / `llvm-cov` | 20.1.8 | IR 断言 / 机器码分析 / 静态检查 / 覆盖率 | 开发测试 | 随 LLVM 安装，但不在 PATH |
 
 #### 4.3.2 Python 参考与测试
@@ -429,7 +429,7 @@ llmcp/
 | huggingface_hub | 2.2.0 | 模型加载与缓存；HF 依赖 | 参考 | 已安装 |
 | accelerate | 1.15.0 | `low_cpu_mem_usage` / device map，降低加载峰值内存 | 参考 | 已安装 |
 | jinja2 | 3.1.6 | HF chat template 渲染；参考 | 参考 | 已安装 |
-| pytest | 最新版 | 组织 e2e golden 对比、量化精度报告 | 可选 | **未安装** |
+| pytest | 9.1.1 | 组织 e2e golden 对比、量化精度报告 | 可选 | 已安装（venv314） |
 | Pillow / torchvision | 最新版 | M5 视觉塔的图像预处理参考 | 可选 | 未安装 |
 
 #### 4.3.3 明确不引入
@@ -463,11 +463,13 @@ export CXX=/opt/homebrew/opt/llvm@20/bin/clang++
 
 # Python：使用已有的 venv314，不要新建 venv
 V=/Users/guorui/Work/models/venv314
-"$V/bin/python" -m pip install pytest lit
+"$V/bin/python" -m pip install -r python/requirements-test.txt
 
 # 可选：M5 视觉参考
 # "$V/bin/python" -m pip install pillow torchvision
 ```
+
+> `lit 23` 已废弃 `lit.formats.ShTest(execute_external=True)`。测试配置统一写 `lit.formats.ShTest(execute_external=False)`，使用 lit 内置 shell；`%FileCheck`、管道和常用命令都可正常工作。已用 `%FileCheck %s --input-file=%s` 做过 smoke test。
 
 `utf8proc` 和 `googletest` 已通过 git submodule 固定到 `third_party/utf8proc/` 与 `third_party/googletest/`，根工程只需：
 
@@ -1679,7 +1681,7 @@ M0 权重布局/参考数据
 - [ ] `LLMCPDialect`/`LLMCPOps` 骨架（先 2 个 op：linear、rms_norm）。
 - [ ] `ModelConfig` 解析与校验；`WeightLayout`（bf16）；`llmcp-pack` 生成 manifest。
 - [ ] tokenizer：BPE + byte-level + added tokens + NFC；与 HF 对照。
-- [ ] 确认 `venv314` 的依赖（补 `pytest`/`lit`）、HF 参考脚本、8 组 prompt、golden 格式。
+- [ ] 确认 `venv314` 的依赖（`pytest 9.1.1`、`lit 23.1.4` 已装）、HF 参考脚本、8 组 prompt、golden 格式。
 - [ ] tiny 模型（2 层、hidden 64）与 NumPy 参考。
 - [ ] 环境验证记录、CI 骨架。
 

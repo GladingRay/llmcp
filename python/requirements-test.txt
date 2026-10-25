@@ -1,3 +1,4 @@
-# Test tooling, installed into the existing venv314 environment.
-pytest
-lit
+# Test tooling, installed into /Users/guorui/Work/models/venv314.
+# lit >= 23 requires ShTest(execute_external=False); the external shell is deprecated.
+pytest==9.1.1
+lit==23.1.4
