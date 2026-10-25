@@ -1,4 +1,5 @@
-//===- LLMCPDialect.h - LLMCP dialect declaration -----------------*- C++ -*-==//
+//===- LLMCPDialect.h - LLMCP dialect declaration -----------------*- C++
+//-*-==//
 //
 //===----------------------------------------------------------------------===//
 

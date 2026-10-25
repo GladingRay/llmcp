@@ -1,4 +1,5 @@
-//===- llmcp-inspect.cpp - Inspect a Qwen3.5 checkpoint --------------------===//
+//===- llmcp-inspect.cpp - Inspect a Qwen3.5 checkpoint
+//--------------------===//
 //
 // Reads only configuration and safetensors headers; tensor data is not read.
 //
@@ -25,17 +26,16 @@ using llvm::StringRef;
 
 namespace {
 
-llvm::cl::opt<std::string> modelPath(
-    "model", llvm::cl::desc("Path to the Qwen3.5 model directory"),
-    llvm::cl::Required);
+llvm::cl::opt<std::string>
+    modelPath("model", llvm::cl::desc("Path to the Qwen3.5 model directory"),
+              llvm::cl::Required);
 
 llvm::cl::opt<bool> verbose("verbose",
                             llvm::cl::desc("Print every tensor in the layout"),
                             llvm::cl::init(false));
 
 int fail(llvm::Error error) {
-  llvm::errs() << "llmcp-inspect: " << llvm::toString(std::move(error))
-               << "\n";
+  llvm::errs() << "llmcp-inspect: " << llvm::toString(std::move(error)) << "\n";
   return 1;
 }
 
@@ -88,8 +88,8 @@ int main(int argc, char **argv) {
   if (!shardsOrErr)
     return fail(shardsOrErr.takeError());
   if (shardsOrErr->empty())
-    return fail(llvm::createStringError(
-        llvm::inconvertibleErrorCode(), "no safetensors shards found"));
+    return fail(llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                        "no safetensors shards found"));
 
   TensorMap tensors;
   for (const std::string &shard : *shardsOrErr) {
@@ -100,9 +100,9 @@ int main(int argc, char **argv) {
     for (const auto &entry : *shardTensors) {
       auto inserted = tensors.try_emplace(entry.first(), entry.second);
       if (!inserted.second)
-        return fail(llvm::createStringError(
-            llvm::inconvertibleErrorCode(),
-            llvm::Twine("duplicate tensor '") + entry.first() + "'"));
+        return fail(llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                            llvm::Twine("duplicate tensor '") +
+                                                entry.first() + "'"));
     }
   }
 
@@ -128,8 +128,8 @@ int main(int argc, char **argv) {
                << ", head dim: " << config.text.headDim
                << ", rotary dim: " << config.getRotaryDim() << "\n";
   llvm::outs() << "checkpoint bytes: " << checkpointBytes << "\n";
-  llvm::outs() << "arena bytes: " << layout.getTotalBytes()
-               << " (header " << layout.getHeaderBytes() << ", group stride "
+  llvm::outs() << "arena bytes: " << layout.getTotalBytes() << " (header "
+               << layout.getHeaderBytes() << ", group stride "
                << layout.getGroupStride() << ", groups "
                << layout.getNumGroups() << ")\n";
   llvm::outs() << "embedding offset: " << layout.getEmbeddingOffset()

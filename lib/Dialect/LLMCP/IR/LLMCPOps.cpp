@@ -1,4 +1,5 @@
-//===- LLMCPOps.cpp - LLMCP operation implementations ----------------------===//
+//===- LLMCPOps.cpp - LLMCP operation implementations
+//----------------------===//
 //
 //===----------------------------------------------------------------------===//
 
@@ -19,8 +20,7 @@ namespace {
 /// Returns true when two dimensions are compatible, treating a dynamic
 /// dimension as compatible with anything.
 bool areCompatible(int64_t lhs, int64_t rhs) {
-  return ShapedType::isDynamic(lhs) || ShapedType::isDynamic(rhs) ||
-         lhs == rhs;
+  return ShapedType::isDynamic(lhs) || ShapedType::isDynamic(rhs) || lhs == rhs;
 }
 
 } // namespace
@@ -77,11 +77,9 @@ LogicalResult RmsNormOp::verify() {
     if (!areCompatible(inputType.getDimSize(i), outputType.getDimSize(i)))
       return emitOpError("output shape must match input shape");
 
-  const int64_t inputLastDim =
-      inputType.getDimSize(inputType.getRank() - 1);
+  const int64_t inputLastDim = inputType.getDimSize(inputType.getRank() - 1);
   if (!areCompatible(inputLastDim, weightType.getDimSize(0)))
-    return emitOpError(
-        "weight length must match the last input dimension");
+    return emitOpError("weight length must match the last input dimension");
 
   if (inputType.getElementType() != weightType.getElementType())
     return emitOpError("input and weight element types must match");

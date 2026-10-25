@@ -67,7 +67,7 @@ struct ModelConfig {
 
   /// Parses a config.json buffer. Exposed for unit tests.
   static llvm::Expected<ModelConfig> parse(llvm::StringRef json,
-                                          llvm::StringRef modelDir);
+                                           llvm::StringRef modelDir);
 
   /// Checks shape relationships and the layer-type pattern.
   llvm::Error verify() const;

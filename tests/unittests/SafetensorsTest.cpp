@@ -30,8 +30,7 @@ TEST(SafetensorsTest, ParsesHeaderAndOffsets) {
   const uint64_t dataStart = 8 + header.size();
   const uint64_t fileSize = dataStart + 16;
 
-  auto tensors =
-      parseSafetensorsHeader(header, dataStart, fileSize);
+  auto tensors = parseSafetensorsHeader(header, dataStart, fileSize);
   ASSERT_TRUE(!!tensors) << llvm::toString(tensors.takeError());
   ASSERT_EQ(tensors->size(), 2u);
 

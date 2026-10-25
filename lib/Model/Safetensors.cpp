@@ -38,17 +38,15 @@ uint64_t TensorInfo::getNumElements() const {
   return numElements;
 }
 
-llvm::Expected<uint64_t>
-mlir::llmcp::getSafetensorsDTypeSize(StringRef dtype) {
-  if (dtype == "BF16" || dtype == "F16" || dtype == "I16" ||
-      dtype == "U16")
+llvm::Expected<uint64_t> mlir::llmcp::getSafetensorsDTypeSize(StringRef dtype) {
+  if (dtype == "BF16" || dtype == "F16" || dtype == "I16" || dtype == "U16")
     return 2;
   if (dtype == "F32" || dtype == "I32" || dtype == "U32")
     return 4;
   if (dtype == "F64" || dtype == "I64" || dtype == "U64")
     return 8;
-  if (dtype == "I8" || dtype == "U8" || dtype == "BOOL" ||
-      dtype == "F8_E4M3" || dtype == "F8_E5M2")
+  if (dtype == "I8" || dtype == "U8" || dtype == "BOOL" || dtype == "F8_E4M3" ||
+      dtype == "F8_E5M2")
     return 1;
   return makeError(llvm::Twine("unsupported safetensors dtype '") + dtype +
                    "'");
@@ -56,7 +54,7 @@ mlir::llmcp::getSafetensorsDTypeSize(StringRef dtype) {
 
 llvm::Expected<TensorMap>
 mlir::llmcp::parseSafetensorsHeader(StringRef json, uint64_t dataStart,
-                                   uint64_t fileSize) {
+                                    uint64_t fileSize) {
   if (dataStart > fileSize)
     return makeError("safetensors header extends past end of file");
 
@@ -133,8 +131,7 @@ mlir::llmcp::parseSafetensorsHeader(StringRef json, uint64_t dataStart,
   return tensors;
 }
 
-llvm::Expected<TensorMap>
-mlir::llmcp::readSafetensorsFile(StringRef path) {
+llvm::Expected<TensorMap> mlir::llmcp::readSafetensorsFile(StringRef path) {
   std::ifstream input(path.str(), std::ios::binary | std::ios::ate);
   if (!input)
     return makeError(llvm::Twine("cannot open safetensors file '") + path +
@@ -193,8 +190,8 @@ mlir::llmcp::readSafetensorsIndex(StringRef path) {
   for (const auto &entry : *weightMap) {
     std::optional<StringRef> shard = entry.second.getAsString();
     if (!shard)
-      return makeError(llvm::Twine("weight_map entry '") + StringRef(entry.first) +
-                       "' must be a string");
+      return makeError(llvm::Twine("weight_map entry '") +
+                       StringRef(entry.first) + "' must be a string");
     index.weightMap.try_emplace(StringRef(entry.first), shard->str());
   }
 

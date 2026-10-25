@@ -1,4 +1,5 @@
-//===- WeightLayout.cpp - Deterministic weight arena layout ----------------===//
+//===- WeightLayout.cpp - Deterministic weight arena layout
+//----------------===//
 //
 //===----------------------------------------------------------------------===//
 
@@ -91,8 +92,7 @@ llvm::Expected<WeightLayout> WeightLayout::build(const ModelConfig &config,
   for (int64_t group = 1; group < numGroups; ++group) {
     for (int64_t i = 0; i < groupSize; ++i) {
       if (config.layerTypes[group * groupSize + i] != config.layerTypes[i])
-        return makeError(
-            "all layer groups must have the same mixer pattern");
+        return makeError("all layer groups must have the same mixer pattern");
     }
   }
 
@@ -130,18 +130,17 @@ llvm::Expected<WeightLayout> WeightLayout::build(const ModelConfig &config,
     const uint64_t groupStart = cursor;
     for (int64_t i = 0; i < groupSize; ++i) {
       const int64_t layer = group * groupSize + i;
-      const std::string prefix =
-          (llvm::Twine("model.language_model.layers.") + llvm::Twine(layer) +
-           ".")
-              .str();
+      const std::string prefix = (llvm::Twine("model.language_model.layers.") +
+                                  llvm::Twine(layer) + ".")
+                                     .str();
 
       if (config.isLinearLayer(layer)) {
         if (llvm::Error error = layout.addLayerTensor(
                 prefix, "input_layernorm.weight", normShape, tensors, cursor))
           return std::move(error);
-        if (llvm::Error error = layout.addLayerTensor(
-                prefix, "post_attention_layernorm.weight", normShape, tensors,
-                cursor))
+        if (llvm::Error error =
+                layout.addLayerTensor(prefix, "post_attention_layernorm.weight",
+                                      normShape, tensors, cursor))
           return std::move(error);
 
         const llvm::SmallVector<int64_t, 4> qkvShape{qkvDim, hidden};
@@ -150,51 +149,50 @@ llvm::Expected<WeightLayout> WeightLayout::build(const ModelConfig &config,
         const llvm::SmallVector<int64_t, 4> abVectorShape{numValueHeads};
         const llvm::SmallVector<int64_t, 4> valueHeadShape{valueHeadDim};
         const llvm::SmallVector<int64_t, 4> outShape{hidden, valueDim};
-        const llvm::SmallVector<int64_t, 4> convShape{
-            qkvDim, 1, tc.linearConvKernelDim};
+        const llvm::SmallVector<int64_t, 4> convShape{qkvDim, 1,
+                                                      tc.linearConvKernelDim};
 
-        if (llvm::Error error = layout.addLayerTensor(
-                prefix, "linear_attn.in_proj_qkv.weight", qkvShape, tensors,
-                cursor))
+        if (llvm::Error error =
+                layout.addLayerTensor(prefix, "linear_attn.in_proj_qkv.weight",
+                                      qkvShape, tensors, cursor))
+          return std::move(error);
+        if (llvm::Error error =
+                layout.addLayerTensor(prefix, "linear_attn.in_proj_z.weight",
+                                      zShape, tensors, cursor))
+          return std::move(error);
+        if (llvm::Error error =
+                layout.addLayerTensor(prefix, "linear_attn.in_proj_a.weight",
+                                      abShape, tensors, cursor))
+          return std::move(error);
+        if (llvm::Error error =
+                layout.addLayerTensor(prefix, "linear_attn.in_proj_b.weight",
+                                      abShape, tensors, cursor))
+          return std::move(error);
+        if (llvm::Error error =
+                layout.addLayerTensor(prefix, "linear_attn.conv1d.weight",
+                                      convShape, tensors, cursor))
           return std::move(error);
         if (llvm::Error error = layout.addLayerTensor(
-                prefix, "linear_attn.in_proj_z.weight", zShape, tensors,
-                cursor))
-          return std::move(error);
-        if (llvm::Error error = layout.addLayerTensor(
-                prefix, "linear_attn.in_proj_a.weight", abShape, tensors,
-                cursor))
-          return std::move(error);
-        if (llvm::Error error = layout.addLayerTensor(
-                prefix, "linear_attn.in_proj_b.weight", abShape, tensors,
-                cursor))
-          return std::move(error);
-        if (llvm::Error error = layout.addLayerTensor(
-                prefix, "linear_attn.conv1d.weight", convShape, tensors,
-                cursor))
-          return std::move(error);
-        if (llvm::Error error = layout.addLayerTensor(
-                prefix, "linear_attn.dt_bias", abVectorShape, tensors,
-                cursor))
+                prefix, "linear_attn.dt_bias", abVectorShape, tensors, cursor))
           return std::move(error);
         if (llvm::Error error = layout.addLayerTensor(
                 prefix, "linear_attn.A_log", abVectorShape, tensors, cursor))
           return std::move(error);
-        if (llvm::Error error = layout.addLayerTensor(
-                prefix, "linear_attn.norm.weight", valueHeadShape, tensors,
-                cursor))
+        if (llvm::Error error =
+                layout.addLayerTensor(prefix, "linear_attn.norm.weight",
+                                      valueHeadShape, tensors, cursor))
           return std::move(error);
-        if (llvm::Error error = layout.addLayerTensor(
-                prefix, "linear_attn.out_proj.weight", outShape, tensors,
-                cursor))
+        if (llvm::Error error =
+                layout.addLayerTensor(prefix, "linear_attn.out_proj.weight",
+                                      outShape, tensors, cursor))
           return std::move(error);
       } else {
         if (llvm::Error error = layout.addLayerTensor(
                 prefix, "input_layernorm.weight", normShape, tensors, cursor))
           return std::move(error);
-        if (llvm::Error error = layout.addLayerTensor(
-                prefix, "post_attention_layernorm.weight", normShape, tensors,
-                cursor))
+        if (llvm::Error error =
+                layout.addLayerTensor(prefix, "post_attention_layernorm.weight",
+                                      normShape, tensors, cursor))
           return std::move(error);
 
         const llvm::SmallVector<int64_t, 4> qShape{qProjOut, hidden};
@@ -215,12 +213,10 @@ llvm::Expected<WeightLayout> WeightLayout::build(const ModelConfig &config,
                 prefix, "self_attn.o_proj.weight", oShape, tensors, cursor))
           return std::move(error);
         if (llvm::Error error = layout.addLayerTensor(
-                prefix, "self_attn.q_norm.weight", headShape, tensors,
-                cursor))
+                prefix, "self_attn.q_norm.weight", headShape, tensors, cursor))
           return std::move(error);
         if (llvm::Error error = layout.addLayerTensor(
-                prefix, "self_attn.k_norm.weight", headShape, tensors,
-                cursor))
+                prefix, "self_attn.k_norm.weight", headShape, tensors, cursor))
           return std::move(error);
       }
 
@@ -244,8 +240,8 @@ llvm::Expected<WeightLayout> WeightLayout::build(const ModelConfig &config,
     cursor = groupStart + layout.groupStride_;
   }
 
-  if (llvm::Error error = layout.addTensor(
-          "model.language_model.norm.weight", normShape, tensors, cursor))
+  if (llvm::Error error = layout.addTensor("model.language_model.norm.weight",
+                                           normShape, tensors, cursor))
     return std::move(error);
   layout.finalNormOffset_ =
       *layout.getOffset("model.language_model.norm.weight");

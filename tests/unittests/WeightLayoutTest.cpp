@@ -11,8 +11,8 @@ using namespace mlir::llmcp;
 
 namespace {
 
-void addTensor(TensorMap &tensors, llvm::StringRef name,
-               llvm::StringRef dtype, llvm::ArrayRef<int64_t> shape) {
+void addTensor(TensorMap &tensors, llvm::StringRef name, llvm::StringRef dtype,
+               llvm::ArrayRef<int64_t> shape) {
   TensorInfo info;
   info.name = name.str();
   info.dtype = dtype.str();
@@ -65,13 +65,11 @@ TensorMap makeTensors() {
   for (int64_t layer = 0; layer < 4; ++layer) {
     const bool isLinear = layer != 3;
     const std::string prefix =
-        (llvm::Twine("model.language_model.layers.") + llvm::Twine(layer) +
-         ".")
+        (llvm::Twine("model.language_model.layers.") + llvm::Twine(layer) + ".")
             .str();
 
     addTensor(tensors, prefix + "input_layernorm.weight", "BF16", {8});
-    addTensor(tensors, prefix + "post_attention_layernorm.weight", "BF16",
-              {8});
+    addTensor(tensors, prefix + "post_attention_layernorm.weight", "BF16", {8});
 
     if (isLinear) {
       addTensor(tensors, prefix + "linear_attn.in_proj_qkv.weight", "BF16",

@@ -1,4 +1,5 @@
-//===- LLMCPTypes.cpp - LLMCP type implementation --------------------------===//
+//===- LLMCPTypes.cpp - LLMCP type implementation
+//--------------------------===//
 //
 // The initial dialect has no custom types. This translation unit keeps the
 // generated type definitions linked and gives future types a natural home.

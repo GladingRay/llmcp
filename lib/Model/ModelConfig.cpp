@@ -125,10 +125,8 @@ llvm::Expected<ModelConfig> ModelConfig::parse(StringRef json,
   if (tc.headDim == 0 && tc.numAttentionHeads != 0)
     tc.headDim = tc.hiddenSize / tc.numAttentionHeads;
 
-  tc.maxPositionEmbeddings =
-      readIntegerOr(*text, "max_position_embeddings", 0);
-  tc.fullAttentionInterval =
-      readIntegerOr(*text, "full_attention_interval", 4);
+  tc.maxPositionEmbeddings = readIntegerOr(*text, "max_position_embeddings", 0);
+  tc.fullAttentionInterval = readIntegerOr(*text, "full_attention_interval", 4);
 
   auto linearKeyHeads = readInteger(*text, "linear_num_key_heads");
   if (!linearKeyHeads)
@@ -150,8 +148,7 @@ llvm::Expected<ModelConfig> ModelConfig::parse(StringRef json,
     return linearValueHeadDim.takeError();
   tc.linearValueHeadDim = *linearValueHeadDim;
 
-  tc.linearConvKernelDim =
-      readIntegerOr(*text, "linear_conv_kernel_dim", 4);
+  tc.linearConvKernelDim = readIntegerOr(*text, "linear_conv_kernel_dim", 4);
 
   tc.attentionBias = readBoolOr(*text, "attention_bias", false);
   tc.attnOutputGate = readBoolOr(*text, "attn_output_gate", true);
@@ -167,8 +164,7 @@ llvm::Expected<ModelConfig> ModelConfig::parse(StringRef json,
   if (rope) {
     tc.ropeTheta = readNumberOr(*rope, "rope_theta", tc.ropeTheta);
     tc.partialRotaryFactor =
-        readNumberOr(*rope, "partial_rotary_factor",
-                     tc.partialRotaryFactor);
+        readNumberOr(*rope, "partial_rotary_factor", tc.partialRotaryFactor);
     tc.mropeInterleaved =
         readBoolOr(*rope, "mrope_interleaved", tc.mropeInterleaved);
     if (const auto *section = rope->getArray("mrope_section")) {
@@ -233,14 +229,11 @@ llvm::Error ModelConfig::verify() const {
     return makeError("num_hidden_layers must be positive");
   if (static_cast<int64_t>(layerTypes.size()) != tc.numHiddenLayers)
     return makeError(llvm::Twine("layer_types has ") +
-                     llvm::Twine(layerTypes.size()) +
-                     " entries, expected " +
+                     llvm::Twine(layerTypes.size()) + " entries, expected " +
                      llvm::Twine(tc.numHiddenLayers));
-  if (tc.hiddenSize <= 0 || tc.intermediateSize <= 0 ||
-      tc.vocabSize <= 0)
+  if (tc.hiddenSize <= 0 || tc.intermediateSize <= 0 || tc.vocabSize <= 0)
     return makeError("hidden/intermediate/vocab sizes must be positive");
-  if (tc.headDim <= 0 || tc.numAttentionHeads <= 0 ||
-      tc.numKeyValueHeads <= 0)
+  if (tc.headDim <= 0 || tc.numAttentionHeads <= 0 || tc.numKeyValueHeads <= 0)
     return makeError("attention head configuration must be positive");
   if (tc.numAttentionHeads % tc.numKeyValueHeads != 0)
     return makeError("num_attention_heads must be divisible by "
@@ -258,8 +251,8 @@ llvm::Error ModelConfig::verify() const {
   if (tc.rmsNormEps <= 0.0)
     return makeError("rms_norm_eps must be positive");
   if (tc.hiddenAct != "silu")
-    return makeError(llvm::Twine("unsupported hidden_act '") +
-                     tc.hiddenAct + "' (only 'silu' is supported)");
+    return makeError(llvm::Twine("unsupported hidden_act '") + tc.hiddenAct +
+                     "' (only 'silu' is supported)");
   if (tc.fullAttentionInterval <= 0)
     return makeError("full_attention_interval must be positive");
   if (tc.numHiddenLayers % tc.fullAttentionInterval != 0)

@@ -1,4 +1,5 @@
-//===- Safetensors.h - Read safetensors headers ------------------*- C++ -*-===//
+//===- Safetensors.h - Read safetensors headers ------------------*- C++
+//-*-===//
 //
 // The compiler only needs tensor names, shapes, dtypes and byte offsets. Data
 // is accessed later through the packed weight arena, not through this reader.
@@ -45,9 +46,9 @@ llvm::Expected<uint64_t> getSafetensorsDTypeSize(llvm::StringRef dtype);
 ///
 /// `dataStart` is the absolute file offset of the first data byte, and
 /// `fileSize` is the total file size in bytes.
-llvm::Expected<TensorMap>
-parseSafetensorsHeader(llvm::StringRef json, uint64_t dataStart,
-                       uint64_t fileSize);
+llvm::Expected<TensorMap> parseSafetensorsHeader(llvm::StringRef json,
+                                                 uint64_t dataStart,
+                                                 uint64_t fileSize);
 
 /// Reads the header of one safetensors shard without reading tensor data.
 llvm::Expected<TensorMap> readSafetensorsFile(llvm::StringRef path);
