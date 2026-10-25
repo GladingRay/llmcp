@@ -101,7 +101,7 @@ top5 hf:   [11, 0, 13, 1017, 4858]
 
 ## 边界
 
-当前 C++ 执行器有两条路径：默认手写 `runModel`，以及 `--aot` 加载 `libqwen35_aot.dylib` 的 AOT 单 token 路径。AOT 路径已能得到有限 logits 并与 HF top-1 对齐；多 token AOT decode 仍由手写路径完成。
+当前 C++ 执行器有两条路径：默认手写 `runModel`，以及 `--aot` 加载 `libqwen35_aot.dylib` 的 AOT 单 token 路径。AOT dylib 可被独立驱动正确调用，但在 `llmcp-run` 内先初始化 tokenizer 再调用 AOT 会输出 NaN；该冲突尚未解决。
 
 尚未完成：
 
