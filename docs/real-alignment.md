@@ -77,8 +77,9 @@ AOT 路径：
 # aot logits: 248320 next 11
 ```
 
-AOT 路径当前只支持单 token；`--aot` 会在子进程里做 tokenize，避免
-tokenizers-cpp 在 AOT 调用前加载导致的运行时污染。
+AOT 路径严格按正常顺序执行：先加载 tokenizer，再调用 AOT，不使用子进程。
+之前的 NaN 根因是 lowering 中 `linalg.matmul` 的输出 accumulator 未初始化；
+现在 `LinearOp` / `LmHeadOp` 会先用 `linalg.fill` 清零。
 
 Python 语义参考结果：
 
@@ -101,7 +102,7 @@ top5 hf:   [11, 0, 13, 1017, 4858]
 
 ## 边界
 
-当前 C++ 执行器有两条路径：默认手写 `runModel`，以及 `--aot` 加载 `libqwen35_aot.dylib` 的 AOT 单 token 路径。AOT dylib 可被独立驱动正确调用，但在 `llmcp-run` 内先初始化 tokenizer 再调用 AOT 会输出 NaN；该冲突尚未解决。
+当前 C++ 执行器有两条路径：默认手写 `runModel`，以及 `--aot` 加载 `libqwen35_aot.dylib` 的 AOT 单 token 路径。两条路径都可用；AOT 的 NaN 已通过初始化 matmul accumulator 修复。
 
 尚未完成：
 

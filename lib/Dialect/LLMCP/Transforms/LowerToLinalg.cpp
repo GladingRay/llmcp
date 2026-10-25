@@ -81,15 +81,22 @@ public:
     auto f32Type = rewriter.getF32Type();
     auto accType = RankedTensorType::get(resultType.getShape(), f32Type);
     Value acc = createEmpty(rewriter, loc, accType, input);
+    Value zero =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+    Value accInit =
+        rewriter.create<linalg::FillOp>(loc, ValueRange{zero}, ValueRange{acc})
+            .getResult(0);
 
     Value matmul;
     if (op.getTransposeB()) {
-      auto mm = rewriter.create<linalg::MatmulOp>(
-          loc, TypeRange{accType}, ValueRange{input, weight}, ValueRange{acc});
+      auto mm = rewriter.create<linalg::MatmulOp>(loc, TypeRange{accType},
+                                                  ValueRange{input, weight},
+                                                  ValueRange{accInit});
       matmul = mm.getResult(0);
     } else {
       auto mm = rewriter.create<linalg::MatmulTransposeBOp>(
-          loc, TypeRange{accType}, ValueRange{input, weight}, ValueRange{acc});
+          loc, TypeRange{accType}, ValueRange{input, weight},
+          ValueRange{accInit});
       matmul = mm.getResult(0);
     }
 
@@ -460,9 +467,15 @@ public:
     auto resultType = cast<RankedTensorType>(op.getLogits().getType());
     Value table = toTensor(rewriter, loc, op.getTable());
     Value output = createEmpty(rewriter, loc, resultType, op.getHidden());
+    Value zero =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+    Value outputInit =
+        rewriter
+            .create<linalg::FillOp>(loc, ValueRange{zero}, ValueRange{output})
+            .getResult(0);
     auto matmul = rewriter.create<linalg::MatmulTransposeBOp>(
         loc, TypeRange{resultType}, ValueRange{op.getHidden(), table},
-        ValueRange{output});
+        ValueRange{outputInit});
     rewriter.replaceOp(op, matmul.getResult(0));
     return success();
   }

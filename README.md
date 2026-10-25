@@ -126,7 +126,7 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 ./build/bin/llmcp-run --weights build/weights.bin \
   --manifest build/weights.json --text 'Hello world' --max-new-tokens 2
 
-# AOT 单 token 路径（当前已知会输出 NaN）
+# AOT 单 token 路径
 ./build/bin/llmcp-run --weights build/weights.bin \
   --manifest build/weights.json --text Hello \
   --aot build/libqwen35_aot.dylib
