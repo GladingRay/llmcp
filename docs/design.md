@@ -375,6 +375,11 @@ llmcp/
 │   ├── build.sh
 │   ├── bench.sh
 │   └── fetch_reference.sh
+├── third_party/
+│   ├── CMakeLists.txt
+│   ├── README.md
+│   ├── utf8proc/                # submodule, v2.11.0
+│   └── googletest/              # submodule, v1.18.0
 └── AGENTS.md
 ```
 
@@ -405,8 +410,8 @@ llmcp/
 | CMake | 4.1.1 | `find_package(MLIR)`、构建与测试 | 必需 | 已安装 |
 | Ninja | 1.13.2 | 构建后端 | 必需 | 已安装 |
 | Homebrew clang++ | 20.1.8 | 与 MLIR 同一工具链的 C++17 编译器 | 必需 | 已安装 |
-| utf8proc | 2.11.0 | tokenizer 的 NFC 归一化与 Unicode 分类（`\p{L}`/`\p{M}`/`\p{N}`） | 必需 | 已安装；建议 vendor |
-| GoogleTest | 1.18.0 | op verifier、layout、sampler、tokenizer 的 C++ 单测 | 测试必需 | **未安装** |
+| utf8proc | 2.11.0 | tokenizer 的 NFC 归一化与 Unicode 分类（`\p{L}`/`\p{M}`/`\p{N}`） | 必需 | 已 vendor（submodule v2.11.0） |
+| GoogleTest | 1.18.0 | op verifier、layout、sampler、tokenizer 的 C++ 单测 | 测试必需 | 已 vendor（submodule v1.18.0） |
 | ccache | 4.14.2 | 编译缓存；MLIR/TableGen 重编译提速 | 可选（推荐） | **未安装** |
 | lit | 23.1.4 | `llmcp-opt` 的 IR 文件测试驱动 | 测试必需 | **未安装（装在 venv314）** |
 | `FileCheck` / `llvm-mca` / `clang-tidy` / `llvm-cov` | 20.1.8 | IR 断言 / 机器码分析 / 静态检查 / 覆盖率 | 开发测试 | 随 LLVM 安装，但不在 PATH |
@@ -440,11 +445,18 @@ llmcp/
 #### 4.3.4 安装命令
 
 ```bash
-# 核心：只缺 googletest 和（可选的）ccache
-brew install googletest ccache
+# 拉取 vendored 源码（utf8proc / googletest）
+git submodule update --init --recursive
+
+# 只缺（可选的）ccache
+brew install ccache
 
 # 让 llvm@20 的 clang-tidy/FileCheck/llvm-mca/llvm-cov 进入 PATH
 export PATH="/opt/homebrew/opt/llvm@20/bin:$PATH"
+
+# C 和 C++ 都用 Homebrew clang 20，避免 AppleClang 21 + macOS 27 SDK 的链接问题
+export CC=/opt/homebrew/opt/llvm@20/bin/clang
+export CXX=/opt/homebrew/opt/llvm@20/bin/clang++
 
 # 如果装了 ccache，在 CMake 配置时启用
 # -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
@@ -457,24 +469,22 @@ V=/Users/guorui/Work/models/venv314
 # "$V/bin/python" -m pip install pillow torchvision
 ```
 
-`utf8proc` 已由 Homebrew 安装；它只提供 `libutf8proc.pc`（在 `/opt/homebrew/opt/utf8proc/lib/pkgconfig`），没有 CMake config，默认 `pkg-config` 也找不到。建议把同版本源码 vendor 到 `third_party/utf8proc/`（MIT），用 `add_subdirectory` 或直接编译一个静态库；若用 Homebrew 版本，则用 `find_path`/`find_library` 指定路径：
+`utf8proc` 和 `googletest` 已通过 git submodule 固定到 `third_party/utf8proc/` 与 `third_party/googletest/`，根工程只需：
 
 ```cmake
-find_path(UTF8PROC_INCLUDE_DIR utf8proc.h HINTS /opt/homebrew/opt/utf8proc/include)
-find_library(UTF8PROC_LIBRARY NAMES utf8proc HINTS /opt/homebrew/opt/utf8proc/lib)
-```
-
-`googletest` 安装后：
-
-```cmake
-find_package(GTest CONFIG REQUIRED)
+add_subdirectory(third_party)
+target_link_libraries(MLIRLLMCPRuntime PRIVATE utf8proc)
 target_link_libraries(llmcp_unittests PRIVATE GTest::gtest_main)
 ```
+
+`third_party/CMakeLists.txt` 会关闭两个项目的 install/testing 目标，并保留 `utf8proc`、`GTest::gtest`、`GTest::gtest_main` 三个 target。子模块的版本、commit、升级流程见 [third_party/README.md](../third_party/README.md)。
+
+如果临时要用 Homebrew 的 utf8proc 版本，它只提供 `libutf8proc.pc`（在 `/opt/homebrew/opt/utf8proc/lib/pkgconfig`），没有 CMake config；此时才需要 `find_path`/`find_library` 或设置 `PKG_CONFIG_PATH`。正式构建统一用 vendored 版本。
 
 #### 4.3.5 许可证提示
 
 - LLVM/MLIR、lit、clang-tools：Apache-2.0 WITH LLVM-exception。
-- utf8proc：MIT；GoogleTest：BSD-3-Clause。
+- utf8proc：MIT；GoogleTest：BSD-3-Clause；vendored 源码保留各自的 LICENSE 文件。
 - ccache：GPL-3.0-or-later，仅作为构建期可执行工具，不链接进产物。
 - PyTorch：BSD-3-Clause；Transformers：Apache-2.0；NumPy：BSD-3-Clause；safetensors：Apache-2.0。
 
@@ -503,6 +513,14 @@ OVERVIEW: MLIR CPU execution driver
   - 自研 `llmcp-opt` 注册自己的 pass；或
   - 用 Transform dialect 脚本做实验，再把稳定 schedule 固化成 C++ pass。
 - LLVM 20 的 JIT 工具名是 `mlir-runner`（不是旧版 `mlir-cpu-runner`）。
+- **C 和 C++ 编译器都要指向 Homebrew clang 20**。如果只指定 `CMAKE_CXX_COMPILER`，CMake 会为 C 语言选择 `/usr/bin/cc`（AppleClang 21）；在当前 macOS 27 SDK 下，AppleClang 21 链接 `libSystem.tbd` 会报 `unknown architecture arm64e.x1-macos`，导致 `project(... LANGUAGES C CXX)` 直接失败。实测以下配置可以正常构建 vendored utf8proc + googletest：
+
+```bash
+export CC=/opt/homebrew/opt/llvm@20/bin/clang
+export CXX=/opt/homebrew/opt/llvm@20/bin/clang++
+```
+
+> 这是本机 SDK/CLT 组合的问题，不是 utf8proc 或 googletest 的问题；固定 Homebrew clang 20 同时也能保证和 MLIR 的 ABI 一致。
 
 ### 4.5 CMake 骨架
 
@@ -526,8 +544,20 @@ include_directories(${MLIR_INCLUDE_DIRS})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_definitions(${LLVM_DEFINITIONS})
 
+add_subdirectory(third_party)
+
 add_subdirectory(lib)
 add_subdirectory(tools)
+```
+
+配置时请同时指定 C/C++ 编译器：
+
+```bash
+cmake -G Ninja -S . -B build \
+  -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang \
+  -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang++ \
+  -DMLIR_DIR=/opt/homebrew/opt/llvm@20/lib/cmake/mlir \
+  -DLLVM_DIR=/opt/homebrew/opt/llvm@20/lib/cmake/llvm
 ```
 
 方言定义（ODS 片段，展示风格）：

@@ -21,7 +21,8 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 
 - LLVM/MLIR 20.1.8（Homebrew `llvm@20`）
 - Python：`/Users/guorui/Work/models/venv314`（Python 3.14.8，`torch 2.14.1`，`transformers 5.20.2`）
-- 第三方依赖清单、用途与安装命令见 [设计文档 4.3 节](docs/design.md#43-依赖清单与用途)
+- 第三方源码：git submodule 固定版本（`utf8proc v2.11.0`、`googletest v1.18.0`），见 [third_party/README.md](third_party/README.md)
+- 依赖清单、用途与安装命令见 [设计文档 4.3 节](docs/design.md#43-依赖清单与用途)
 
 ## 文档
 
@@ -35,8 +36,13 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 ## 快速开始（规划）
 
 ```bash
-# 1. 构建
+# 0. 拉取 vendored 第三方源码
+git submodule update --init --recursive
+
+# 1. 构建（C/C++ 都用 Homebrew clang 20）
 cmake -G Ninja -S . -B build \
+  -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang \
+  -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang++ \
   -DMLIR_DIR=/opt/homebrew/opt/llvm@20/lib/cmake/mlir \
   -DLLVM_DIR=/opt/homebrew/opt/llvm@20/lib/cmake/llvm
 ninja -C build
