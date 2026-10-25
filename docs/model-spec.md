@@ -311,7 +311,7 @@ kv_cache[8][2][4][max_seq][256] bf16
 
 即 `[layer, k_or_v, kv_head, position, head_dim]`，同一 head 的历史位置连续，attention 顺序读取友好。每个 token 写入 8 × 2 × 4 × 256 × 2 = 32KB。
 
-缓存里保存的是**经过 k_norm 与 RoPE 之后的 k**，以及 v；不要缓存投影后的原始 k。decode 在第 `pos` 个位置写入后，attention 读取 `[0, pos]` 闭区间。
+缓存里保存的是**经过 k_norm 与 RoPE 之后的 k**，以及 v；不要缓存投影后的原始 k。`llmcp.attention` 通过 `position` / `cache_length` 操作数指定写入起点与当前有效长度：decode 在 `position` 写入后读取 `[0, position]` 闭区间，prefill 写入 `[position, position+S)` 并读取 `[0, position+S)`。
 
 ---
 

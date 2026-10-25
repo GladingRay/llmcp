@@ -830,6 +830,7 @@ func.func @llmcp_embed(%tokens: tensor<?xindex>, %arena: memref<?xi8>)
 func.func @llmcp_forward(
     %hidden: tensor<?x2560xbf16>,
     %cos: tensor<?x64xf32>, %sin: tensor<?x64xf32>,
+    %position: index, %cache_length: index,
     %arena: memref<?xi8>,
     %kv: memref<8x2x4x?x256xbf16>,
     %delta_state: memref<24x32x128x128xf32>,
@@ -980,8 +981,9 @@ func.func @llmcp_model(...) -> tensor<?x248320xf32>
 **`llmcp.attention`**
 
 - q `[S, 16, 256]`，k/v `[S, 4, 256]`，gate 可选 `[S, 16, 256]`，cache `[8, 2, 4, capacity, 256]` bf16。
-- `mode="decode"`：S=1，写 cache 的 `pos`，读 `[0, pos]`。
-- `mode="prefill"`：写 `[pos, pos+S)`，causal mask。
+- 增加 `%position: index` 和 `%cache_length: index` 操作数。
+- `mode="decode"`：S=1，写 cache 的 `position`，读 `[0, position]`。
+- `mode="prefill"`：写 `[position, position+S)`，causal mask；`cache_length` 是本次调用后 cache 的有效长度。
 - 输出 `[S, 16, 256]` bf16。
 - verifier：GQA 整除、head_dim 256、cache slot 合法、capacity 足够。
 

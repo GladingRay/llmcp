@@ -303,7 +303,8 @@ def emit_gated_delta_net(conv, a, b, a_log, dt_bias, state) -> str:
     return "\n".join(lines)
 
 
-def emit_attention(qg, k, v, q_norm, k_norm, cos, sin, cache) -> str:
+def emit_attention(qg, k, v, q_norm, k_norm, cos, sin, cache, position,
+                   cache_length) -> str:
     seq = len(qg)
     qg_width = len(qg[0])
     kv_width = len(k[0])
@@ -338,7 +339,10 @@ def emit_attention(qg, k, v, q_norm, k_norm, cos, sin, cache) -> str:
         f"tensor<{seq}x{rotary}xf32>",
         f"  %cache = memref.get_global @cache : memref<1x2x{num_kv_heads}x"
         f"{capacity}x{head_dim}xbf16>",
-        f"  %0 = llmcp.attention %qg, %k, %v, %qn, %kn, %cos, %sin, %cache "
+        f"  %position = arith.constant {position} : index",
+        f"  %cache_length = arith.constant {cache_length} : index",
+        f"  %0 = llmcp.attention %qg, %k, %v, %qn, %kn, %cos, %sin, %cache, "
+        f"%position, %cache_length "
         f"{{layer_index = 0 : i64, num_heads = {num_heads} : i64, "
         f"num_kv_heads = {num_kv_heads} : i64, head_dim = {head_dim} : i64, "
         f"rotary_dim = {rotary} : i64, mode = \"prefill\"}} : "
@@ -346,7 +350,8 @@ def emit_attention(qg, k, v, q_norm, k_norm, cos, sin, cache) -> str:
         f"tensor<{seq}x{kv_width}xbf16>, memref<{head_dim}xbf16>, "
         f"memref<{head_dim}xbf16>, tensor<{seq}x{rotary}xf32>, "
         f"tensor<{seq}x{rotary}xf32>, memref<1x2x{num_kv_heads}x{capacity}x"
-        f"{head_dim}xbf16>) -> tensor<{seq}x{num_heads * head_dim}xbf16>",
+        f"{head_dim}xbf16>, index, index) -> "
+        f"tensor<{seq}x{num_heads * head_dim}xbf16>",
     ]
     for t in range(seq):
         for c in range(num_heads * head_dim):
@@ -638,6 +643,7 @@ def main():
     # attention: q/gate split, q/k norm, partial RoPE, GQA, causal softmax,
     # output gate, and KV cache write.
     seq, num_heads, num_kv_heads, head_dim, rotary = 2, 2, 1, 4, 2
+    cache_capacity = 2
     qg = torch.randn(seq, num_heads * 2 * head_dim).to(bf16)
     k = torch.randn(seq, num_kv_heads * head_dim).to(bf16)
     v = torch.randn(seq, num_kv_heads * head_dim).to(bf16)
@@ -645,47 +651,74 @@ def main():
     k_norm = torch.randn(head_dim).to(bf16)
     cos = torch.randn(seq, rotary).float()
     sin = torch.randn(seq, rotary).float()
-    cache = torch.randn(1, 2, num_kv_heads, seq, head_dim).to(bf16)
+    cache = torch.randn(1, 2, num_kv_heads, cache_capacity, head_dim).to(bf16)
 
-    q = qg.view(seq, num_heads, 2, head_dim)[:, :, 0, :].float()
-    gate = qg.view(seq, num_heads, 2, head_dim)[:, :, 1, :].float()
-    kf = k.view(seq, num_kv_heads, head_dim).float()
-    vf = v.view(seq, num_kv_heads, head_dim).float()
+    def attention_reference(qg_, k_, v_, q_norm_, k_norm_, cos_, sin_, cache_,
+                            position_):
+        q_ = qg_.view(-1, num_heads, 2, head_dim)[:, :, 0, :].float()
+        gate_ = qg_.view(-1, num_heads, 2, head_dim)[:, :, 1, :].float()
+        kf_ = k_.view(-1, num_kv_heads, head_dim).float()
+        vf_ = v_.view(-1, num_kv_heads, head_dim).float()
 
-    def norm_rope(x):
-        inv = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-6)
-        weight = (1.0 + (q_norm if x is q else k_norm).float())
-        y = x * inv * weight
-        out = y.clone()
-        for d in range(rotary):
-            partner = d - rotary // 2 if d >= rotary // 2 else d + rotary // 2
-            sign = 1.0 if d >= rotary // 2 else -1.0
-            cos_d = cos[:, d].view(seq, 1)
-            sin_d = sin[:, d].view(seq, 1)
-            out[..., d] = y[..., d] * cos_d + sign * y[..., partner] * sin_d
-        return out.to(bf16)
+        def norm_rope(x, weight, cos_v, sin_v):
+            inv = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-6)
+            y = x * inv * (1.0 + weight.float())
+            out = y.clone()
+            for d in range(rotary):
+                partner = d - rotary // 2 if d >= rotary // 2 else d + rotary // 2
+                sign = 1.0 if d >= rotary // 2 else -1.0
+                cos_d = cos_v[:, d].view(-1, 1)
+                sin_d = sin_v[:, d].view(-1, 1)
+                out[..., d] = y[..., d] * cos_d + sign * y[..., partner] * sin_d
+            return out.to(bf16)
 
-    qn = norm_rope(q)
-    kn = norm_rope(kf)
-    ref_cache = cache.clone()
-    ref_cache[0, 0, :, :seq, :] = kn.transpose(0, 1)
-    ref_cache[0, 1, :, :seq, :] = vf.transpose(0, 1)
-    scale = 1.0 / (head_dim ** 0.5)
-    ref_out = torch.empty(seq, num_heads * head_dim, dtype=bf16)
-    group = num_heads // num_kv_heads
-    for t in range(seq):
-        for h in range(num_heads):
-            kh = h // group
-            scores = (qn[t, h].float() @ ref_cache[0, 0, kh, :t + 1].float().T) * scale
-            probs = torch.softmax(scores, dim=-1)
-            ctx = probs @ ref_cache[0, 1, kh, :t + 1].float()
-            gated = ctx * torch.sigmoid(gate[t, h])
-            ref_out[t, h * head_dim:(h + 1) * head_dim] = gated.to(bf16)
+        qn_ = norm_rope(q_, q_norm_, cos_, sin_)
+        kn_ = norm_rope(kf_, k_norm_, cos_, sin_)
+        ref_cache = cache_.clone()
+        n = qn_.shape[0]
+        ref_cache[0, 0, :, position_:position_ + n, :] = kn_.transpose(0, 1)
+        ref_cache[0, 1, :, position_:position_ + n, :] = vf_.transpose(0, 1)
+        scale = 1.0 / (head_dim ** 0.5)
+        ref_out = torch.empty(n, num_heads * head_dim, dtype=bf16)
+        group = num_heads // num_kv_heads
+        for t in range(n):
+            global_pos = position_ + t
+            for h in range(num_heads):
+                kh = h // group
+                scores = (qn_[t, h].float() @
+                          ref_cache[0, 0, kh, :global_pos + 1].float().T) * scale
+                probs = torch.softmax(scores, dim=-1)
+                ctx = probs @ ref_cache[0, 1, kh, :global_pos + 1].float()
+                gated = ctx * torch.sigmoid(gate_[t, h])
+                ref_out[t, h * head_dim:(h + 1) * head_dim] = gated.to(bf16)
+        return ref_out, ref_cache
+
+    ref_out, ref_cache = attention_reference(
+        qg, k, v, q_norm, k_norm, cos, sin, cache, 0)
     ref = torch.cat([ref_out.float().flatten(), ref_cache.float().flatten()])
     compile_and_run(args, "attention",
                     emit_attention(qg.tolist(), k.tolist(), v.tolist(),
                                    q_norm.tolist(), k_norm.tolist(),
-                                   cos.tolist(), sin.tolist(), cache.tolist()),
+                                   cos.tolist(), sin.tolist(), cache.tolist(),
+                                   0, seq),
+                    ref, (2e-2, 1e-2))
+
+    # attention decode: append one token at cache position 1.
+    seq = 1
+    qg = torch.randn(seq, num_heads * 2 * head_dim).to(bf16)
+    k = torch.randn(seq, num_kv_heads * head_dim).to(bf16)
+    v = torch.randn(seq, num_kv_heads * head_dim).to(bf16)
+    cos = torch.randn(seq, rotary).float()
+    sin = torch.randn(seq, rotary).float()
+    cache = torch.randn(1, 2, num_kv_heads, cache_capacity, head_dim).to(bf16)
+    ref_out, ref_cache = attention_reference(
+        qg, k, v, q_norm, k_norm, cos, sin, cache, 1)
+    ref = torch.cat([ref_out.float().flatten(), ref_cache.float().flatten()])
+    compile_and_run(args, "attention_decode",
+                    emit_attention(qg.tolist(), k.tolist(), v.tolist(),
+                                   q_norm.tolist(), k_norm.tolist(),
+                                   cos.tolist(), sin.tolist(), cache.tolist(),
+                                   1, 2),
                     ref, (2e-2, 1e-2))
 
 

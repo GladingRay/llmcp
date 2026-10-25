@@ -239,7 +239,8 @@ private:
   }
 
   Value buildFullLayer(OpBuilder &builder, Value input, Value arena, Value cos,
-                       Value sin, Value kvCache, int64_t layerIndex,
+                       Value sin, Value kvCache, Value position,
+                       Value cacheLength, int64_t layerIndex,
                        int64_t stateIndex, llvm::StringMap<Value> &cache) {
     const std::string base = (llvm::Twine("model.language_model.layers.") +
                               llvm::Twine(layerIndex) + ".")
@@ -263,8 +264,8 @@ private:
          config.text.numAttentionHeads * config.text.headDim},
         builder.getBF16Type());
     Value attn = builder.create<AttentionOp>(
-        loc, outputType, qg, k, v, qNorm, kNorm, cos, sin, kvCache,
-        builder.getI64IntegerAttr(stateIndex),
+        loc, outputType, qg, k, v, qNorm, kNorm, cos, sin, kvCache, position,
+        cacheLength, builder.getI64IntegerAttr(stateIndex),
         builder.getI64IntegerAttr(config.text.numAttentionHeads),
         builder.getI64IntegerAttr(config.text.numKeyValueHeads),
         builder.getI64IntegerAttr(config.text.headDim),
@@ -317,17 +318,20 @@ private:
     (void)numKvHeads;
     (void)rotary;
     OpBuilder bodyBuilder(context);
-    auto func = createFunc(
-        moduleBuilder, "llmcp_forward",
-        {hiddenType, cosType, cosType, arenaType, kvType, deltaType, convType},
-        {hiddenType}, bodyBuilder);
+    Type indexType = moduleBuilder.getIndexType();
+    auto func = createFunc(moduleBuilder, "llmcp_forward",
+                           {hiddenType, cosType, cosType, indexType, indexType,
+                            arenaType, kvType, deltaType, convType},
+                           {hiddenType}, bodyBuilder);
     llvm::StringMap<Value> cache;
-    Value arena = func.getArgument(3);
     Value cos = func.getArgument(1);
     Value sin = func.getArgument(2);
-    Value kvCache = func.getArgument(4);
-    Value deltaState = func.getArgument(5);
-    Value convState = func.getArgument(6);
+    Value position = func.getArgument(3);
+    Value cacheLength = func.getArgument(4);
+    Value arena = func.getArgument(5);
+    Value kvCache = func.getArgument(6);
+    Value deltaState = func.getArgument(7);
+    Value convState = func.getArgument(8);
     Value hidden = func.getArgument(0);
 
     int64_t linearIndex = 0;
@@ -340,7 +344,7 @@ private:
         ++linearIndex;
       } else {
         hidden = buildFullLayer(bodyBuilder, hidden, arena, cos, sin, kvCache,
-                                layer, fullIndex, cache);
+                                position, cacheLength, layer, fullIndex, cache);
         ++fullIndex;
       }
     }
@@ -358,25 +362,29 @@ private:
                   Type arenaType, Type kvType, Type deltaType, Type convType,
                   Type hiddenType, Type logitsType) {
     OpBuilder bodyBuilder(context);
-    auto func = createFunc(
-        moduleBuilder, "llmcp_model",
-        {tokensType, cosType, cosType, arenaType, kvType, deltaType, convType},
-        {logitsType}, bodyBuilder, /*isPublic=*/true);
+    Type indexType = moduleBuilder.getIndexType();
+    auto func = createFunc(moduleBuilder, "llmcp_model",
+                           {tokensType, cosType, cosType, indexType, indexType,
+                            arenaType, kvType, deltaType, convType},
+                           {logitsType}, bodyBuilder, /*isPublic=*/true);
 
     Value tokens = func.getArgument(0);
     Value cos = func.getArgument(1);
     Value sin = func.getArgument(2);
-    Value arena = func.getArgument(3);
-    Value kvCache = func.getArgument(4);
-    Value deltaState = func.getArgument(5);
-    Value convState = func.getArgument(6);
+    Value position = func.getArgument(3);
+    Value cacheLength = func.getArgument(4);
+    Value arena = func.getArgument(5);
+    Value kvCache = func.getArgument(6);
+    Value deltaState = func.getArgument(7);
+    Value convState = func.getArgument(8);
 
     auto embed = bodyBuilder.create<func::CallOp>(
         loc, "llmcp_embed", TypeRange{hiddenType}, ValueRange{tokens, arena});
     Value hidden = embed.getResult(0);
     auto forward = bodyBuilder.create<func::CallOp>(
         loc, "llmcp_forward", TypeRange{hiddenType},
-        ValueRange{hidden, cos, sin, arena, kvCache, deltaState, convState});
+        ValueRange{hidden, cos, sin, position, cacheLength, arena, kvCache,
+                   deltaState, convState});
     Value forwarded = forward.getResult(0);
     auto lmHead = bodyBuilder.create<func::CallOp>(
         loc, "llmcp_lm_head", TypeRange{logitsType},

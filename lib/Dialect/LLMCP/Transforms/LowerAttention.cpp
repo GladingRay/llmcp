@@ -83,6 +83,8 @@ public:
     Value groupValue = rewriter.create<arith::ConstantIndexOp>(loc, group);
     Value layerValue =
         rewriter.create<arith::ConstantIndexOp>(loc, op.getLayerIndex());
+    Value writePosition = op.getPosition();
+    Value cacheLength = op.getCacheLength();
     Value sequence;
     if (qgType.isDynamicDim(0))
       sequence = rewriter.create<tensor::DimOp>(loc, op.getQg(), 0);
@@ -111,7 +113,8 @@ public:
         loc, MemRefType::get({qgType.getDimSize(0), numHeads, headDim}, bf16),
         sequenceSizes);
     Value scores = rewriter.create<memref::AllocOp>(
-        loc, MemRefType::get({qgType.getDimSize(0)}, f32), sequenceSizes);
+        loc, MemRefType::get({ShapedType::kDynamic}, f32),
+        ValueRange{cacheLength});
     Value normTemp =
         rewriter.create<memref::AllocOp>(loc, MemRefType::get({headDim}, f32));
     SmallVector<Value> outputSizes;
@@ -323,7 +326,10 @@ public:
                           rewriter.create<arith::TruncFOp>(loc, bf16, result);
                       rewriter.create<memref::StoreOp>(
                           loc, resultBf16, op.getKvCache(),
-                          ValueRange{layerValue, zero, kvHead, position, d});
+                          ValueRange{layerValue, zero, kvHead,
+                                     rewriter.create<arith::AddIOp>(
+                                         loc, writePosition, position),
+                                     d});
                     });
                 rewriter.setInsertionPointAfter(writeK);
 
@@ -336,7 +342,10 @@ public:
                           rewriter.create<arith::TruncFOp>(loc, bf16, value);
                       rewriter.create<memref::StoreOp>(
                           loc, resultBf16, op.getKvCache(),
-                          ValueRange{layerValue, zero, kvHead, position, d});
+                          ValueRange{layerValue, zero, kvHead,
+                                     rewriter.create<arith::AddIOp>(
+                                         loc, writePosition, position),
+                                     d});
                     });
                 rewriter.setInsertionPointAfter(writeKTail);
 
@@ -349,7 +358,10 @@ public:
                                                    loc, base, d)});
                       rewriter.create<memref::StoreOp>(
                           loc, value, op.getKvCache(),
-                          ValueRange{layerValue, one, kvHead, position, d});
+                          ValueRange{layerValue, one, kvHead,
+                                     rewriter.create<arith::AddIOp>(
+                                         loc, writePosition, position),
+                                     d});
                     });
                 rewriter.setInsertionPointAfter(writeV);
               });
@@ -366,8 +378,11 @@ public:
               [&](OpBuilder &builder, Location loc, Value head, ValueRange) {
                 Value kvHead =
                     rewriter.create<arith::DivUIOp>(loc, head, groupValue);
-                Value queryEnd =
-                    rewriter.create<arith::AddIOp>(loc, queryPos, one);
+                Value queryEnd = rewriter.create<arith::AddIOp>(
+                    loc,
+                    rewriter.create<arith::AddIOp>(loc, writePosition,
+                                                   queryPos),
+                    one);
 
                 auto scoreLoop = createLoop(
                     rewriter, loc, zero, queryEnd, one, ValueRange{},

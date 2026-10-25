@@ -41,8 +41,8 @@ M0 基础设施已落地：
 - `llmcp-inspect`：对真实 Qwen3.5-4B 输出 32 层 / 738 tensor / 8.41GB 文本布局
 - `ModelBuilder`：生成完整 prefill 计算图，包含 embedding、32 层、final norm、lm_head，以及 4 个入口函数
 - `llmcp-dump`：把完整计算图 dump 成 `.mlir`，支持 `--verify-module` 和 `--print-stats`
-- `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op
-- 测试：12 个 lit 用例 + 14 个 gtest 用例 + 12 个数值 case（覆盖 10 类已 lower op，对 PyTorch 参考）+ 真实模型 dump/lowering 集成测试，全部通过
+- `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；attention 支持 `position` / `cache_length`，prefill 与 decode 追加均可
+- 测试：12 个 lit 用例 + 14 个 gtest 用例 + 13 个数值 case（覆盖 10 类已 lower op，含 attention prefill/decode，对 PyTorch 参考）+ 真实模型 dump/lowering 集成测试，全部通过
 
 仍在 M0/M1 之间：tokenizer、HF golden 导出、`llmcp → linalg` lowering 尚未开始。
 

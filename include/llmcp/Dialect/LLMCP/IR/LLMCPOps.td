@@ -141,6 +141,8 @@ def LLMCP_AttentionOp : LLMCP_Op<"attention"> {
                        AnyTensor:$cos,
                        AnyTensor:$sin,
                        AnyMemRef:$kv_cache,
+                       Index:$position,
+                       Index:$cache_length,
                        I64Attr:$layer_index,
                        I64Attr:$num_heads,
                        I64Attr:$num_kv_heads,
