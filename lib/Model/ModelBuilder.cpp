@@ -70,7 +70,7 @@ public:
     auto logitsType = RankedTensorType::get({kDynamic, vocab}, f32);
     auto arenaType = MemRefType::get({kDynamic}, i8);
     auto kvType =
-        MemRefType::get({numFull, numKvHeads, kDynamic, headDim}, bf16);
+        MemRefType::get({numFull, 2, numKvHeads, kDynamic, headDim}, bf16);
     auto deltaType =
         MemRefType::get({numLinear, numVHeads, headKDim, headVDim}, f32);
     auto convType = MemRefType::get({numLinear, kernel - 1, qkvDim}, bf16);

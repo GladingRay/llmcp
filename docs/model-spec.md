@@ -306,10 +306,10 @@ y    = out.reshape(S, 4096) @ W_o^T   # [S, 2560]
 建议布局：
 
 ```text
-kv_cache[8][4][max_seq][256] bf16
+kv_cache[8][2][4][max_seq][256] bf16
 ```
 
-即 `[layer, kv_head, position, head_dim]`，同一 head 的历史位置连续，attention 顺序读取友好。每个 token 写入 8 × 4 × 256 × 2 × 2 = 32KB。
+即 `[layer, k_or_v, kv_head, position, head_dim]`，同一 head 的历史位置连续，attention 顺序读取友好。每个 token 写入 8 × 2 × 4 × 256 × 2 = 32KB。
 
 缓存里保存的是**经过 k_norm 与 RoPE 之后的 k**，以及 v；不要缓存投影后的原始 k。decode 在第 `pos` 个位置写入后，attention 读取 `[0, pos]` 闭区间。
 

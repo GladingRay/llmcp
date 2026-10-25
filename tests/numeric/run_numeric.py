@@ -303,6 +303,86 @@ def emit_gated_delta_net(conv, a, b, a_log, dt_bias, state) -> str:
     return "\n".join(lines)
 
 
+def emit_attention(qg, k, v, q_norm, k_norm, cos, sin, cache) -> str:
+    seq = len(qg)
+    qg_width = len(qg[0])
+    kv_width = len(k[0])
+    head_dim = len(q_norm)
+    rotary = len(cos[0])
+    num_heads = qg_width // (2 * head_dim)
+    num_kv_heads = kv_width // head_dim
+    capacity = len(cache[0][0][0])
+    lines = [
+        "func.func private @printF32(f32)",
+        "func.func private @printNewline()",
+        "",
+        f'memref.global "private" constant @qn : memref<{head_dim}xbf16> = '
+        f'dense<{dense_1d(q_norm)}>',
+        f'memref.global "private" constant @kn : memref<{head_dim}xbf16> = '
+        f'dense<{dense_1d(k_norm)}>',
+        f'memref.global "private" @cache : memref<1x2x{num_kv_heads}x'
+        f'{capacity}x{head_dim}xbf16> = dense<{dense_nd(cache)}>',
+        "",
+        "func.func @main() -> i32 {",
+        f"  %qg = arith.constant dense<{dense_2d(qg)}> : "
+        f"tensor<{seq}x{qg_width}xbf16>",
+        f"  %k = arith.constant dense<{dense_2d(k)}> : "
+        f"tensor<{seq}x{kv_width}xbf16>",
+        f"  %v = arith.constant dense<{dense_2d(v)}> : "
+        f"tensor<{seq}x{kv_width}xbf16>",
+        f"  %qn = memref.get_global @qn : memref<{head_dim}xbf16>",
+        f"  %kn = memref.get_global @kn : memref<{head_dim}xbf16>",
+        f"  %cos = arith.constant dense<{dense_2d(cos)}> : "
+        f"tensor<{seq}x{rotary}xf32>",
+        f"  %sin = arith.constant dense<{dense_2d(sin)}> : "
+        f"tensor<{seq}x{rotary}xf32>",
+        f"  %cache = memref.get_global @cache : memref<1x2x{num_kv_heads}x"
+        f"{capacity}x{head_dim}xbf16>",
+        f"  %0 = llmcp.attention %qg, %k, %v, %qn, %kn, %cos, %sin, %cache "
+        f"{{layer_index = 0 : i64, num_heads = {num_heads} : i64, "
+        f"num_kv_heads = {num_kv_heads} : i64, head_dim = {head_dim} : i64, "
+        f"rotary_dim = {rotary} : i64, mode = \"prefill\"}} : "
+        f"(tensor<{seq}x{qg_width}xbf16>, tensor<{seq}x{kv_width}xbf16>, "
+        f"tensor<{seq}x{kv_width}xbf16>, memref<{head_dim}xbf16>, "
+        f"memref<{head_dim}xbf16>, tensor<{seq}x{rotary}xf32>, "
+        f"tensor<{seq}x{rotary}xf32>, memref<1x2x{num_kv_heads}x{capacity}x"
+        f"{head_dim}xbf16>) -> tensor<{seq}x{num_heads * head_dim}xbf16>",
+    ]
+    for t in range(seq):
+        for c in range(num_heads * head_dim):
+            lines += [
+                f"  %oc{t}_{c} = arith.constant {t} : index",
+                f"  %oc{t}_{c}b = arith.constant {c} : index",
+                f"  %oe{t}_{c} = tensor.extract %0[%oc{t}_{c}, %oc{t}_{c}b] : "
+                f"tensor<{seq}x{num_heads * head_dim}xbf16>",
+                f"  %of{t}_{c} = arith.extf %oe{t}_{c} : bf16 to f32",
+                f"  func.call @printF32(%of{t}_{c}) : (f32) -> ()",
+                "  func.call @printNewline() : () -> ()",
+            ]
+    lines.append("  %lz = arith.constant 0 : index")
+    for kind in range(2):
+        for h in range(num_kv_heads):
+            for t in range(capacity):
+                for d in range(head_dim):
+                    lines += [
+                        f"  %sc{kind}_{h}_{t}_{d} = arith.constant {kind} : index",
+                        f"  %sc{kind}_{h}_{t}_{d}b = arith.constant {h} : index",
+                        f"  %sc{kind}_{h}_{t}_{d}c = arith.constant {t} : index",
+                        f"  %sc{kind}_{h}_{t}_{d}d = arith.constant {d} : index",
+                        f"  %se{kind}_{h}_{t}_{d} = memref.load %cache[%lz, "
+                        f"%sc{kind}_{h}_{t}_{d}, %sc{kind}_{h}_{t}_{d}b, "
+                        f"%sc{kind}_{h}_{t}_{d}c, %sc{kind}_{h}_{t}_{d}d] : "
+                        f"memref<1x2x{num_kv_heads}x{capacity}x{head_dim}xbf16>",
+                        f"  %sf{kind}_{h}_{t}_{d} = arith.extf "
+                        f"%se{kind}_{h}_{t}_{d} : bf16 to f32",
+                        f"  func.call @printF32(%sf{kind}_{h}_{t}_{d}) : "
+                        f"(f32) -> ()",
+                        "  func.call @printNewline() : () -> ()",
+                    ]
+    lines += ["  %ret = arith.constant 0 : i32", "  return %ret : i32", "}", ""]
+    return "\n".join(lines)
+
+
 def run(cmd, env=None):
     print("+", " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True, env=env)
@@ -553,6 +633,59 @@ def main():
                     emit_gated_delta_net(conv.tolist(), a.tolist(), b.tolist(),
                                          a_log.tolist(), dt_bias.tolist(),
                                          state.tolist()),
+                    ref, (2e-2, 1e-2))
+
+    # attention: q/gate split, q/k norm, partial RoPE, GQA, causal softmax,
+    # output gate, and KV cache write.
+    seq, num_heads, num_kv_heads, head_dim, rotary = 2, 2, 1, 4, 2
+    qg = torch.randn(seq, num_heads * 2 * head_dim).to(bf16)
+    k = torch.randn(seq, num_kv_heads * head_dim).to(bf16)
+    v = torch.randn(seq, num_kv_heads * head_dim).to(bf16)
+    q_norm = torch.randn(head_dim).to(bf16)
+    k_norm = torch.randn(head_dim).to(bf16)
+    cos = torch.randn(seq, rotary).float()
+    sin = torch.randn(seq, rotary).float()
+    cache = torch.randn(1, 2, num_kv_heads, seq, head_dim).to(bf16)
+
+    q = qg.view(seq, num_heads, 2, head_dim)[:, :, 0, :].float()
+    gate = qg.view(seq, num_heads, 2, head_dim)[:, :, 1, :].float()
+    kf = k.view(seq, num_kv_heads, head_dim).float()
+    vf = v.view(seq, num_kv_heads, head_dim).float()
+
+    def norm_rope(x):
+        inv = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + 1e-6)
+        weight = (1.0 + (q_norm if x is q else k_norm).float())
+        y = x * inv * weight
+        out = y.clone()
+        for d in range(rotary):
+            partner = d - rotary // 2 if d >= rotary // 2 else d + rotary // 2
+            sign = 1.0 if d >= rotary // 2 else -1.0
+            cos_d = cos[:, d].view(seq, 1)
+            sin_d = sin[:, d].view(seq, 1)
+            out[..., d] = y[..., d] * cos_d + sign * y[..., partner] * sin_d
+        return out.to(bf16)
+
+    qn = norm_rope(q)
+    kn = norm_rope(kf)
+    ref_cache = cache.clone()
+    ref_cache[0, 0, :, :seq, :] = kn.transpose(0, 1)
+    ref_cache[0, 1, :, :seq, :] = vf.transpose(0, 1)
+    scale = 1.0 / (head_dim ** 0.5)
+    ref_out = torch.empty(seq, num_heads * head_dim, dtype=bf16)
+    group = num_heads // num_kv_heads
+    for t in range(seq):
+        for h in range(num_heads):
+            kh = h // group
+            scores = (qn[t, h].float() @ ref_cache[0, 0, kh, :t + 1].float().T) * scale
+            probs = torch.softmax(scores, dim=-1)
+            ctx = probs @ ref_cache[0, 1, kh, :t + 1].float()
+            gated = ctx * torch.sigmoid(gate[t, h])
+            ref_out[t, h * head_dim:(h + 1) * head_dim] = gated.to(bf16)
+    ref = torch.cat([ref_out.float().flatten(), ref_cache.float().flatten()])
+    compile_and_run(args, "attention",
+                    emit_attention(qg.tolist(), k.tolist(), v.tolist(),
+                                   q_norm.tolist(), k_norm.tolist(),
+                                   cos.tolist(), sin.tolist(), cache.tolist()),
                     ref, (2e-2, 1e-2))
 
 

@@ -286,8 +286,8 @@ LogicalResult AttentionOp::verify() {
   if (!cos || !cos.hasRank() || cos.getRank() != 2 || !sin || !sin.hasRank() ||
       sin.getRank() != 2)
     return emitOpError("cos and sin must be rank-2 tensors");
-  if (!cache || cache.getRank() != 4)
-    return emitOpError("kv_cache must be a rank-4 memref");
+  if (!cache || cache.getRank() != 5)
+    return emitOpError("kv_cache must be a rank-5 memref");
   if (!output || !output.hasRank() || output.getRank() != 2)
     return emitOpError("output must be a rank-2 tensor");
 
@@ -312,9 +312,10 @@ LogicalResult AttentionOp::verify() {
       !areCompatible(qg.getDimSize(0), cos.getDimSize(0)) ||
       !areCompatible(qg.getDimSize(0), sin.getDimSize(0)))
     return emitOpError("qg, k, v, cos, and sin sequence lengths must match");
-  if (!areCompatible(cache.getDimSize(1), numKvHeads) ||
-      !areCompatible(cache.getDimSize(3), headDim))
-    return emitOpError("kv_cache shape must be [layers, num_kv_heads, "
+  if (!areCompatible(cache.getDimSize(1), 2) ||
+      !areCompatible(cache.getDimSize(2), numKvHeads) ||
+      !areCompatible(cache.getDimSize(4), headDim))
+    return emitOpError("kv_cache shape must be [layers, 2, num_kv_heads, "
                        "capacity, head_dim]");
   if (getLayerIndex() < 0 || getLayerIndex() >= cache.getDimSize(0))
     return emitOpError("layer_index is out of range for the kv cache");

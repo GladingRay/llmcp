@@ -163,7 +163,7 @@ y = h + mlp(rms_norm_zero(h))
 
 ### 2.3 对编译器架构的直接影响
 
-1. **必须有状态抽象**：KV cache 是 `[8, 4, capacity, 256]`，DeltaNet state 是 `[24, 32, 128, 128]` f32，conv state 是 `[24, 3, 8192]`。这些不能都塞进 SSA tensor；必须以 memref 参数传入，并允许 in-place 更新。
+1. **必须有状态抽象**：KV cache 是 `[8, 2, 4, capacity, 256]`，DeltaNet state 是 `[24, 32, 128, 128]` f32，conv state 是 `[24, 3, 8192]`。这些不能都塞进 SSA tensor；必须以 memref 参数传入，并允许 in-place 更新。
 2. **必须有 recurrent 和 chunked 两种 lowering**：decode 用单步 recurrence；prefill 用 chunked 算法。两者共享同一套投影/卷积/norm 的 lowering。
 3. **不能只做“attention 算子”**：DeltaNet 是若干 matmul + 三角求解 + 逐元素 decay 的组合；需要专门的高层 op 和分解 pass。
 4. **roofline 不同**：decode 受权重带宽限制，prefill 受算力限制；同一套 tile/线程策略不可能同时最优，因此 decode/prefill 分别特化函数。
@@ -831,7 +831,7 @@ func.func @llmcp_forward(
     %hidden: tensor<?x2560xbf16>,
     %cos: tensor<?x64xf32>, %sin: tensor<?x64xf32>,
     %arena: memref<?xi8>,
-    %kv: memref<8x4x?x256xbf16>,
+    %kv: memref<8x2x4x?x256xbf16>,
     %delta_state: memref<24x32x128x128xf32>,
     %conv_state: memref<24x3x8192xbf16>) -> tensor<?x2560xbf16>
 
@@ -979,7 +979,7 @@ func.func @llmcp_model(...) -> tensor<?x248320xf32>
 
 **`llmcp.attention`**
 
-- q `[S, 16, 256]`，k/v `[S, 4, 256]`，gate 可选 `[S, 16, 256]`，cache `[8, 4, capacity, 256]` bf16。
+- q `[S, 16, 256]`，k/v `[S, 4, 256]`，gate 可选 `[S, 16, 256]`，cache `[8, 2, 4, capacity, 256]` bf16。
 - `mode="decode"`：S=1，写 cache 的 `pos`，读 `[0, pos]`。
 - `mode="prefill"`：写 `[pos, pos+S)`，causal mask。
 - 输出 `[S, 16, 256]` bf16。
@@ -1055,7 +1055,7 @@ IREE 的 `iree_linalg_ext.attention` 等扩展值得借鉴，但不作为依赖�
 ### 7.1 阶段划分
 
 ```text
-[1] llmcp-lower-to-linalg      # 已降级除 attention 外的全部算子；gated_delta_net 当前为逐 token recurrence
+[1] llmcp-lower-to-linalg      # 全部 10 类算子已降级；attention/delta 当前为 correctness-first 的逐 token / 逐 query 实现
 [2] canonicalize / cse
 [3] llmcp-fuse-elementwise     # silu_mul、residual、norm 邻接融合
 [4] llmcp-tile-and-vectorize   # 自定义 tiling + vectorization
@@ -1712,7 +1712,7 @@ llmcp-opt --llmcp-lower-to-linalg
   → 执行，与 PyTorch 参考逐元素比较
 ```
 
-覆盖 `linear`、`rms_norm`、`add`、`silu_mul`、`embedding`、`gated_rms_norm`、`lm_head`、`causal_conv1d`、`gated_delta_net`（prefill + decode）。
+覆盖 `linear`、`rms_norm`、`add`、`silu_mul`、`embedding`、`gated_rms_norm`、`lm_head`、`causal_conv1d`（prefill + decode）、`gated_delta_net`（prefill + decode）、`attention`。
 
 ### 11.3 容差
 
@@ -1795,7 +1795,7 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（9 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；仅剩 attention 分解，tokenizer、HF golden、tiny 模型尚未开始。
+> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；tokenizer、HF golden、整模型数值对齐尚未开始。
 
 - [ ] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [ ] `LLMCPDialect`/`LLMCPOps` 骨架（先 2 个 op：linear、rms_norm）。
