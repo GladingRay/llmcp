@@ -401,9 +401,9 @@ private:
                      Type logitsType) {
     Type indexType = moduleBuilder.getIndexType();
     Type f32 = moduleBuilder.getF32Type();
-    auto tokensType = MemRefType::get({kDynamic}, indexType);
-    auto vectorType = MemRefType::get({kDynamic, rotary}, f32);
-    auto logitsMemType = MemRefType::get({kDynamic, vocab}, f32);
+    auto tokensType = MemRefType::get({1}, indexType);
+    auto vectorType = MemRefType::get({1, rotary}, f32);
+    auto logitsMemType = MemRefType::get({1, vocab}, f32);
 
     OpBuilder bodyBuilder(context);
     auto func =
@@ -425,40 +425,50 @@ private:
     Value logitsOut = func.getArgument(9);
 
     Value tokensTensor = bodyBuilder.create<bufferization::ToTensorOp>(
-        loc, RankedTensorType::get({kDynamic}, indexType), tokens,
+        loc, RankedTensorType::get({1}, indexType), tokens,
         /*restrict=*/true);
+    Value tokensDynamic = bodyBuilder.create<tensor::CastOp>(
+        loc, RankedTensorType::get({kDynamic}, indexType), tokensTensor);
     Value cosTensor = bodyBuilder.create<bufferization::ToTensorOp>(
-        loc, RankedTensorType::get({kDynamic, rotary}, f32), cos,
+        loc, RankedTensorType::get({1, rotary}, f32), cos,
         /*restrict=*/true);
+    Value cosDynamic = bodyBuilder.create<tensor::CastOp>(
+        loc, RankedTensorType::get({kDynamic, rotary}, f32), cosTensor);
     Value sinTensor = bodyBuilder.create<bufferization::ToTensorOp>(
-        loc, RankedTensorType::get({kDynamic, rotary}, f32), sin,
+        loc, RankedTensorType::get({1, rotary}, f32), sin,
         /*restrict=*/true);
+    Value sinDynamic = bodyBuilder.create<tensor::CastOp>(
+        loc, RankedTensorType::get({kDynamic, rotary}, f32), sinTensor);
 
-    auto model = bodyBuilder.create<func::CallOp>(
-        loc, "llmcp_model",
+    auto embed = bodyBuilder.create<func::CallOp>(
+        loc, "llmcp_embed",
+        TypeRange{RankedTensorType::get({kDynamic, config.text.hiddenSize},
+                                        moduleBuilder.getBF16Type())},
+        ValueRange{tokensDynamic, arena});
+    auto forward = bodyBuilder.create<func::CallOp>(
+        loc, "llmcp_forward",
+        TypeRange{RankedTensorType::get({kDynamic, config.text.hiddenSize},
+                                        moduleBuilder.getBF16Type())},
+        ValueRange{embed.getResult(0), cosDynamic, sinDynamic, position,
+                   cacheLength, arena, kvCache, deltaState, convState});
+    auto lmHead = bodyBuilder.create<func::CallOp>(
+        loc, "llmcp_lm_head",
         TypeRange{RankedTensorType::get({kDynamic, vocab}, f32)},
-        ValueRange{tokensTensor, cosTensor, sinTensor, position, cacheLength,
-                   arena, kvCache, deltaState, convState});
-    Value logits = model.getResult(0);
+        ValueRange{forward.getResult(0), arena});
+    Value logits = lmHead.getResult(0);
 
     Value zero = bodyBuilder.create<arith::ConstantIndexOp>(loc, 0);
     Value one = bodyBuilder.create<arith::ConstantIndexOp>(loc, 1);
-    Value rows = bodyBuilder.create<tensor::DimOp>(loc, logits, 0);
-    Value columns = bodyBuilder.create<tensor::DimOp>(loc, logits, 1);
-    auto rowLoop =
-        bodyBuilder.create<scf::ForOp>(loc, zero, rows, one, ValueRange{});
-    bodyBuilder.setInsertionPointToStart(rowLoop.getBody());
-    Value row = rowLoop.getInductionVar();
-    auto columnLoop =
-        bodyBuilder.create<scf::ForOp>(loc, zero, columns, one, ValueRange{});
+    Value vocabValue = bodyBuilder.create<arith::ConstantIndexOp>(loc, vocab);
+    auto columnLoop = bodyBuilder.create<scf::ForOp>(loc, zero, vocabValue, one,
+                                                     ValueRange{});
     bodyBuilder.setInsertionPointToStart(columnLoop.getBody());
     Value column = columnLoop.getInductionVar();
     Value value = bodyBuilder.create<tensor::ExtractOp>(
-        loc, logits, ValueRange{row, column});
+        loc, logits, ValueRange{zero, column});
     bodyBuilder.create<memref::StoreOp>(loc, value, logitsOut,
-                                        ValueRange{row, column});
+                                        ValueRange{zero, column});
     bodyBuilder.setInsertionPointAfter(columnLoop);
-    bodyBuilder.setInsertionPointAfter(rowLoop);
     bodyBuilder.create<func::ReturnOp>(loc);
   }
 
