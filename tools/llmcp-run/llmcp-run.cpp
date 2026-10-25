@@ -667,83 +667,58 @@ int64_t argmax(const Vec &values) {
 
 } // namespace
 
-template <typename T, int N> struct StridedMemRef {
-  T *basePtr;
+template <typename T, int N> struct ManualRef {
+  T *base;
   T *data;
   int64_t offset;
   int64_t sizes[N];
   int64_t strides[N];
 };
 
-template <typename T, int N>
-StridedMemRef<T, N> makeMemRef(T *data, std::array<int64_t, N> sizes) {
-  StridedMemRef<T, N> ref;
-  ref.basePtr = data;
-  ref.data = data;
-  ref.offset = 0;
-  for (int i = 0; i < N; ++i)
-    ref.sizes[i] = sizes[i];
-  int64_t stride = 1;
-  for (int i = N - 1; i >= 0; --i) {
-    ref.strides[i] = stride;
-    stride *= sizes[i];
-  }
-  return ref;
-}
-
-using AotFn = void (*)(void *, void *, void *, void *, void *, void *, void *,
-                       void *, void *, void *);
-
-bool runAot(const Arena &arena, const Config &config, int64_t token,
-            std::vector<float> &logits) {
+bool runAotManual(const Arena &arena, int64_t token,
+                  std::vector<float> &logits) {
   void *handle = dlopen(aotPath.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (!handle) {
     errs() << "llmcp-run: dlopen: " << dlerror() << "\n";
     return false;
   }
-  auto fn =
-      reinterpret_cast<AotFn>(dlsym(handle, "_mlir_ciface_llmcp_model_aot"));
+  using Fn = void (*)(void *, void *, void *, void *, void *, void *, void *,
+                      void *, void *, void *);
+  auto fn = reinterpret_cast<Fn>(dlsym(handle, "_mlir_ciface_llmcp_model_aot"));
   if (!fn) {
     errs() << "llmcp-run: dlsym: " << dlerror() << "\n";
-    dlclose(handle);
     return false;
   }
-
-  static int64_t tokenValue;
+  static int64_t tokenValue = 9419;
   tokenValue = token;
-  static float cos[64], sin[64];
+  static float cos[64], sin[64], out[248320];
   static uint16_t kv[8 * 2 * 4 * 1 * 256];
   static float delta[24 * 32 * 128 * 128];
   static uint16_t conv[24 * 3 * 8192];
-  static float out[248320];
   for (int i = 0; i < 64; ++i) {
     cos[i] = 1.0f;
     sin[i] = 0.0f;
   }
-  std::memset(kv, 0, sizeof(kv));
-  std::memset(delta, 0, sizeof(delta));
-  std::memset(conv, 0, sizeof(conv));
-  std::memset(out, 0, sizeof(out));
-
-  StridedMemRef<int64_t, 1> tokensRef{&tokenValue, &tokenValue, 0, {1}, {1}};
-  StridedMemRef<float, 2> cosRef{cos, cos, 0, {1, 64}, {64, 1}};
-  StridedMemRef<float, 2> sinRef{sin, sin, 0, {1, 64}, {64, 1}};
-  StridedMemRef<int8_t, 1> arenaRef{
+  memset(kv, 0, sizeof(kv));
+  memset(delta, 0, sizeof(delta));
+  memset(conv, 0, sizeof(conv));
+  memset(out, 0, sizeof(out));
+  ManualRef<int64_t, 1> rt{&tokenValue, &tokenValue, 0, {1}, {1}};
+  ManualRef<float, 2> rc{cos, cos, 0, {1, 64}, {64, 1}};
+  ManualRef<float, 2> rs{sin, sin, 0, {1, 64}, {64, 1}};
+  ManualRef<int8_t, 1> ra{
       const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
       const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
       0,
       {static_cast<int64_t>(arena.size)},
       {1}};
-  StridedMemRef<uint16_t, 5> kvRef{
+  ManualRef<uint16_t, 5> rk{
       kv, kv, 0, {8, 2, 4, 1, 256}, {2048, 1024, 256, 256, 1}};
-  StridedMemRef<float, 4> deltaRef{
+  ManualRef<float, 4> rd{
       delta, delta, 0, {24, 32, 128, 128}, {32 * 128 * 128, 128 * 128, 128, 1}};
-  StridedMemRef<uint16_t, 3> convRef{
-      conv, conv, 0, {24, 3, 8192}, {3 * 8192, 8192, 1}};
-  StridedMemRef<float, 2> logitsRef{out, out, 0, {1, 248320}, {248320, 1}};
-
-  fn(&tokensRef, &cosRef, &sinRef, (void *)0, (void *)1, &arenaRef, &kvRef,
-     &deltaRef, &convRef, &logitsRef);
+  ManualRef<uint16_t, 3> rv{conv, conv, 0, {24, 3, 8192}, {3 * 8192, 8192, 1}};
+  ManualRef<float, 2> ro{out, out, 0, {1, 248320}, {248320, 1}};
+  fn(&rt, &rc, &rs, (void *)0, (void *)1, &ra, &rk, &rd, &rv, &ro);
   logits.assign(out, out + 248320);
   dlclose(handle);
   return true;
@@ -751,6 +726,42 @@ bool runAot(const Arena &arena, const Config &config, int64_t token,
 
 int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "llmcp-run\n");
+
+  if (!aotPath.empty()) {
+    int64_t token = tokenId;
+    if (!prompt.empty()) {
+      std::string command = "\"" + std::string(argv[0]) +
+                            "\" --tokenize-only --text \"" + prompt +
+                            "\" --tokenizer \"" + tokenizerPath + "\"";
+      FILE *pipe = popen(command.c_str(), "r");
+      if (!pipe) {
+        errs() << "llmcp-run: cannot spawn tokenizer\n";
+        return 1;
+      }
+      char buffer[4096] = {0};
+      if (!fgets(buffer, sizeof(buffer), pipe)) {
+        pclose(pipe);
+        errs() << "llmcp-run: tokenizer produced no output\n";
+        return 1;
+      }
+      pclose(pipe);
+      token = std::strtoll(buffer, nullptr, 10);
+    }
+    Arena earlyArena;
+    if (Error error = earlyArena.load(weightsPath, manifestPath)) {
+      errs() << "llmcp-run: " << toString(std::move(error)) << "\n";
+      return 1;
+    }
+    std::vector<float> earlyLogits;
+    if (!runAotManual(earlyArena, token, earlyLogits))
+      return 1;
+    outs() << "aot logits: " << earlyLogits.size() << " next "
+           << argmax(earlyLogits) << "\n";
+    if (dumpLogits)
+      for (float value : earlyLogits)
+        outs() << value << "\n";
+    return 0;
+  }
 
   auto blob = MemoryBuffer::getFile(tokenizerPath);
   if (!blob) {
@@ -783,18 +794,6 @@ int main(int argc, char **argv) {
     return 1;
   }
   Config config;
-  if (!aotPath.empty()) {
-    std::vector<float> aotLogits;
-    if (!runAot(arena, config, tokens[0], aotLogits))
-      return 1;
-    Vec logits(aotLogits.begin(), aotLogits.end());
-    outs() << "aot logits: " << logits.size() << " next " << argmax(logits)
-           << "\n";
-    if (dumpLogits)
-      for (float value : logits)
-        outs() << value << "\n";
-    return 0;
-  }
   Runtime runtime;
   runtime.init(config, static_cast<int64_t>(tokens.size()) + maxNewTokens + 16);
 

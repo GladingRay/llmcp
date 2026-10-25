@@ -68,6 +68,18 @@ greedy decode：
 多 token 的后续 decode 还可能有漂移（前两个 token 与 HF greedy 一致），
 主要是 chunked prefill 的 state 与 decode recurrence 的衔接还没完全对齐。
 
+AOT 路径：
+
+```bash
+./build/bin/llmcp-run --weights build/weights.bin \
+  --manifest build/weights.json --text Hello \
+  --aot build/libqwen35_aot.dylib
+# aot logits: 248320 next 11
+```
+
+AOT 路径当前只支持单 token；`--aot` 会在子进程里做 tokenize，避免
+tokenizers-cpp 在 AOT 调用前加载导致的运行时污染。
+
 Python 语义参考结果：
 
 ```text
@@ -89,7 +101,7 @@ top5 hf:   [11, 0, 13, 1017, 4858]
 
 ## 边界
 
-当前 C++ 执行器是 **手写模型函数**；完整图已经可以 AOT 生成 `libqwen35_aot.dylib`（导出 4 个 `llmcp_*` 入口），但 AOT library 的运行时驱动尚未接入，因此当前数值对齐仍由手写执行器完成。
+当前 C++ 执行器有两条路径：默认手写 `runModel`，以及 `--aot` 加载 `libqwen35_aot.dylib` 的 AOT 单 token 路径。AOT 路径已能得到有限 logits 并与 HF top-1 对齐；多 token AOT decode 仍由手写路径完成。
 
 尚未完成：
 
