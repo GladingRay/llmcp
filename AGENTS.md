@@ -8,3 +8,4 @@
 5. 项目主体使用C++实现，可辅以部分python与shell脚本。
 6. 不同的模块要放在不同的文件中，不同的大组件要放到不同的目录中。
 7. 我本机上装的是homebrew的llvm@20。
+8. qwen3.5 4B 的路径在 `/Users/guorui/Work/models/qwen3.5-4b` 。
