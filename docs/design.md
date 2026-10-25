@@ -295,10 +295,17 @@ llmcp/
 │   └── LLMCPUtils.cmake
 ├── include/llmcp/
 │   ├── Dialect/LLMCP/IR/
+│   │   ├── CMakeLists.txt            # add_mlir_dialect(LLMCPOps llmcp)
+│   │   ├── LLMCPDialect.td           # dialect 定义（名字/namespace/dependent dialects）
+│   │   ├── LLMCPOps.td               # op 定义；add_mlir_dialect 的入口
+│   │   ├── LLMCPTypes.td             # 自定义 type；首期可为空
+│   │   ├── LLMCPAttrs.td             # quant scheme 等属性/枚举
 │   │   ├── LLMCPDialect.h
 │   │   ├── LLMCPOps.h
-│   │   └── LLMCPTypes.h              # 首期可以没有自定义类型
+│   │   ├── LLMCPTypes.h
+│   │   └── LLMCP.h                   # umbrella header
 │   ├── Dialect/LLMCP/Transforms/
+│   │   ├── Passes.td                 # pass 声明（-gen-pass-decls）
 │   │   └── Passes.h
 │   ├── Conversion/LLMCPToLinalg/
 │   │   └── LLMCPToLinalg.h
@@ -320,6 +327,7 @@ llmcp/
 │       └── Memory.h
 ├── lib/                              # 由现有空 src/ 重命名
 │   ├── Dialect/LLMCP/IR/
+│   │   ├── CMakeLists.txt            # add_mlir_dialect_library(MLIRLLMCPDialect ...)
 │   │   ├── LLMCPDialect.cpp
 │   │   ├── LLMCPOps.cpp
 │   │   └── LLMCPTypes.cpp
@@ -385,10 +393,33 @@ llmcp/
 
 > 现有仓库中的空 `src/` 在 M0 重命名为 `lib/`（与 MLIR 的目录习惯一致）；如果希望保留 `src/`，只需要替换 CMake 中的路径，不影响架构。
 
+**TableGen 源文件与生成物**：`include/llmcp/Dialect/LLMCP/IR/` 下的 `.td` 是方言的第一等源文件，不能只写 `.h/.cpp`。`LLMCPOps.td` 是 `add_mlir_dialect(LLMCPOps llmcp)` 的目标文件，include `LLMCPDialect.td`、`LLMCPTypes.td`、`LLMCPAttrs.td`。生成物全部落在 build 目录，不提交、不手改：
+
+```text
+build/include/llmcp/Dialect/LLMCP/IR/
+├── LLMCPOps.h.inc
+├── LLMCPOps.cpp.inc
+├── LLMCPOpsTypes.h.inc
+├── LLMCPOpsTypes.cpp.inc
+├── LLMCPOpsDialect.h.inc
+└── LLMCPOpsDialect.cpp.inc
+```
+
+| TableGen 文件 | 作用 |
+|---|---|
+| `LLMCPDialect.td` | `Dialect` 定义：name、cppNamespace、dependent dialects |
+| `LLMCPOps.td` | op 定义：operands/results/attributes/traits/assemblyFormat/verifier；也是 `mlir-tblgen` 的入口 |
+| `LLMCPTypes.td` | `!llmcp.*` 自定义类型；首期可以为空 |
+| `LLMCPAttrs.td` | `#llmcp.quant<...>` 等属性与枚举 |
+| `Transforms/Passes.td` | pass 声明，配合 `-gen-pass-decls` 生成注册代码 |
+
+> 只列 `.h/.cpp` 会漏掉“IR schema 从哪来”这一层；`.td` 才是 op/type/dialect 的单一真源，`.h/.cpp` 只是 include 生成物并补充 verifier/parser/printer 等手写逻辑。
+
 ### 4.2 构建目标
 
 | 目标 | 类型 | 依赖 | 说明 |
 |---|---|---|---|
+| `MLIRLLMCPOpsIncGen` | TableGen | `LLMCP*.td` | 生成 op/type/dialect 的 `.inc` |
 | `MLIRLLMCPDialect` | 库 | MLIRIR, MLIRSupport | 方言 + ops + verifier |
 | `MLIRLLMCPTransforms` | 库 | Dialect, MLIRLinalgDialect/Transforms, MLIRSCF, MLIRVector | 语义降级与优化 pass |
 | `MLIRLLMCPModel` | 库 | Dialect, LLVMSupport | 配置解析、权重布局、IR builder |
@@ -544,6 +575,7 @@ include(AddMLIR)
 include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${MLIR_INCLUDE_DIRS})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)  # generated *.inc
 add_definitions(${LLVM_DEFINITIONS})
 
 add_subdirectory(third_party)
@@ -562,16 +594,14 @@ cmake -G Ninja -S . -B build \
   -DLLVM_DIR=/opt/homebrew/opt/llvm@20/lib/cmake/llvm
 ```
 
-方言定义（ODS 片段，展示风格）：
+方言定义（ODS 片段，展示 TableGen 的文件拆分与风格）：
 
 ```tablegen
-// include/llmcp/Dialect/LLMCP/IR/LLMCPOps.td
-#ifndef LLMCP_OPS
-#define LLMCP_OPS
+// include/llmcp/Dialect/LLMCP/IR/LLMCPDialect.td
+#ifndef LLMCP_DIALECT
+#define LLMCP_DIALECT
 
 include "mlir/IR/OpBase.td"
-include "mlir/IR/OpDefinition.h"
-include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def LLMCP_Dialect : Dialect {
   let name = "llmcp";
@@ -586,10 +616,23 @@ def LLMCP_Dialect : Dialect {
   ];
 }
 
+#endif // LLMCP_DIALECT
+```
+
+```tablegen
+// include/llmcp/Dialect/LLMCP/IR/LLMCPOps.td
+#ifndef LLMCP_OPS
+#define LLMCP_OPS
+
+include "llmcp/Dialect/LLMCP/IR/LLMCPDialect.td"
+include "llmcp/Dialect/LLMCP/IR/LLMCPTypes.td"
+include "llmcp/Dialect/LLMCP/IR/LLMCPAttrs.td"
+include "mlir/IR/OpBase.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+
 class LLMCP_Op<string mnemonic, list<Trait> traits = []>
     : Op<LLMCP_Dialect, mnemonic, traits>;
 
-// LLMCP_QuantSchemeAttr is defined in LLMCPAttrs.td (scheme + group size).
 def LLMCP_LinearOp : LLMCP_Op<"linear", [Pure]> {
   let summary = "Y = X * W^T (+ bias), accumulate in f32";
   let arguments = (ins AnyTensor:$input,
@@ -603,6 +646,39 @@ def LLMCP_LinearOp : LLMCP_Op<"linear", [Pure]> {
 
 #endif // LLMCP_OPS
 ```
+
+对应两个 CMake 文件（TableGen 在 `include` 侧运行，库定义在 `lib` 侧）：
+
+```cmake
+# include/llmcp/Dialect/LLMCP/IR/CMakeLists.txt
+add_mlir_dialect(LLMCPOps llmcp)
+```
+
+```cmake
+# lib/Dialect/LLMCP/IR/CMakeLists.txt
+add_mlir_dialect_library(MLIRLLMCPDialect
+  LLMCPDialect.cpp
+  LLMCPOps.cpp
+  LLMCPTypes.cpp
+
+  ADDITIONAL_HEADER_DIRS
+    ${PROJECT_SOURCE_DIR}/include/llmcp/Dialect/LLMCP/IR
+
+  DEPENDS
+    MLIRLLMCPOpsIncGen
+
+  LINK_LIBS PUBLIC
+    MLIRIR
+    MLIRSupport
+    MLIRSideEffectInterfaces
+    MLIRArithDialect
+    MLIRMathDialect
+    MLIRTensorDialect
+    MLIRLinalgDialect
+    MLIRSCFDialect)
+```
+
+> `add_mlir_dialect(LLMCPOps llmcp)` 会生成 `LLMCPOps.h.inc`、`LLMCPOps.cpp.inc`、`LLMCPOpsTypes.*.inc`、`LLMCPOpsDialect.*.inc` 以及 `MLIRLLMCPOpsIncGen` 目标。`LLMCPOps.cpp` 只 include 这些生成物并补充手写 verifier/parser/printer，不手写 op 的样板代码。
 
 > 说明：`llmcp` 的激活是 tensor，权重/状态是 memref。降级时用 `bufferization.to_tensor` 把权重视图转成 tensor，再喂给 `linalg.matmul`；状态更新保留 memref/scf。详见 7.2。
 
