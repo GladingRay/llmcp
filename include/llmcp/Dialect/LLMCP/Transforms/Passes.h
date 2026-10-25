@@ -5,6 +5,7 @@
 #ifndef LLMCP_DIALECT_LLMCP_TRANSFORMS_PASSES_H
 #define LLMCP_DIALECT_LLMCP_TRANSFORMS_PASSES_H
 
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
 #include <memory>
@@ -14,6 +15,8 @@ namespace llmcp {
 
 /// Lowers `llmcp.linear` and `llmcp.rms_norm` to linalg/tensor operations.
 std::unique_ptr<Pass> createLowerToLinalgPass();
+
+void populateCausalConv1dLoweringPatterns(RewritePatternSet &patterns);
 
 void registerLowerToLinalgPass();
 

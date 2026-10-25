@@ -22,7 +22,8 @@ foreach(remaining_op
     "llmcp.silu_mul "
     "llmcp.embedding "
     "llmcp.gated_rms_norm "
-    "llmcp.lm_head ")
+    "llmcp.lm_head "
+    "llmcp.causal_conv1d ")
   string(FIND "${contents}" "${remaining_op}" position)
   if(NOT position EQUAL -1)
     message(FATAL_ERROR "lowered graph still contains ${remaining_op}")

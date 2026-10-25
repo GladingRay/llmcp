@@ -486,6 +486,7 @@ struct LowerToLinalgPass
     context->getOrLoadDialect<math::MathDialect>();
 
     RewritePatternSet patterns(context);
+    populateCausalConv1dLoweringPatterns(patterns);
     patterns.add<LinearOpLowering, RmsNormOpLowering, AddOpLowering,
                  SiluMulOpLowering, EmbeddingOpLowering, GatedRmsNormOpLowering,
                  LmHeadOpLowering>(context);

@@ -41,8 +41,8 @@ M0 基础设施已落地：
 - `llmcp-inspect`：对真实 Qwen3.5-4B 输出 32 层 / 738 tensor / 8.41GB 文本布局
 - `ModelBuilder`：生成完整 prefill 计算图，包含 embedding、32 层、final norm、lm_head，以及 4 个入口函数
 - `llmcp-dump`：把完整计算图 dump 成 `.mlir`，支持 `--verify-module` 和 `--print-stats`
-- `llmcp-lower-to-linalg`：已覆盖 `linear`、`rms_norm`、`add`、`silu_mul`、`embedding`、`gated_rms_norm`、`lm_head`；`attention`/`gated_delta_net`/`causal_conv1d` 仍待分解
-- 测试：9 个 lit 用例 + 14 个 gtest 用例 + 7 类已 lower op 的数值测试（对 PyTorch 参考）+ 真实模型 dump/lowering 集成测试，全部通过
+- `llmcp-lower-to-linalg`：已覆盖 `linear`、`rms_norm`、`add`、`silu_mul`、`embedding`、`gated_rms_norm`、`lm_head`、`causal_conv1d`；`attention`/`gated_delta_net` 仍待分解
+- 测试：10 个 lit 用例 + 14 个 gtest 用例 + 8 类已 lower op 的数值测试（对 PyTorch 参考）+ 真实模型 dump/lowering 集成测试，全部通过
 
 仍在 M0/M1 之间：tokenizer、HF golden 导出、`llmcp → linalg` lowering 尚未开始。
 
@@ -76,7 +76,7 @@ ctest --test-dir build --output-on-failure
   --verify-module --print-stats -o build/qwen35_graph.mlir
 
 # 6. 数值测试（linear / rms_norm / add / silu_mul / embedding /
-#    gated_rms_norm / lm_head，对 PyTorch 参考）
+#    gated_rms_norm / lm_head / causal_conv1d，对 PyTorch 参考）
 ctest --test-dir build -R llmcp-numeric --output-on-failure
 ```
 

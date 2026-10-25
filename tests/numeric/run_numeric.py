@@ -173,6 +173,61 @@ def emit_lm_head(hidden, table) -> str:
     return wrap(body, globals_, m, vocab, "f32")
 
 
+def emit_causal_conv1d(x, weight, state) -> str:
+    seq, channels = len(x), len(x[0])
+    kernel = len(weight[0][0])
+    state_len = kernel - 1
+    weight_text = "[" + ", ".join(
+        "[" + dense_1d(row[0]) + "]" for row in weight) + "]"
+    state_text = "[" + dense_2d(state) + "]"
+    lines = [
+        "func.func private @printF32(f32)",
+        "func.func private @printNewline()",
+        "",
+        f'memref.global "private" constant @w : memref<{channels}x1x{kernel}xbf16> = '
+        f'dense<{weight_text}>',
+        f'memref.global "private" @state : memref<1x{state_len}x{channels}xbf16> = '
+        f'dense<{state_text}>',
+        "",
+        "func.func @main() -> i32 {",
+        f"  %x = arith.constant dense<{dense_2d(x)}> : tensor<{seq}x{channels}xbf16>",
+        f"  %w = memref.get_global @w : memref<{channels}x1x{kernel}xbf16>",
+        f"  %state = memref.get_global @state : memref<1x{state_len}x{channels}xbf16>",
+        f"  %0 = llmcp.causal_conv1d %x, %w, %state "
+        f"{{layer_index = 0 : i64, kernel_size = {kernel} : i64, "
+        f'activation = "silu"}} : (tensor<{seq}x{channels}xbf16>, '
+        f"memref<{channels}x1x{kernel}xbf16>, "
+        f"memref<1x{state_len}x{channels}xbf16>) -> tensor<{seq}x{channels}xbf16>",
+    ]
+    # Output tensor.
+    for t in range(seq):
+        for c in range(channels):
+            lines += [
+                f"  %oc{t}_{c} = arith.constant {t} : index",
+                f"  %oc{t}_{c}b = arith.constant {c} : index",
+                f"  %oe{t}_{c} = tensor.extract %0[%oc{t}_{c}, %oc{t}_{c}b] : "
+                f"tensor<{seq}x{channels}xbf16>",
+                f"  %of{t}_{c} = arith.extf %oe{t}_{c} : bf16 to f32",
+                f"  func.call @printF32(%of{t}_{c}) : (f32) -> ()",
+                "  func.call @printNewline() : () -> ()",
+            ]
+    # Updated state.
+    lines.append("  %lz = arith.constant 0 : index")
+    for i in range(state_len):
+        for c in range(channels):
+            lines += [
+                f"  %sc{i}_{c} = arith.constant {i} : index",
+                f"  %sc{i}_{c}b = arith.constant {c} : index",
+                f"  %se{i}_{c} = memref.load %state[%lz, %sc{i}_{c}, "
+                f"%sc{i}_{c}b] : memref<1x{state_len}x{channels}xbf16>",
+                f"  %sf{i}_{c} = arith.extf %se{i}_{c} : bf16 to f32",
+                f"  func.call @printF32(%sf{i}_{c}) : (f32) -> ()",
+                "  func.call @printNewline() : () -> ()",
+            ]
+    lines += ["  %ret = arith.constant 0 : i32", "  return %ret : i32", "}", ""]
+    return "\n".join(lines)
+
+
 def run(cmd, env=None):
     print("+", " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True, env=env)
@@ -301,6 +356,51 @@ def main():
     compile_and_run(args, "lm_head", emit_lm_head(hidden.tolist(),
                                                   table.tolist()),
                     ref, (1e-3, 1e-3))
+
+    # causal_conv1d (prefill + state update)
+    seq, channels, kernel = 3, 4, 3
+    state_len = kernel - 1
+    x = torch.randn(seq, channels).to(bf16)
+    weight = torch.randn(channels, 1, kernel).to(bf16)
+    state = torch.randn(1, state_len, channels).to(bf16)
+    padded = torch.cat([state[0], x], dim=0)
+    out = torch.empty(seq, channels, dtype=bf16)
+    for t in range(seq):
+        for c in range(channels):
+            acc = 0.0
+            for k in range(kernel):
+                acc += float(padded[t + k, c].float()) * float(
+                    weight[c, 0, k].float())
+            out[t, c] = torch.tensor(acc).to(bf16)
+    out = (out.float() * torch.sigmoid(out.float())).to(bf16)
+    new_state = padded[-(state_len):]
+    ref = torch.cat([out.float().flatten(),
+                     new_state.float().flatten()])
+    compile_and_run(args, "causal_conv1d",
+                    emit_causal_conv1d(x.tolist(), weight.tolist(),
+                                       state[0].tolist()),
+                    ref, (2e-2, 1e-2))
+
+    # causal_conv1d decode path: seq_len = 1, state shifts by one.
+    seq = 1
+    x = torch.randn(seq, channels).to(bf16)
+    state = torch.randn(1, state_len, channels).to(bf16)
+    padded = torch.cat([state[0], x], dim=0)
+    out = torch.empty(seq, channels, dtype=bf16)
+    for t in range(seq):
+        for c in range(channels):
+            acc = 0.0
+            for k in range(kernel):
+                acc += float(padded[t + k, c].float()) * float(
+                    weight[c, 0, k].float())
+            out[t, c] = torch.tensor(acc).to(bf16)
+    out = (out.float() * torch.sigmoid(out.float())).to(bf16)
+    new_state = padded[-(state_len):]
+    ref = torch.cat([out.float().flatten(), new_state.float().flatten()])
+    compile_and_run(args, "causal_conv1d_decode",
+                    emit_causal_conv1d(x.tolist(), weight.tolist(),
+                                       state[0].tolist()),
+                    ref, (2e-2, 1e-2))
 
 
 if __name__ == "__main__":

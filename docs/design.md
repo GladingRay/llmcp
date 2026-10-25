@@ -332,6 +332,7 @@ llmcp/
 │   │   └── LLMCPTypes.cpp
 │   ├── Dialect/LLMCP/Transforms/
 │   │   ├── LowerToLinalg.cpp
+│   │   ├── LowerCausalConv1d.cpp
 │   │   ├── LowerDeltaNet.cpp
 │   │   ├── LowerAttention.cpp
 │   │   ├── TileAndVectorize.cpp
@@ -1054,7 +1055,7 @@ IREE 的 `iree_linalg_ext.attention` 等扩展值得借鉴，但不作为依赖�
 ### 7.1 阶段划分
 
 ```text
-[1] llmcp-lower-to-linalg      # 已降级 linear/rms_norm/add/silu_mul/embedding/gated_rms_norm/lm_head；attention/delta/conv 后续补齐
+[1] llmcp-lower-to-linalg      # 已降级 linear/rms_norm/add/silu_mul/embedding/gated_rms_norm/lm_head/causal_conv1d；attention/delta 后续补齐
 [2] canonicalize / cse
 [3] llmcp-fuse-elementwise     # silu_mul、residual、norm 邻接融合
 [4] llmcp-tile-and-vectorize   # 自定义 tiling + vectorization
@@ -1711,7 +1712,7 @@ llmcp-opt --llmcp-lower-to-linalg
   → 执行，与 PyTorch 参考逐元素比较
 ```
 
-覆盖 `linear`、`rms_norm`、`add`、`silu_mul`、`embedding`、`gated_rms_norm`、`lm_head`。
+覆盖 `linear`、`rms_norm`、`add`、`silu_mul`、`embedding`、`gated_rms_norm`、`lm_head`、`causal_conv1d`。
 
 ### 11.3 容差
 
@@ -1794,7 +1795,7 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（7 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；attention/delta/conv 分解、tokenizer、HF golden、tiny 模型尚未开始。
+> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（8 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；attention/delta 分解、tokenizer、HF golden、tiny 模型尚未开始。
 
 - [ ] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [ ] `LLMCPDialect`/`LLMCPOps` 骨架（先 2 个 op：linear、rms_norm）。
