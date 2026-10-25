@@ -1704,7 +1704,7 @@ W4 (group g):
 | L4 | 生成质量/性能 | CLI + benchmark | 夜间/发版 |
 | L5 | 回归（tiny model） | CTest | 每次提交 |
 
-当前 L1 已落地 [tests/numeric/run_numeric.py](../tests/numeric/run_numeric.py)，覆盖 7 类已 lower 的 op：
+当前 L1 已落地 [tests/numeric/run_numeric.py](../tests/numeric/run_numeric.py)，覆盖全部 10 类已 lower 的 op：
 
 ```text
 llmcp-opt --llmcp-lower-to-linalg
@@ -1797,31 +1797,31 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；AOT/lowered-IR 执行、多 token 对齐尚未开始。
+> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，长序列 decode 仍漂移；AOT/lowered-IR 执行和采样尚未开始。
 
-- [ ] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
-- [ ] `LLMCPDialect`/`LLMCPOps` 骨架（先 2 个 op：linear、rms_norm）。
+- [x] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
+- [x] `LLMCPDialect`/`LLMCPOps`（全部 10 个 op）。
 - [x] `ModelConfig` 解析与校验；`WeightLayout`（bf16）；`llmcp-pack` 生成 arena + manifest。
-- [ ] tokenizer：BPE + byte-level + added tokens + NFC；与 HF 对照。
+- [x] tokenizer：tokenizers-cpp HF BPE + ByteLevel + added tokens；与 HF 对照。
 - [ ] 确认 `venv314` 的依赖（`pytest 9.1.1`、`lit 23.1.4` 已装）、HF 参考脚本、8 组 prompt、golden 格式。
 - [ ] tiny 模型（2 层、hidden 64）与 NumPy 参考。
 - [ ] 环境验证记录、CI 骨架。
 
 **M1**
 
-- [ ] `llmcp.linear`、`rms_norm`、`rope`、`attention`、`silu_mul`、`add` 的 lowering。
-- [ ] full layer（layer 11）+ MLP 的 IR builder。
+- [x] `llmcp.linear`、`rms_norm`、`attention`、`silu_mul`、`add` 等全部算子的 lowering。
+- [x] full layer + MLP 的 IR builder（32 层整图）。
 - [ ] decode AOT，`llmcp_lm_head`，C ABI 雏形。
 - [ ] 单层 golden 对比（q/k/v、attention 输出、mlp 输出）。
-- [ ] `llmcp-opt` lit 测试。
+- [x] `llmcp-opt` lit 测试。
 
 **M2**
 
-- [ ] `llmcp.causal_conv1d`、`gated_delta_net`（decode）。
-- [ ] gated RMSNorm、A_log/dt_bias 处理。
-- [ ] 32 层 group loop；三类状态；KV cache 布局。
-- [ ] 逐 token prefill；端到端 golden；贪心生成。
-- [ ] `llmcp.attention` 的 decode KV scan。
+- [x] `llmcp.causal_conv1d`、`gated_delta_net`（decode）。
+- [x] gated RMSNorm、A_log/dt_bias 处理。
+- [x] 32 层循环；三类状态；KV cache 布局（C++ runner）。
+- [x] 多 token prefill / 贪心生成（前两个 decode token 对齐 HF）。
+- [x] `llmcp.attention` 的 decode KV scan。
 
 **M3**
 

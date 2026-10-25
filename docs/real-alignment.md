@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-已完成 **单 token、全 32 层、真实 Qwen3.5-4B 权重** 的 C++ 执行器对齐验证。
+已完成 **单 token、全 32 层、真实 Qwen3.5-4B 权重** 的 C++ 执行器对齐验证；多 token prefill 和 greedy decode 已接入，长序列 decode 仍在收敛。
 
 对齐对象：
 
@@ -39,7 +39,7 @@ Python 语义参考入口：
 
 ## 对齐结果
 
-测试输入：`Hello`，token id `9419`，position 0，单 token prefill。
+单 token 测试输入：`Hello`，token id `9419`，position 0。
 
 C++ `llmcp-run` 单 token 结果：
 
@@ -93,13 +93,13 @@ top5 hf:   [11, 0, 13, 1017, 4858]
 
 尚未完成：
 
-1. 多 token prefill 和 decode 追加的整模型对齐；
+1. 长序列 decode 的完整数值对齐（当前前两个 token 与 HF 一致）；
 2. 用 lowered MLIR 执行并与 HF logits 对比；
-3. 完整 Unicode tokenizer（当前 minimal tokenizer 主要覆盖 ASCII 单词）。
+3. 采样和 chat template。
 
 ## 下一步
 
-1. 把 `python/llmcp_run.py` 的数学搬到 C++ `llmcp-run`，先用 Accelate/BLAS 做 matvec；
-2. 用真实权重跑单 token，对齐 top-1/top-5 和 `max_abs`；
-3. 再扩到 2~4 token prefill，验证 KV cache、causal conv state、DeltaNet state；
-4. 最后把 `llmcp-run` 替换为 lowered MLIR 的 AOT 执行结果。
+1. 校准 chunked prefill 的最终 DeltaNet state 与 decode recurrence 的衔接，消除长序列 decode 漂移；
+2. 加 temperature / top-k / top-p 采样和 chat template；
+3. 把 `llmcp-run` 替换为 lowered MLIR 的 AOT 执行结果；
+4. 做 tiling/vectorize，降低单 token 的几十秒级延迟。

@@ -44,9 +44,9 @@ M0 基础设施已落地：
 - `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；attention 支持 `position` / `cache_length`，prefill 与 decode 追加均可
 - `llmcp-pack`：真实权重打包为 8.41GB arena + JSON manifest
 - `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
-- 测试：6 个 CTest 目标（lit、dump、lower、pack、numeric、gtest）全部通过
+- 测试：7 个 CTest 目标（lit、dump、lower、pack、tokenizer、numeric、gtest）全部通过
 
-当前处于 M1 早期：单 token C++ 执行已打通，多 token prefill / decode、lowered-MLIR AOT 和性能优化尚未开始。
+当前处于 M1 早期：单 token 全模型对齐已完成；多 token prefill 和 greedy decode 已打通（前两个 decode token 与 HF 一致，长序列仍有漂移）；lowered-MLIR AOT、采样和性能优化尚未开始。
 
 ## 构建与测试
 
@@ -117,7 +117,11 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 llmcp-compile --model /Users/guorui/Work/models/qwen3.5-4b \
   --weights build/weights.bin --emit=shared --out build/libqwen35.dylib
 
-# 已有 C++ 单 token 执行器
+# 已有 C++ 多 token prefill / greedy decode 执行器
 ./build/bin/llmcp-run --weights build/weights.bin \
   --manifest build/weights.json --text Hello --golden build/golden_logits.bin
+
+# 多 token prefill / greedy decode
+./build/bin/llmcp-run --weights build/weights.bin \
+  --manifest build/weights.json --text 'Hello world' --max-new-tokens 2
 ```
