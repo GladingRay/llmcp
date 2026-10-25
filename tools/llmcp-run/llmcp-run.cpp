@@ -709,16 +709,25 @@ bool runAot(const Arena &arena, const Config &config, int64_t token,
     return false;
   }
 
-  int64_t tokenValue = token;
-  std::vector<float> cos(64, 1.0f), sin(64, 0.0f);
-  std::vector<uint16_t> kv(static_cast<size_t>(8 * 2 * 4 * 1 * 256), 0);
-  std::vector<float> delta(static_cast<size_t>(24 * 32 * 128 * 128), 0.0f);
-  std::vector<uint16_t> conv(static_cast<size_t>(24 * 3 * 8192), 0);
-  logits.assign(config.hidden * 0 + 248320, 0.0f);
+  static int64_t tokenValue;
+  tokenValue = token;
+  static float cos[64], sin[64];
+  static uint16_t kv[8 * 2 * 4 * 1 * 256];
+  static float delta[24 * 32 * 128 * 128];
+  static uint16_t conv[24 * 3 * 8192];
+  static float out[248320];
+  for (int i = 0; i < 64; ++i) {
+    cos[i] = 1.0f;
+    sin[i] = 0.0f;
+  }
+  std::memset(kv, 0, sizeof(kv));
+  std::memset(delta, 0, sizeof(delta));
+  std::memset(conv, 0, sizeof(conv));
+  std::memset(out, 0, sizeof(out));
 
   StridedMemRef<int64_t, 1> tokensRef{&tokenValue, &tokenValue, 0, {1}, {1}};
-  StridedMemRef<float, 2> cosRef{cos.data(), cos.data(), 0, {1, 64}, {64, 1}};
-  StridedMemRef<float, 2> sinRef{sin.data(), sin.data(), 0, {1, 64}, {64, 1}};
+  StridedMemRef<float, 2> cosRef{cos, cos, 0, {1, 64}, {64, 1}};
+  StridedMemRef<float, 2> sinRef{sin, sin, 0, {1, 64}, {64, 1}};
   StridedMemRef<int8_t, 1> arenaRef{
       const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
       const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
@@ -726,19 +735,16 @@ bool runAot(const Arena &arena, const Config &config, int64_t token,
       {static_cast<int64_t>(arena.size)},
       {1}};
   StridedMemRef<uint16_t, 5> kvRef{
-      kv.data(), kv.data(), 0, {8, 2, 4, 1, 256}, {2048, 1024, 256, 256, 1}};
-  StridedMemRef<float, 4> deltaRef{delta.data(),
-                                   delta.data(),
-                                   0,
-                                   {24, 32, 128, 128},
-                                   {32 * 128 * 128, 128 * 128, 128, 1}};
+      kv, kv, 0, {8, 2, 4, 1, 256}, {2048, 1024, 256, 256, 1}};
+  StridedMemRef<float, 4> deltaRef{
+      delta, delta, 0, {24, 32, 128, 128}, {32 * 128 * 128, 128 * 128, 128, 1}};
   StridedMemRef<uint16_t, 3> convRef{
-      conv.data(), conv.data(), 0, {24, 3, 8192}, {3 * 8192, 8192, 1}};
-  StridedMemRef<float, 2> logitsRef{
-      logits.data(), logits.data(), 0, {1, 248320}, {248320, 1}};
+      conv, conv, 0, {24, 3, 8192}, {3 * 8192, 8192, 1}};
+  StridedMemRef<float, 2> logitsRef{out, out, 0, {1, 248320}, {248320, 1}};
 
   fn(&tokensRef, &cosRef, &sinRef, (void *)0, (void *)1, &arenaRef, &kvRef,
      &deltaRef, &convRef, &logitsRef);
+  logits.assign(out, out + 248320);
   dlclose(handle);
   return true;
 }
