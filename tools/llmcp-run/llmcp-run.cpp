@@ -727,42 +727,6 @@ bool runAotManual(const Arena &arena, int64_t token,
 int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "llmcp-run\n");
 
-  if (!aotPath.empty()) {
-    int64_t token = tokenId;
-    if (!prompt.empty()) {
-      std::string command = "\"" + std::string(argv[0]) +
-                            "\" --tokenize-only --text \"" + prompt +
-                            "\" --tokenizer \"" + tokenizerPath + "\"";
-      FILE *pipe = popen(command.c_str(), "r");
-      if (!pipe) {
-        errs() << "llmcp-run: cannot spawn tokenizer\n";
-        return 1;
-      }
-      char buffer[4096] = {0};
-      if (!fgets(buffer, sizeof(buffer), pipe)) {
-        pclose(pipe);
-        errs() << "llmcp-run: tokenizer produced no output\n";
-        return 1;
-      }
-      pclose(pipe);
-      token = std::strtoll(buffer, nullptr, 10);
-    }
-    Arena earlyArena;
-    if (Error error = earlyArena.load(weightsPath, manifestPath)) {
-      errs() << "llmcp-run: " << toString(std::move(error)) << "\n";
-      return 1;
-    }
-    std::vector<float> earlyLogits;
-    if (!runAotManual(earlyArena, token, earlyLogits))
-      return 1;
-    outs() << "aot logits: " << earlyLogits.size() << " next "
-           << argmax(earlyLogits) << "\n";
-    if (dumpLogits)
-      for (float value : earlyLogits)
-        outs() << value << "\n";
-    return 0;
-  }
-
   auto blob = MemoryBuffer::getFile(tokenizerPath);
   if (!blob) {
     errs() << "llmcp-run: " << blob.getError().message() << "\n";
@@ -785,6 +749,23 @@ int main(int argc, char **argv) {
     outs() << "\n";
     if (expectToken >= 0 && (tokens.empty() || tokens[0] != expectToken))
       return 1;
+    return 0;
+  }
+
+  if (!aotPath.empty()) {
+    Arena aotArena;
+    if (Error error = aotArena.load(weightsPath, manifestPath)) {
+      errs() << "llmcp-run: " << toString(std::move(error)) << "\n";
+      return 1;
+    }
+    std::vector<float> aotLogits;
+    if (!runAotManual(aotArena, tokens[0], aotLogits))
+      return 1;
+    outs() << "aot logits: " << aotLogits.size() << " next "
+           << argmax(aotLogits) << "\n";
+    if (dumpLogits)
+      for (float value : aotLogits)
+        outs() << value << "\n";
     return 0;
   }
 
