@@ -356,6 +356,7 @@ llmcp/
 ├── tools/
 │   ├── llmcp-opt/llmcp-opt.cpp        # 注册方言 + pass，lit 测试入口
 │   ├── llmcp-compile/llmcp-compile.cpp # 模型 → .mlir → .dylib
+│   ├── llmcp-inspect/llmcp-inspect.cpp # 只读 header 的配置/布局检查
 │   ├── llmcp-pack/llmcp-pack.cpp      # safetensors → weights.bin + manifest
 │   ├── llmcp-run/llmcp-run.cpp        # CLI 推理
 │   └── llmcp-tokenize/                # tokenizer 对照工具（可选）
@@ -370,9 +371,15 @@ llmcp/
 │   ├── requirements.txt               # 参考环境（torch/transformers/numpy）
 │   └── requirements-test.txt          # pytest / lit
 ├── tests/
-│   ├── lit/Dialect/LLMCP/*.mlir
+│   ├── lit/Dialect/LLMCP/
+│   │   ├── ops.mlir
+│   │   ├── verify.mlir
+│   │   └── verify-rms.mlir
 │   ├── lit/Conversion/*.mlir
 │   ├── unittests/
+│   │   ├── ModelConfigTest.cpp
+│   │   ├── SafetensorsTest.cpp
+│   │   └── WeightLayoutTest.cpp
 │   ├── tiny/                          # 小模型端到端（CI 用）
 │   ├── e2e/                           # 真实模型 golden（本地）
 │   └── golden/                        # 生成物，gitignore
@@ -426,6 +433,7 @@ build/include/llmcp/Dialect/LLMCP/IR/
 | `MLIRLLMCPRuntime` | 库 | LLVMSupport, Threads | tokenizer/session/sampler |
 | `llmcp-opt` | 工具 | 上述 | `mlir-opt` 的专用替代 |
 | `llmcp-compile` | 工具 | 上述 + MLIRExecutionEngine/TargetLLVMIR | 端到端编译 |
+| `llmcp-inspect` | 工具 | Model | 只读 header，打印配置/层类型/权重布局 |
 | `llmcp-pack` | 工具 | Model | 权重打包/量化 |
 | `llmcp-run` | 工具 | Runtime + dlopen | CLI |
 
@@ -546,6 +554,8 @@ OVERVIEW: MLIR CPU execution driver
   - 自研 `llmcp-opt` 注册自己的 pass；或
   - 用 Transform dialect 脚本做实验，再把稳定 schedule 固化成 C++ pass。
 - LLVM 20 的 JIT 工具名是 `mlir-runner`（不是旧版 `mlir-cpu-runner`）。
+- `add_mlir_dialect` 依赖 `tablegen()` 函数，根 CMake 必须显式 `include(TableGen)`；否则报 `Unknown CMake command "tablegen"`。
+- 本机 SDK 的 `libz.1.tbd` 在 Homebrew clang 20 下链接会报 `unknown architecture`，因此 CMake 固定使用 `/opt/homebrew/opt/zlib` 的 zlib；`ZLIB::ZLIB` 的 SDK include 也会把 `<math.h>` 排到 libc++ 前面，构建时清掉其 interface include。
 - **C 和 C++ 编译器都要指向 Homebrew clang 20**。如果只指定 `CMAKE_CXX_COMPILER`，CMake 会为 C 语言选择 `/usr/bin/cc`（AppleClang 21）；在当前 macOS 27 SDK 下，AppleClang 21 链接 `libSystem.tbd` 会报 `unknown architecture arm64e.x1-macos`，导致 `project(... LANGUAGES C CXX)` 直接失败。实测以下配置可以正常构建 vendored utf8proc + googletest：
 
 ```bash
@@ -570,6 +580,7 @@ find_package(MLIR REQUIRED CONFIG)
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 include(AddLLVM)
+include(TableGen)
 include(AddMLIR)
 
 include_directories(${LLVM_INCLUDE_DIRS})
@@ -580,8 +591,17 @@ add_definitions(${LLVM_DEFINITIONS})
 
 add_subdirectory(third_party)
 
+# TableGen runs from the include side; the library is built under lib/.
+add_subdirectory(include/llmcp/Dialect/LLMCP/IR)
+
 add_subdirectory(lib)
 add_subdirectory(tools)
+
+option(LLMCP_BUILD_TESTS "Build llmcp tests" ON)
+if(LLMCP_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
 ```
 
 配置时请同时指定 C/C++ 编译器：
@@ -1752,6 +1772,8 @@ M0 权重布局/参考数据
 ### 12.3 每阶段任务清单
 
 **M0**
+
+> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言骨架、`ModelConfig`/`Safetensors`/`WeightLayout`、`llmcp-inspect`、lit 与 C++ 单测已完成并通过；tokenizer、HF golden、tiny 模型尚未开始。
 
 - [ ] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [ ] `LLMCPDialect`/`LLMCPOps` 骨架（先 2 个 op：linear、rms_norm）。

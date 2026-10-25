@@ -1,6 +1,6 @@
 # Build outputs
 build/
-build-*/
+build*/
 cmake-build-*/
 compile_commands.json
 *.o

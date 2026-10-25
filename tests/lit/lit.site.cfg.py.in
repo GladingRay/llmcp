@@ -1,0 +1,9 @@
+import os
+
+import lit.formats
+
+config.llmcp_opt = "@LLMCP_OPT@"
+config.filecheck = "@LLMCP_FILECHECK@"
+config.test_exec_root = "@LLMCP_TEST_EXEC_ROOT@"
+
+lit_config.load_config(config, "@LLMCP_LIT_CFG@")

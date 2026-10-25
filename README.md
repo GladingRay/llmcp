@@ -31,9 +31,19 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 
 ## 当前状态
 
-设计阶段。仓库中的 `include/`、`src/`、`tests/` 为空；下一步从 M0（构建骨架 + 模型解析 + 参考数据）开始。
+M0 基础设施已落地：
 
-## 快速开始（规划）
+- CMake + MLIR 20 构建，`llmcp-opt` 可解析/打印/校验 IR
+- `llmcp` 方言：`llmcp.linear`、`llmcp.rms_norm`，含 TableGen 定义与 C++ verifier
+- `ModelConfig`：解析并校验 `config.json`（层类型、GQA、RoPE、mRoPE、线性注意力头数等）
+- `Safetensors`：只读 header，不加载 tensor 数据
+- `WeightLayout`：文本权重 arena 的确定性偏移、64B 对齐、group stride
+- `llmcp-inspect`：对真实 Qwen3.5-4B 输出 32 层 / 738 tensor / 8.41GB 文本布局
+- 测试：3 个 lit 用例 + 3 组 C++ 单测（ModelConfig / Safetensors / WeightLayout）全部通过
+
+仍在 M0/M1 之间：tokenizer、HF golden 导出、单层 lowering 尚未开始。
+
+## 构建与测试
 
 ```bash
 # 0. 拉取 vendored 第三方源码
@@ -41,19 +51,44 @@ git submodule update --init --recursive
 
 # 1. 构建（C/C++ 都用 Homebrew clang 20）
 cmake -G Ninja -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang \
   -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang++ \
   -DMLIR_DIR=/opt/homebrew/opt/llvm@20/lib/cmake/mlir \
   -DLLVM_DIR=/opt/homebrew/opt/llvm@20/lib/cmake/llvm
-ninja -C build
+cmake --build build -j 8
 
-# 2. 打包权重（规划中的工具）
+# 2. 测试
+ctest --test-dir build --output-on-failure
+
+# 3. 检查真实模型配置与权重布局（只读 header）
+./build/bin/llmcp-inspect --model /Users/guorui/Work/models/qwen3.5-4b
+
+# 4. 解析/打印 llmcp IR
+./build/bin/llmcp-opt tests/lit/Dialect/LLMCP/ops.mlir
+```
+
+`llmcp-inspect` 当前输出：
+
+```text
+layers: 32 (24 linear, 8 full)
+tensors: 738
+checkpoint bytes: 9319737856
+arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
+```
+
+文本 arena 为 8.41GB；视觉塔和 MTP 尚未纳入文本编译布局。
+
+## 后续（规划中）
+
+```bash
+# 打包权重
 llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b --out build/weights.bin
 
-# 3. 编译模型
+# 编译模型
 llmcp-compile --model /Users/guorui/Work/models/qwen3.5-4b \
   --weights build/weights.bin --emit=shared --out build/libqwen35.dylib
 
-# 4. 运行
+# 运行
 llmcp-run --lib build/libqwen35.dylib --prompt "你好" --max-new-tokens 64
 ```
