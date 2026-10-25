@@ -89,7 +89,7 @@ top5 hf:   [11, 0, 13, 1017, 4858]
 
 ## 边界
 
-当前 C++ 执行器是 **手写模型函数**，不是 lowered MLIR 的 AOT 产物；它先验证“真实权重 + 模型数学”，给后续 AOT 执行一个 baseline。
+当前 C++ 执行器是 **手写模型函数**；完整图已经可以 AOT 生成 `libqwen35_aot.dylib`（导出 4 个 `llmcp_*` 入口），但 AOT library 的运行时驱动尚未接入，因此当前数值对齐仍由手写执行器完成。
 
 尚未完成：
 
@@ -101,5 +101,5 @@ top5 hf:   [11, 0, 13, 1017, 4858]
 
 1. 校准 chunked prefill 的最终 DeltaNet state 与 decode recurrence 的衔接，消除长序列 decode 漂移；
 2. 加 temperature / top-k / top-p 采样和 chat template；
-3. 把 `llmcp-run` 替换为 lowered MLIR 的 AOT 执行结果；
+3. 为 AOT shared library 写运行时驱动，替换手写 `llmcp-run`；
 4. 做 tiling/vectorize，降低单 token 的几十秒级延迟。

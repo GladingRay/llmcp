@@ -55,6 +55,12 @@ if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
       --tokenizer /Users/guorui/Work/models/qwen3.5-4b/tokenizer.json
       --expect-token 9419)
   set_tests_properties(llmcp-tokenizer PROPERTIES TIMEOUT 120)
+
+  add_test(NAME llmcp-compile-real
+    COMMAND $<TARGET_FILE:llmcp-compile>
+      --model /Users/guorui/Work/models/qwen3.5-4b
+      --emit=llvm-ir --out "${CMAKE_BINARY_DIR}/qwen35_aot_test.ll")
+  set_tests_properties(llmcp-compile-real PROPERTIES TIMEOUT 300)
 endif()
 
 find_program(LLMCP_PYTHON

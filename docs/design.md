@@ -1797,7 +1797,7 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，长序列 decode 仍漂移；AOT/lowered-IR 执行和采样尚未开始。
+> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，长序列 decode 仍漂移；完整图 AOT 代码生成（LLVM IR/object/shared）已完成，AOT library 的运行时驱动和采样尚未开始。
 
 - [x] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [x] `LLMCPDialect`/`LLMCPOps`（全部 10 个 op）。
@@ -1811,7 +1811,7 @@ M0 权重布局/参考数据
 
 - [x] `llmcp.linear`、`rms_norm`、`attention`、`silu_mul`、`add` 等全部算子的 lowering。
 - [x] full layer + MLP 的 IR builder（32 层整图）。
-- [ ] decode AOT，`llmcp_lm_head`，C ABI 雏形。
+- [x] AOT 代码生成（LLVM IR/object/shared）；`llmcp_lm_head` 已导出，C ABI 驱动待补。
 - [ ] 单层 golden 对比（q/k/v、attention 输出、mlp 输出）。
 - [x] `llmcp-opt` lit 测试。
 

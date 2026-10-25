@@ -43,10 +43,11 @@ M0 基础设施已落地：
 - `llmcp-dump`：把完整计算图 dump 成 `.mlir`，支持 `--verify-module` 和 `--print-stats`
 - `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；attention 支持 `position` / `cache_length`，prefill 与 decode 追加均可
 - `llmcp-pack`：真实权重打包为 8.41GB arena + JSON manifest
+- `llmcp-compile`：把完整 llmcp 图 AOT 降级到 LLVM IR / object / shared library，导出 4 个 `llmcp_*` 入口
 - `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
-- 测试：7 个 CTest 目标（lit、dump、lower、pack、tokenizer、numeric、gtest）全部通过
+- 测试：8 个 CTest 目标（lit、dump、lower、pack、tokenizer、compile、numeric、gtest）全部通过
 
-当前处于 M1 早期：单 token 全模型对齐已完成；多 token prefill 和 greedy decode 已打通（前两个 decode token 与 HF 一致，长序列仍有漂移）；lowered-MLIR AOT、采样和性能优化尚未开始。
+当前处于 M1 早期：单 token 全模型对齐已完成；多 token prefill 和 greedy decode 已打通（前两个 decode token 与 HF 一致，长序列仍有漂移）；完整图的 AOT 代码生成已完成（LLVM IR / object / shared），AOT library 的运行时驱动、采样和性能优化尚未开始。
 
 ## 构建与测试
 
@@ -113,9 +114,9 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 # 只校验，不写 8.4GB 文件
 ./build/bin/llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b --dry-run
 
-# 编译模型
-llmcp-compile --model /Users/guorui/Work/models/qwen3.5-4b \
-  --weights build/weights.bin --emit=shared --out build/libqwen35.dylib
+# AOT 编译模型（已实现）
+./build/bin/llmcp-compile --model /Users/guorui/Work/models/qwen3.5-4b \
+  --emit=shared --out build/libqwen35_aot.dylib
 
 # 已有 C++ 多 token prefill / greedy decode 执行器
 ./build/bin/llmcp-run --weights build/weights.bin \
