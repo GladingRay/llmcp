@@ -3,6 +3,7 @@ add_mlir_library(MLIRLLMCPModel
   Safetensors.cpp
   WeightLayout.cpp
   ModelBuilder.cpp
+  WeightPacker.cpp
 
   ADDITIONAL_HEADER_DIRS
     ${PROJECT_SOURCE_DIR}/include/llmcp/Model

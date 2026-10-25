@@ -104,8 +104,12 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 ## 后续（规划中）
 
 ```bash
-# 打包权重
-llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b --out build/weights.bin
+# 打包权重（已实现）
+./build/bin/llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b \
+  --out build/weights.bin --manifest build/weights.json
+
+# 只校验，不写 8.4GB 文件
+./build/bin/llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b --dry-run
 
 # 编译模型
 llmcp-compile --model /Users/guorui/Work/models/qwen3.5-4b \

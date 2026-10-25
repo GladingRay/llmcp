@@ -1801,7 +1801,7 @@ M0 权重布局/参考数据
 
 - [ ] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [ ] `LLMCPDialect`/`LLMCPOps` 骨架（先 2 个 op：linear、rms_norm）。
-- [ ] `ModelConfig` 解析与校验；`WeightLayout`（bf16）；`llmcp-pack` 生成 manifest。
+- [x] `ModelConfig` 解析与校验；`WeightLayout`（bf16）；`llmcp-pack` 生成 arena + manifest。
 - [ ] tokenizer：BPE + byte-level + added tokens + NFC；与 HF 对照。
 - [ ] 确认 `venv314` 的依赖（`pytest 9.1.1`、`lit 23.1.4` 已装）、HF 参考脚本、8 组 prompt、golden 格式。
 - [ ] tiny 模型（2 层、hidden 64）与 NumPy 参考。

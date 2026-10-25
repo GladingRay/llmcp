@@ -44,6 +44,11 @@ if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
     COMMAND ${CMAKE_COMMAND} -P
             "${CMAKE_CURRENT_BINARY_DIR}/lower-real.cmake")
   set_tests_properties(llmcp-lower-real PROPERTIES TIMEOUT 120)
+
+  add_test(NAME llmcp-pack-real
+    COMMAND $<TARGET_FILE:llmcp-pack>
+      --model /Users/guorui/Work/models/qwen3.5-4b --dry-run)
+  set_tests_properties(llmcp-pack-real PROPERTIES TIMEOUT 120)
 endif()
 
 find_program(LLMCP_PYTHON
