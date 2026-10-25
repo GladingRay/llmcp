@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Numeric smoke tests for the llmcp -> linalg lowering."""
+"""Numeric tests for the llmcp -> linalg lowering.
+
+Each case builds a small MLIR module, lowers it to LLVM, executes it, and
+compares the printed values against a PyTorch reference.
+"""
 
 import argparse
 import math
 import os
 import pathlib
 import subprocess
-import sys
 
 import torch
 
@@ -16,70 +19,158 @@ def fmt(value: float) -> str:
 
 
 def dense_2d(values) -> str:
-    return "[" + ", ".join("[" + ", ".join(fmt(v) for v in row) + "]" for row in values) + "]"
+    return "[" + ", ".join(
+        "[" + ", ".join(fmt(v) for v in row) + "]" for row in values) + "]"
 
 
 def dense_1d(values) -> str:
     return "[" + ", ".join(fmt(v) for v in values) + "]"
 
 
-def emit_linear(x, w) -> str:
-    m, k = len(x), len(x[0])
-    n = len(w)
+def print_tensor(name: str, rows: int, columns: int, element_type: str):
+    lines = []
+    for i in range(rows):
+        for j in range(columns):
+            lines += [
+                f"  %c{i}_{j} = arith.constant {i} : index",
+                f"  %c{i}_{j}b = arith.constant {j} : index",
+                f"  %e{i}_{j} = tensor.extract %{name}[%c{i}_{j}, %c{i}_{j}b] : "
+                f"tensor<{rows}x{columns}x{element_type}>",
+            ]
+            value = f"%e{i}_{j}"
+            if element_type == "bf16":
+                lines.append(
+                    f"  %f{i}_{j} = arith.extf %e{i}_{j} : bf16 to f32")
+                value = f"%f{i}_{j}"
+            lines += [
+                f"  func.call @printF32({value}) : (f32) -> ()",
+                "  func.call @printNewline() : () -> ()",
+            ]
+    return lines
+
+
+def wrap(body, globals_, rows: int, columns: int, element_type: str) -> str:
     lines = [
         "func.func private @printF32(f32)",
         "func.func private @printNewline()",
         "",
-        f'memref.global "private" constant @w : memref<{n}x{k}xbf16> = dense<{dense_2d(w)}>',
-        "",
-        "func.func @main() -> i32 {",
+    ]
+    lines += globals_
+    lines += ["", "func.func @main() -> i32 {"]
+    lines += body
+    lines += print_tensor("0", rows, columns, element_type)
+    lines += ["  %ret = arith.constant 0 : i32", "  return %ret : i32", "}", ""]
+    return "\n".join(lines)
+
+
+def emit_linear(x, w) -> str:
+    m, k = len(x), len(x[0])
+    n = len(w)
+    body = [
         f"  %x = arith.constant dense<{dense_2d(x)}> : tensor<{m}x{k}xbf16>",
         f"  %w = memref.get_global @w : memref<{n}x{k}xbf16>",
         f"  %0 = llmcp.linear %x, %w : tensor<{m}x{k}xbf16>, "
         f"memref<{n}x{k}xbf16> -> tensor<{m}x{n}xbf16>",
     ]
-    for i in range(m):
-        for j in range(n):
-            lines += [
-                f"  %c{i}_{j} = arith.constant {i} : index",
-                f"  %c{i}_{j}b = arith.constant {j} : index",
-                f"  %e{i}_{j} = tensor.extract %0[%c{i}_{j}, %c{i}_{j}b] : "
-                f"tensor<{m}x{n}xbf16>",
-                f"  %f{i}_{j} = arith.extf %e{i}_{j} : bf16 to f32",
-                f"  func.call @printF32(%f{i}_{j}) : (f32) -> ()",
-                "  func.call @printNewline() : () -> ()",
-            ]
-    lines += ["  %ret = arith.constant 0 : i32", "  return %ret : i32", "}", ""]
-    return "\n".join(lines)
+    globals_ = [
+        f'memref.global "private" constant @w : memref<{n}x{k}xbf16> = '
+        f'dense<{dense_2d(w)}>'
+    ]
+    return wrap(body, globals_, m, n, "bf16")
 
 
-def emit_rms(x, w, eps) -> str:
+def emit_rms(x, w) -> str:
     m, d = len(x), len(w)
-    lines = [
-        "func.func private @printF32(f32)",
-        "func.func private @printNewline()",
-        "",
-        f'memref.global "private" constant @w : memref<{d}xbf16> = dense<{dense_1d(w)}>',
-        "",
-        "func.func @main() -> i32 {",
+    body = [
         f"  %x = arith.constant dense<{dense_2d(x)}> : tensor<{m}x{d}xbf16>",
         f"  %w = memref.get_global @w : memref<{d}xbf16>",
         f"  %0 = llmcp.rms_norm %x, %w : tensor<{m}x{d}xbf16>, "
         f"memref<{d}xbf16> -> tensor<{m}x{d}xbf16>",
     ]
-    for i in range(m):
-        for j in range(d):
-            lines += [
-                f"  %c{i}_{j} = arith.constant {i} : index",
-                f"  %c{i}_{j}b = arith.constant {j} : index",
-                f"  %e{i}_{j} = tensor.extract %0[%c{i}_{j}, %c{i}_{j}b] : "
-                f"tensor<{m}x{d}xbf16>",
-                f"  %f{i}_{j} = arith.extf %e{i}_{j} : bf16 to f32",
-                f"  func.call @printF32(%f{i}_{j}) : (f32) -> ()",
-                "  func.call @printNewline() : () -> ()",
-            ]
-    lines += ["  %ret = arith.constant 0 : i32", "  return %ret : i32", "}", ""]
-    return "\n".join(lines)
+    globals_ = [
+        f'memref.global "private" constant @w : memref<{d}xbf16> = '
+        f'dense<{dense_1d(w)}>'
+    ]
+    return wrap(body, globals_, m, d, "bf16")
+
+
+def emit_add(a, b) -> str:
+    m, n = len(a), len(a[0])
+    body = [
+        f"  %a = arith.constant dense<{dense_2d(a)}> : tensor<{m}x{n}xbf16>",
+        f"  %b = arith.constant dense<{dense_2d(b)}> : tensor<{m}x{n}xbf16>",
+        f"  %0 = llmcp.add %a, %b : (tensor<{m}x{n}xbf16>, "
+        f"tensor<{m}x{n}xbf16>) -> tensor<{m}x{n}xbf16>",
+    ]
+    return wrap(body, [], m, n, "bf16")
+
+
+def emit_silu_mul(gate, up) -> str:
+    m, n = len(gate), len(gate[0])
+    body = [
+        f"  %g = arith.constant dense<{dense_2d(gate)}> : "
+        f"tensor<{m}x{n}xbf16>",
+        f"  %u = arith.constant dense<{dense_2d(up)}> : "
+        f"tensor<{m}x{n}xbf16>",
+        f"  %0 = llmcp.silu_mul %g, %u : (tensor<{m}x{n}xbf16>, "
+        f"tensor<{m}x{n}xbf16>) -> tensor<{m}x{n}xbf16>",
+    ]
+    return wrap(body, [], m, n, "bf16")
+
+
+def emit_embedding(tokens, table) -> str:
+    rows = len(tokens)
+    vocab, d = len(table), len(table[0])
+    token_text = "[" + ", ".join(str(int(t)) for t in tokens) + "]"
+    body = [
+        f"  %tokens = arith.constant dense<{token_text}> : "
+        f"tensor<{rows}xindex>",
+        f"  %table = memref.get_global @table : memref<{vocab}x{d}xbf16>",
+        f"  %0 = llmcp.embedding %tokens, %table : (tensor<{rows}xindex>, "
+        f"memref<{vocab}x{d}xbf16>) -> tensor<{rows}x{d}xbf16>",
+    ]
+    globals_ = [
+        f'memref.global "private" constant @table : memref<{vocab}x{d}xbf16> = '
+        f'dense<{dense_2d(table)}>'
+    ]
+    return wrap(body, globals_, rows, d, "bf16")
+
+
+def emit_gated_rms_norm(x, gate, weight, group_size) -> str:
+    m, h = len(x), len(x[0])
+    d = len(weight)
+    body = [
+        f"  %x = arith.constant dense<{dense_2d(x)}> : tensor<{m}x{h}xbf16>",
+        f"  %g = arith.constant dense<{dense_2d(gate)}> : "
+        f"tensor<{m}x{h}xbf16>",
+        f"  %w = memref.get_global @w : memref<{d}xf32>",
+        f"  %0 = llmcp.gated_rms_norm %x, %g, %w "
+        f"{{group_size = {group_size} : i64, eps = 1.000000e-06 : f64}} : "
+        f"(tensor<{m}x{h}xbf16>, tensor<{m}x{h}xbf16>, memref<{d}xf32>) "
+        f"-> tensor<{m}x{h}xbf16>",
+    ]
+    globals_ = [
+        f'memref.global "private" constant @w : memref<{d}xf32> = '
+        f'dense<{dense_1d(weight)}>'
+    ]
+    return wrap(body, globals_, m, h, "bf16")
+
+
+def emit_lm_head(hidden, table) -> str:
+    m, h = len(hidden), len(hidden[0])
+    vocab = len(table)
+    body = [
+        f"  %hidden = arith.constant dense<{dense_2d(hidden)}> : "
+        f"tensor<{m}x{h}xbf16>",
+        f"  %table = memref.get_global @table : memref<{vocab}x{h}xbf16>",
+        f"  %0 = llmcp.lm_head %hidden, %table : (tensor<{m}x{h}xbf16>, "
+        f"memref<{vocab}x{h}xbf16>) -> tensor<{m}x{vocab}xf32>",
+    ]
+    globals_ = [
+        f'memref.global "private" constant @table : memref<{vocab}x{h}xbf16> = '
+        f'dense<{dense_2d(table)}>'
+    ]
+    return wrap(body, globals_, m, vocab, "f32")
 
 
 def run(cmd, env=None):
@@ -87,30 +178,9 @@ def run(cmd, env=None):
     subprocess.run(cmd, check=True, env=env)
 
 
-def numeric_test(args, case: str):
-    torch.manual_seed(0)
+def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
     work = pathlib.Path(args.workdir)
     work.mkdir(parents=True, exist_ok=True)
-
-    if case == "linear":
-        m, k, n = 2, 4, 3
-        x = torch.randn(m, k).to(torch.bfloat16)
-        w = torch.randn(n, k).to(torch.bfloat16)
-        mlir = emit_linear(x.tolist(), w.tolist())
-        ref = (x.float() @ w.float().T).to(torch.bfloat16).float().flatten()
-    elif case == "rms":
-        m, d = 2, 8
-        eps = 1e-6
-        x = torch.randn(m, d).to(torch.bfloat16)
-        w = torch.randn(d).to(torch.bfloat16)
-        mlir = emit_rms(x.tolist(), w.tolist(), eps)
-        xf = x.float()
-        var = xf.pow(2).mean(-1, keepdim=True)
-        rstd = torch.rsqrt(var + eps)
-        ref = (xf * rstd * (1.0 + w.float())).to(torch.bfloat16).float().flatten()
-    else:
-        raise ValueError(case)
-
     source = work / f"{case}.mlir"
     linalg = work / f"{case}.linalg.mlir"
     llvm_mlir = work / f"{case}.llvm.mlir"
@@ -118,34 +188,42 @@ def numeric_test(args, case: str):
     exe = work / f"{case}.bin"
     source.write_text(mlir)
 
-    run([args.llmcp_opt, str(source), "--llmcp-lower-to-linalg", "-o", str(linalg)])
+    run([args.llmcp_opt, str(source), "--llmcp-lower-to-linalg", "-o",
+         str(linalg)])
     run([
         args.mlir_opt, str(linalg),
         "--one-shot-bufferize=bufferize-function-boundaries=1",
         "--convert-linalg-to-loops", "--lower-affine", "--convert-scf-to-cf",
         "--convert-cf-to-llvm", "--convert-arith-to-llvm",
         "--convert-math-to-llvm", "--convert-func-to-llvm",
-        "--finalize-memref-to-llvm", "--reconcile-unrealized-casts",
+        "--expand-strided-metadata", "--finalize-memref-to-llvm", "--reconcile-unrealized-casts",
         "-o", str(llvm_mlir),
     ])
-    run([args.mlir_translate, "--mlir-to-llvmir", str(llvm_mlir), "-o", str(llvm_ir)])
+    run([args.mlir_translate, "--mlir-to-llvmir", str(llvm_mlir), "-o",
+         str(llvm_ir)])
     run([
         args.clang, str(llvm_ir), "-o", str(exe),
-        f"-L{args.runner_lib_dir}", "-lmlir_runner_utils", "-lmlir_c_runner_utils",
+        f"-L{args.runner_lib_dir}", "-lmlir_runner_utils",
+        "-lmlir_c_runner_utils",
     ])
 
     env = dict(os.environ)
-    env["DYLD_LIBRARY_PATH"] = args.runner_lib_dir + ":" + env.get("DYLD_LIBRARY_PATH", "")
-    output = subprocess.run([str(exe)], check=True, env=env, capture_output=True, text=True).stdout
+    env["DYLD_LIBRARY_PATH"] = args.runner_lib_dir + ":" + env.get(
+        "DYLD_LIBRARY_PATH", "")
+    output = subprocess.run([str(exe)], check=True, env=env,
+                            capture_output=True, text=True).stdout
     actual = [float(line) for line in output.splitlines() if line.strip()]
 
     if len(actual) != ref.numel():
-        raise SystemExit(f"{case}: expected {ref.numel()} values, got {len(actual)}: {actual}")
+        raise SystemExit(
+            f"{case}: expected {ref.numel()} values, got {len(actual)}: {actual}")
 
+    rel_tol, abs_tol = tolerance
     for index, (got, expected) in enumerate(zip(actual, ref.tolist())):
-        if not math.isclose(got, expected, rel_tol=2e-2, abs_tol=1e-2):
+        if not math.isclose(got, expected, rel_tol=rel_tol, abs_tol=abs_tol):
             raise SystemExit(
-                f"{case}[{index}]: got {got}, expected {expected}, output={output!r}")
+                f"{case}[{index}]: got {got}, expected {expected}, "
+                f"output={output!r}")
     print(f"{case}: OK ({len(actual)} values)")
 
 
@@ -158,8 +236,71 @@ def main():
     parser.add_argument("--runner-lib-dir", required=True)
     parser.add_argument("--workdir", required=True)
     args = parser.parse_args()
-    numeric_test(args, "linear")
-    numeric_test(args, "rms")
+
+    torch.manual_seed(0)
+    bf16 = torch.bfloat16
+
+    # linear
+    x = torch.randn(2, 4).to(bf16)
+    w = torch.randn(3, 4).to(bf16)
+    ref = (x.float() @ w.float().T).to(bf16).float().flatten()
+    compile_and_run(args, "linear", emit_linear(x.tolist(), w.tolist()), ref,
+                    (2e-2, 1e-2))
+
+    # rms_norm
+    x = torch.randn(2, 8).to(bf16)
+    w = torch.randn(8).to(bf16)
+    xf = x.float()
+    var = xf.pow(2).mean(-1, keepdim=True)
+    rstd = torch.rsqrt(var + 1e-6)
+    ref = (xf * rstd * (1.0 + w.float())).to(bf16).float().flatten()
+    compile_and_run(args, "rms", emit_rms(x.tolist(), w.tolist()), ref,
+                    (2e-2, 1e-2))
+
+    # add
+    a = torch.randn(2, 4).to(bf16)
+    b = torch.randn(2, 4).to(bf16)
+    ref = (a.float() + b.float()).to(bf16).float().flatten()
+    compile_and_run(args, "add", emit_add(a.tolist(), b.tolist()), ref,
+                    (2e-2, 1e-2))
+
+    # silu_mul
+    gate = torch.randn(2, 4).to(bf16)
+    up = torch.randn(2, 4).to(bf16)
+    ref = (gate.float() * torch.sigmoid(gate.float()) * up.float()).to(
+        bf16).float().flatten()
+    compile_and_run(args, "silu_mul", emit_silu_mul(gate.tolist(), up.tolist()),
+                    ref, (2e-2, 1e-2))
+
+    # embedding
+    table = torch.randn(4, 3).to(bf16)
+    tokens = [2, 0]
+    ref = table[[2, 0]].float().flatten()
+    compile_and_run(args, "embedding",
+                    emit_embedding(tokens, table.tolist()), ref, (2e-2, 1e-2))
+
+    # gated_rms_norm
+    m, groups, group = 2, 2, 4
+    x = torch.randn(m, groups * group).to(bf16)
+    gate = torch.randn(m, groups * group).to(bf16)
+    weight = torch.randn(group).float()
+    xf = x.float().view(m, groups, group)
+    gf = gate.float().view(m, groups, group)
+    rstd = torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + 1e-6)
+    ref = (xf * rstd * weight.float() * torch.nn.functional.silu(gf)).view(
+        m, groups * group).to(bf16).float().flatten()
+    compile_and_run(args, "gated_rms_norm",
+                    emit_gated_rms_norm(x.tolist(), gate.tolist(),
+                                        weight.tolist(), group),
+                    ref, (2e-2, 1e-2))
+
+    # lm_head
+    hidden = torch.randn(2, 3).to(bf16)
+    table = torch.randn(4, 3).to(bf16)
+    ref = (hidden.float() @ table.float().T).flatten()
+    compile_and_run(args, "lm_head", emit_lm_head(hidden.tolist(),
+                                                  table.tolist()),
+                    ref, (1e-3, 1e-3))
 
 
 if __name__ == "__main__":

@@ -376,6 +376,7 @@ llmcp/
 │   │   ├── verify.mlir
 │   │   └── verify-rms.mlir
 │   ├── lit/Conversion/*.mlir
+│   ├── numeric/run_numeric.py         # 已 lower op 的执行级数值测试
 │   ├── unittests/
 │   │   ├── ModelConfigTest.cpp
 │   │   ├── ModelBuilderTest.cpp
@@ -1700,6 +1701,18 @@ W4 (group g):
 | L4 | 生成质量/性能 | CLI + benchmark | 夜间/发版 |
 | L5 | 回归（tiny model） | CTest | 每次提交 |
 
+当前 L1 已落地 [tests/numeric/run_numeric.py](../tests/numeric/run_numeric.py)，覆盖 7 类已 lower 的 op：
+
+```text
+llmcp-opt --llmcp-lower-to-linalg
+  → mlir-opt（bufferize / linalg-to-loops / LLVM 降级）
+  → mlir-translate --mlir-to-llvmir
+  → clang++ + libmlir_runner_utils
+  → 执行，与 PyTorch 参考逐元素比较
+```
+
+覆盖 `linear`、`rms_norm`、`add`、`silu_mul`、`embedding`、`gated_rms_norm`、`lm_head`。
+
 ### 11.3 容差
 
 见 model-spec 第 12 节。关键原则：
@@ -1781,7 +1794,7 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（7 类 op）、`llmcp-inspect`、lit/gtest/数值测试已完成并通过；attention/delta/conv 分解、tokenizer、HF golden、tiny 模型尚未开始。
+> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（7 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；attention/delta/conv 分解、tokenizer、HF golden、tiny 模型尚未开始。
 
 - [ ] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [ ] `LLMCPDialect`/`LLMCPOps` 骨架（先 2 个 op：linear、rms_norm）。
