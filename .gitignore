@@ -1,0 +1,28 @@
+# Build outputs
+build/
+build-*/
+cmake-build-*/
+compile_commands.json
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.ll
+*.s
+
+# Generated model artifacts
+*.bin
+*.safetensors
+tests/golden/
+tests/tiny/weights/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
