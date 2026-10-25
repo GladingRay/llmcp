@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <string>
 #include <sys/mman.h>
@@ -47,6 +48,9 @@ cl::opt<std::string> tokenizerPath(
 cl::opt<long long> maxNewTokens("max-new-tokens",
                                 cl::desc("Greedy decode token count"),
                                 cl::init(0));
+cl::opt<std::string>
+    aotPath("aot", cl::desc("Optional AOT shared library (llmcp_model_aot)"),
+            cl::init(""));
 cl::opt<bool> dumpLogits("dump-logits", cl::desc("Write last-token logits"),
                          cl::init(false));
 cl::opt<bool> debug("debug", cl::desc("Print per-layer stats"),
@@ -663,6 +667,76 @@ int64_t argmax(const Vec &values) {
 
 } // namespace
 
+template <typename T, int N> struct StridedMemRef {
+  T *basePtr;
+  T *data;
+  int64_t offset;
+  int64_t sizes[N];
+  int64_t strides[N];
+};
+
+template <typename T, int N>
+StridedMemRef<T, N> makeMemRef(T *data, std::array<int64_t, N> sizes) {
+  StridedMemRef<T, N> ref;
+  ref.basePtr = data;
+  ref.data = data;
+  ref.offset = 0;
+  for (int i = 0; i < N; ++i) {
+    ref.sizes[i] = sizes[i];
+    ref.strides[N - 1 - i] = 1;
+    for (int j = N - 1 - i; j < N - 1; ++j)
+      ref.strides[N - 2 - i] *= 1;
+  }
+  int64_t stride = 1;
+  for (int i = N - 1; i >= 0; --i) {
+    ref.strides[i] = stride;
+    stride *= sizes[i];
+  }
+  return ref;
+}
+
+using AotFn = void (*)(void *, void *, void *, int64_t, int64_t, void *, void *,
+                       void *, void *, void *);
+
+bool runAot(const Arena &arena, const Config &config, int64_t token,
+            std::vector<float> &logits) {
+  void *handle = dlopen(aotPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+  if (!handle) {
+    errs() << "llmcp-run: dlopen: " << dlerror() << "\n";
+    return false;
+  }
+  auto fn =
+      reinterpret_cast<AotFn>(dlsym(handle, "_mlir_ciface_llmcp_model_aot"));
+  if (!fn) {
+    errs() << "llmcp-run: dlsym: " << dlerror() << "\n";
+    dlclose(handle);
+    return false;
+  }
+
+  int64_t tokenValue = token;
+  std::vector<float> cos(64, 1.0f), sin(64, 0.0f);
+  std::vector<uint16_t> kv(static_cast<size_t>(8 * 2 * 4 * 1 * 256), 0);
+  std::vector<float> delta(static_cast<size_t>(24 * 32 * 128 * 128), 0.0f);
+  std::vector<uint16_t> conv(static_cast<size_t>(24 * 3 * 8192), 0);
+  logits.assign(config.hidden * 0 + 248320, 0.0f);
+
+  auto tokensRef = makeMemRef<int64_t, 1>(&tokenValue, {1});
+  auto cosRef = makeMemRef<float, 2>(cos.data(), {1, 64});
+  auto sinRef = makeMemRef<float, 2>(sin.data(), {1, 64});
+  auto arenaRef = makeMemRef<int8_t, 1>(
+      const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
+      {static_cast<int64_t>(arena.size)});
+  auto kvRef = makeMemRef<uint16_t, 5>(kv.data(), {8, 2, 4, 1, 256});
+  auto deltaRef = makeMemRef<float, 4>(delta.data(), {24, 32, 128, 128});
+  auto convRef = makeMemRef<uint16_t, 3>(conv.data(), {24, 3, 8192});
+  auto logitsRef = makeMemRef<float, 2>(logits.data(), {1, 248320});
+
+  fn(&tokensRef, &cosRef, &sinRef, 0, 1, &arenaRef, &kvRef, &deltaRef, &convRef,
+     &logitsRef);
+  dlclose(handle);
+  return true;
+}
+
 int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "llmcp-run\n");
 
@@ -697,6 +771,18 @@ int main(int argc, char **argv) {
     return 1;
   }
   Config config;
+  if (!aotPath.empty()) {
+    std::vector<float> aotLogits;
+    if (!runAot(arena, config, tokens[0], aotLogits))
+      return 1;
+    Vec logits(aotLogits.begin(), aotLogits.end());
+    outs() << "aot logits: " << logits.size() << " next " << argmax(logits)
+           << "\n";
+    if (dumpLogits)
+      for (float value : logits)
+        outs() << value << "\n";
+    return 0;
+  }
   Runtime runtime;
   runtime.init(config, static_cast<int64_t>(tokens.size()) + maxNewTokens + 16);
 

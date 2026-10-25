@@ -7,8 +7,10 @@
 #include "llmcp/Dialect/LLMCP/IR/LLMCP.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -81,6 +83,8 @@ public:
                  deltaType, convType, headDim, numHeads, numKvHeads, rotary);
     buildModel(moduleBuilder, tokensType, cosType, arenaType, kvType, deltaType,
                convType, hiddenType, logitsType);
+    buildAotModel(moduleBuilder, rotary, vocab, arenaType, kvType, deltaType,
+                  convType, logitsType);
 
     module->setAttr("llmcp.model_dir",
                     moduleBuilder.getStringAttr(config.modelDir));
@@ -392,6 +396,72 @@ private:
     bodyBuilder.create<func::ReturnOp>(loc, lmHead.getResult(0));
   }
 
+  void buildAotModel(OpBuilder &moduleBuilder, int64_t rotary, int64_t vocab,
+                     Type arenaType, Type kvType, Type deltaType, Type convType,
+                     Type logitsType) {
+    Type indexType = moduleBuilder.getIndexType();
+    Type f32 = moduleBuilder.getF32Type();
+    auto tokensType = MemRefType::get({kDynamic}, indexType);
+    auto vectorType = MemRefType::get({kDynamic, rotary}, f32);
+    auto logitsMemType = MemRefType::get({kDynamic, vocab}, f32);
+
+    OpBuilder bodyBuilder(context);
+    auto func =
+        createFunc(moduleBuilder, "llmcp_model_aot",
+                   {tokensType, vectorType, vectorType, indexType, indexType,
+                    arenaType, kvType, deltaType, convType, logitsMemType},
+                   {}, bodyBuilder, /*isPublic=*/true);
+    func->setAttr("llvm.emit_c_interface", UnitAttr::get(context));
+
+    Value tokens = func.getArgument(0);
+    Value cos = func.getArgument(1);
+    Value sin = func.getArgument(2);
+    Value position = func.getArgument(3);
+    Value cacheLength = func.getArgument(4);
+    Value arena = func.getArgument(5);
+    Value kvCache = func.getArgument(6);
+    Value deltaState = func.getArgument(7);
+    Value convState = func.getArgument(8);
+    Value logitsOut = func.getArgument(9);
+
+    Value tokensTensor = bodyBuilder.create<bufferization::ToTensorOp>(
+        loc, RankedTensorType::get({kDynamic}, indexType), tokens,
+        /*restrict=*/true);
+    Value cosTensor = bodyBuilder.create<bufferization::ToTensorOp>(
+        loc, RankedTensorType::get({kDynamic, rotary}, f32), cos,
+        /*restrict=*/true);
+    Value sinTensor = bodyBuilder.create<bufferization::ToTensorOp>(
+        loc, RankedTensorType::get({kDynamic, rotary}, f32), sin,
+        /*restrict=*/true);
+
+    auto model = bodyBuilder.create<func::CallOp>(
+        loc, "llmcp_model",
+        TypeRange{RankedTensorType::get({kDynamic, vocab}, f32)},
+        ValueRange{tokensTensor, cosTensor, sinTensor, position, cacheLength,
+                   arena, kvCache, deltaState, convState});
+    Value logits = model.getResult(0);
+
+    Value zero = bodyBuilder.create<arith::ConstantIndexOp>(loc, 0);
+    Value one = bodyBuilder.create<arith::ConstantIndexOp>(loc, 1);
+    Value rows = bodyBuilder.create<tensor::DimOp>(loc, logits, 0);
+    Value columns = bodyBuilder.create<tensor::DimOp>(loc, logits, 1);
+    auto rowLoop =
+        bodyBuilder.create<scf::ForOp>(loc, zero, rows, one, ValueRange{});
+    bodyBuilder.setInsertionPointToStart(rowLoop.getBody());
+    Value row = rowLoop.getInductionVar();
+    auto columnLoop =
+        bodyBuilder.create<scf::ForOp>(loc, zero, columns, one, ValueRange{});
+    bodyBuilder.setInsertionPointToStart(columnLoop.getBody());
+    Value column = columnLoop.getInductionVar();
+    Value value = bodyBuilder.create<tensor::ExtractOp>(
+        loc, logits, ValueRange{row, column});
+    bodyBuilder.create<memref::StoreOp>(loc, value, logitsOut,
+                                        ValueRange{row, column});
+    bodyBuilder.setInsertionPointAfter(columnLoop);
+    bodyBuilder.setInsertionPointAfter(rowLoop);
+    bodyBuilder.create<func::ReturnOp>(loc);
+  }
+
   MLIRContext *context;
   const ModelConfig &config;
   const WeightLayout &layout;
@@ -420,6 +490,8 @@ ModelBuilder::build(const ModelConfig &config, const TensorMap &tensors,
   context->getOrLoadDialect<arith::ArithDialect>();
   context->getOrLoadDialect<memref::MemRefDialect>();
   context->getOrLoadDialect<tensor::TensorDialect>();
+  context->getOrLoadDialect<bufferization::BufferizationDialect>();
+  context->getOrLoadDialect<scf::SCFDialect>();
 
   GraphBuilder graphBuilder(context, config, *layoutOrErr);
   return graphBuilder.build();
