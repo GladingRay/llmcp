@@ -1797,12 +1797,12 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，长序列 decode 仍漂移；完整图 AOT 代码生成（LLVM IR/object/shared）已完成，单 token AOT 运行时驱动已接入 `llmcp-run --aot`；多 token AOT decode 和采样尚未开始。
+> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + 手写 tokenizer，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，长序列 decode 仍漂移；完整图 AOT 代码生成（LLVM IR/object/shared）已完成，单 token AOT 运行时驱动已接入 `llmcp-run --aot`；多 token AOT decode 和采样尚未开始。
 
 - [x] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [x] `LLMCPDialect`/`LLMCPOps`（全部 10 个 op）。
 - [x] `ModelConfig` 解析与校验；`WeightLayout`（bf16）；`llmcp-pack` 生成 arena + manifest。
-- [x] tokenizer：tokenizers-cpp HF BPE + ByteLevel + added tokens；与 HF 对照。
+- [x] tokenizer：手写 HF BPE + byte-level + whitespace 预分词；与 HF 对照。
 - [ ] 确认 `venv314` 的依赖（`pytest 9.1.1`、`lit 23.1.4` 已装）、HF 参考脚本、8 组 prompt、golden 格式。
 - [ ] tiny 模型（2 层、hidden 64）与 NumPy 参考。
 - [ ] 环境验证记录、CI 骨架。

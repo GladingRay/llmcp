@@ -11,8 +11,6 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "tokenizers_cpp.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -24,6 +22,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <unordered_map>
+
+#include <utf8proc.h>
 #include <vector>
 
 #ifdef __APPLE__
@@ -667,6 +667,225 @@ int64_t argmax(const Vec &values) {
 
 } // namespace
 
+class Tokenizer {
+public:
+  Error load(StringRef path) {
+    auto buffer = MemoryBuffer::getFile(path);
+    if (!buffer)
+      return errorCodeToError(buffer.getError());
+    auto json = json::parse((*buffer)->getBuffer());
+    if (!json)
+      return json.takeError();
+    auto *root = json->getAsObject();
+    auto *model = root ? root->getObject("model") : nullptr;
+    auto *vocabObject = model ? model->getObject("vocab") : nullptr;
+    if (!vocabObject)
+      return createStringError(inconvertibleErrorCode(),
+                               "tokenizer vocab missing");
+
+    for (const auto &item : *vocabObject) {
+      int64_t id = item.second.getAsInteger().value_or(-1);
+      if (id < 0)
+        continue;
+      std::string token = item.first.str();
+      vocab[token] = id;
+      if (static_cast<size_t>(id) >= idToToken.size())
+        idToToken.resize(static_cast<size_t>(id) + 1);
+      idToToken[id] = std::move(token);
+    }
+
+    auto *merges = model->getArray("merges");
+    if (!merges)
+      return createStringError(inconvertibleErrorCode(),
+                               "tokenizer merges missing");
+    int64_t rank = 0;
+    for (const json::Value &value : *merges) {
+      auto merge = value.getAsString();
+      if (!merge)
+        continue;
+      size_t space = merge->find(' ');
+      if (space == StringRef::npos)
+        continue;
+      ranks[merge->substr(0, space).str() + '\x1f' +
+            merge->substr(space + 1).str()] = rank++;
+    }
+    buildByteMaps();
+    return Error::success();
+  }
+
+  Expected<std::vector<int64_t>> encode(StringRef text) const {
+    std::vector<int64_t> ids;
+    size_t i = 0;
+    auto isSpace = [](char c) {
+      return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+    };
+    while (i < text.size()) {
+      if (text[i] == '\n' || text[i] == '\r') {
+        auto chunk = encodeChunk(text.substr(i, 1));
+        if (!chunk)
+          return chunk.takeError();
+        ids.insert(ids.end(), chunk->begin(), chunk->end());
+        ++i;
+        continue;
+      }
+      if (isSpace(text[i])) {
+        size_t start = i;
+        while (i < text.size() && isSpace(text[i]) && text[i] != '\n' &&
+               text[i] != '\r')
+          ++i;
+        size_t length = i - start;
+        if (i == text.size()) {
+          auto chunk = encodeChunk(text.substr(start, length));
+          if (!chunk)
+            return chunk.takeError();
+          ids.insert(ids.end(), chunk->begin(), chunk->end());
+          continue;
+        }
+        if (length > 1) {
+          auto chunk = encodeChunk(text.substr(start, length - 1));
+          if (!chunk)
+            return chunk.takeError();
+          ids.insert(ids.end(), chunk->begin(), chunk->end());
+        }
+        size_t wordEnd = i;
+        while (wordEnd < text.size() && !isSpace(text[wordEnd]) &&
+               text[wordEnd] != '\n' && text[wordEnd] != '\r')
+          ++wordEnd;
+        auto chunk = encodeChunk(text.substr(i - 1, wordEnd - (i - 1)));
+        if (!chunk)
+          return chunk.takeError();
+        ids.insert(ids.end(), chunk->begin(), chunk->end());
+        i = wordEnd;
+        continue;
+      }
+      size_t wordEnd = i;
+      while (wordEnd < text.size() && !isSpace(text[wordEnd]))
+        ++wordEnd;
+      auto chunk = encodeChunk(text.substr(i, wordEnd - i));
+      if (!chunk)
+        return chunk.takeError();
+      ids.insert(ids.end(), chunk->begin(), chunk->end());
+      i = wordEnd;
+    }
+    return ids;
+  }
+
+  Expected<std::vector<int64_t>> encodeChunk(StringRef text) const {
+    std::vector<std::string> symbols;
+    for (unsigned char c : text) {
+      auto it = byteToUnicode.find(c);
+      if (it == byteToUnicode.end())
+        return createStringError(inconvertibleErrorCode(), "byte map missing");
+      symbols.push_back(it->second);
+    }
+    while (symbols.size() > 1) {
+      int64_t bestRank = INT64_MAX;
+      size_t bestIndex = 0;
+      for (size_t i = 0; i + 1 < symbols.size(); ++i) {
+        auto it = ranks.find(symbols[i] + '\x1f' + symbols[i + 1]);
+        if (it != ranks.end() && it->second < bestRank) {
+          bestRank = it->second;
+          bestIndex = i;
+        }
+      }
+      if (bestRank == INT64_MAX)
+        break;
+      std::vector<std::string> merged;
+      for (size_t i = 0; i < symbols.size();) {
+        if (i + 1 < symbols.size() && i == bestIndex) {
+          merged.push_back(symbols[i] + symbols[i + 1]);
+          i += 2;
+        } else {
+          merged.push_back(symbols[i]);
+          ++i;
+        }
+      }
+      symbols = std::move(merged);
+    }
+    std::vector<int64_t> chunkIds;
+    for (const std::string &symbol : symbols) {
+      auto it = vocab.find(symbol);
+      if (it == vocab.end())
+        return createStringError(inconvertibleErrorCode(),
+                                 "token not in vocab: " + symbol);
+      chunkIds.push_back(it->second);
+    }
+    return chunkIds;
+  }
+
+  std::string decode(ArrayRef<int64_t> ids) const {
+    std::string bytes;
+    for (int64_t id : ids) {
+      if (id < 0 || static_cast<size_t>(id) >= idToToken.size())
+        continue;
+      const std::string &token = idToToken[id];
+      for (size_t i = 0; i < token.size();) {
+        utf8proc_int32_t cp = 0;
+        int len = utf8proc_iterate(
+            reinterpret_cast<const utf8proc_uint8_t *>(token.data() + i),
+            token.size() - i, &cp);
+        if (len <= 0)
+          break;
+        auto it = unicodeToByte.find(cp);
+        if (it != unicodeToByte.end())
+          bytes.push_back(static_cast<char>(it->second));
+        i += len;
+      }
+    }
+    return bytes;
+  }
+
+private:
+  static void appendUtf8(std::string &out, uint32_t cp) {
+    if (cp < 0x80) {
+      out.push_back(static_cast<char>(cp));
+    } else if (cp < 0x800) {
+      out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+      out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp < 0x10000) {
+      out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+      out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+      out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else {
+      out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+      out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+      out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+      out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+  }
+
+  void buildByteMaps() {
+    std::vector<int> bytes;
+    for (int c = 33; c <= 126; ++c)
+      bytes.push_back(c);
+    for (int c = 161; c <= 172; ++c)
+      bytes.push_back(c);
+    for (int c = 174; c <= 255; ++c)
+      bytes.push_back(c);
+    std::vector<int> codepoints = bytes;
+    int extra = 0;
+    for (int c = 0; c < 256; ++c) {
+      if (std::find(bytes.begin(), bytes.end(), c) == bytes.end()) {
+        bytes.push_back(c);
+        codepoints.push_back(256 + extra++);
+      }
+    }
+    for (size_t i = 0; i < bytes.size(); ++i) {
+      std::string encoded;
+      appendUtf8(encoded, static_cast<uint32_t>(codepoints[i]));
+      byteToUnicode[static_cast<unsigned char>(bytes[i])] = encoded;
+      unicodeToByte[static_cast<uint32_t>(codepoints[i])] =
+          static_cast<unsigned char>(bytes[i]);
+    }
+  }
+
+  std::unordered_map<std::string, int64_t> vocab;
+  std::unordered_map<std::string, int64_t> ranks;
+  std::vector<std::string> idToToken;
+  std::unordered_map<unsigned char, std::string> byteToUnicode;
+  std::unordered_map<uint32_t, unsigned char> unicodeToByte;
+};
+
 template <typename T, int N> struct ManualRef {
   T *base;
   T *data;
@@ -763,19 +982,20 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  auto blob = MemoryBuffer::getFile(tokenizerPath);
-  if (!blob) {
-    errs() << "llmcp-run: " << blob.getError().message() << "\n";
+  Tokenizer tokenizer;
+  if (Error error = tokenizer.load(tokenizerPath)) {
+    errs() << "llmcp-run: " << toString(std::move(error)) << "\n";
     return 1;
   }
-  auto tokenizer =
-      tokenizers::Tokenizer::FromBlobJSON((*blob)->getBuffer().str());
 
   std::vector<int64_t> tokens;
   if (!prompt.empty()) {
-    auto ids = tokenizer->Encode(prompt);
-    for (int32_t id : ids)
-      tokens.push_back(id);
+    auto ids = tokenizer.encode(prompt);
+    if (!ids) {
+      errs() << "llmcp-run: " << toString(ids.takeError()) << "\n";
+      return 1;
+    }
+    tokens.assign(ids->begin(), ids->end());
   } else {
     tokens.push_back(tokenId);
   }
@@ -809,8 +1029,7 @@ int main(int argc, char **argv) {
   }
 
   if (!generated.empty()) {
-    std::vector<int32_t> generatedI32(generated.begin(), generated.end());
-    outs() << "generated: " << tokenizer->Decode(generatedI32) << "\n";
+    outs() << "generated: " << tokenizer.decode(generated) << "\n";
     outs() << "tokens:";
     for (int64_t id : generated)
       outs() << " " << id;

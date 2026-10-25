@@ -25,7 +25,7 @@ C++ 执行器：
 
 - mmap `weights.bin`；
 - 读取 `weights.json` 并建立 tensor → offset 映射；
-- 通过 `tokenizers-cpp` 的 `Tokenizer::FromBlobJSON` 加载完整 `tokenizer.json`（HF BPE / ByteLevel / Unicode）；
+- 通过手写 `Tokenizer` 加载 `tokenizer.json`，实现 byte-level BPE、GPT-2 byte 映射和 whitespace 预分词；
 - 生成 position 0 的 cos/sin；
 - 调用 `runModel`，执行 32 层 embedding / DeltaNet / attention / MLP / final norm / lm_head；
 - 与 HF golden logits 比较；
@@ -78,7 +78,7 @@ AOT 路径：
 ```
 
 AOT 路径当前只支持单 token；`--aot` 会在子进程里做 tokenize，避免
-tokenizers-cpp 在 AOT 调用前加载导致的运行时污染。
+tokenizer 在 AOT 调用前加载导致的运行时污染；AOT 路径通过子进程 tokenize 隔离。
 
 Python 语义参考结果：
 
