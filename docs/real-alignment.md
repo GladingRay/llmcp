@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-已完成 **单 token、全 32 层、真实 Qwen3.5-4B 权重** 的语义对齐验证。
+已完成 **单 token、全 32 层、真实 Qwen3.5-4B 权重** 的 C++ 执行器对齐验证。
 
 对齐对象：
 
@@ -13,7 +13,24 @@
   - full attention：q/gate 拆分、per-head q/k RMSNorm、partial RoPE、GQA、causal softmax、output gate；
   - MLP、最终 norm、tied lm_head。
 
-入口：
+C++ 执行器：
+
+```bash
+./build/bin/llmcp-run --weights build/weights.bin \
+  --manifest build/weights.json --text Hello \
+  --golden build/golden_logits.bin
+```
+
+它完成：
+
+- mmap `weights.bin`；
+- 读取 `weights.json` 并建立 tensor → offset 映射；
+- 从 `tokenizer.json` 加载 vocab/merges，做 byte-level BPE（当前 minimal ASCII 预分词）；
+- 生成 position 0 的 cos/sin；
+- 调用 `runModel`，执行 32 层 embedding / DeltaNet / attention / MLP / final norm / lm_head；
+- 与 HF golden logits 比较。
+
+Python 语义参考入口：
 
 ```bash
 /Users/guorui/Work/models/venv314/bin/python python/check_alignment.py
@@ -22,6 +39,16 @@
 ## 对齐结果
 
 测试输入：`Hello`，token id `9419`，position 0，单 token prefill。
+
+C++ `llmcp-run` 结果：
+
+```text
+token: 9419
+logits: 248320, max_abs 2.265625e+00, mean_abs 3.731686e-01
+top1 ours=11 hf=11, top5 overlap=5/5
+```
+
+Python 语义参考结果：
 
 ```text
 max_abs: 2.363281
@@ -42,13 +69,13 @@ top5 hf:   [11, 0, 13, 1017, 4858]
 
 ## 边界
 
-当前对照实现是 **Python 语义参考执行器**，不是 C++ AOT runtime，也没有直接执行 lowered MLIR。它的作用是把“模型数学 + 真实权重”先对齐，给后续 `llmcp-run` 一个可信 baseline。
+当前 C++ 执行器是 **手写模型函数**，不是 lowered MLIR 的 AOT 产物；它先验证“真实权重 + 模型数学”，给后续 AOT 执行一个 baseline。
 
 尚未完成：
 
-1. `llmcp-run` C++ 执行器：mmap weight arena、生成 cos/sin、调用 `llmcp_model`；
-2. 多 token prefill 和 decode 追加的整模型对齐；
-3. 用 lowered IR 执行并与 HF logits 对比。
+1. 多 token prefill 和 decode 追加的整模型对齐；
+2. 用 lowered MLIR 执行并与 HF logits 对比；
+3. 完整 Unicode tokenizer（当前 minimal tokenizer 主要覆盖 ASCII 单词）。
 
 ## 下一步
 

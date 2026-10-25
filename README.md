@@ -115,6 +115,7 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 llmcp-compile --model /Users/guorui/Work/models/qwen3.5-4b \
   --weights build/weights.bin --emit=shared --out build/libqwen35.dylib
 
-# 运行
-llmcp-run --lib build/libqwen35.dylib --prompt "你好" --max-new-tokens 64
+# 已有 C++ 单 token 执行器
+./build/bin/llmcp-run --weights build/weights.bin \
+  --manifest build/weights.json --text Hello --golden build/golden_logits.bin
 ```
