@@ -28,7 +28,8 @@ C++ 执行器：
 - 通过 `tokenizers-cpp` 的 `Tokenizer::FromBlobJSON` 加载完整 `tokenizer.json`（HF BPE / ByteLevel / Unicode）；
 - 生成 position 0 的 cos/sin；
 - 调用 `runModel`，执行 32 层 embedding / DeltaNet / attention / MLP / final norm / lm_head；
-- 与 HF golden logits 比较。
+- 与 HF golden logits 比较；
+- 支持多 token prefill 和 `--max-new-tokens` greedy decode。
 
 Python 语义参考入口：
 
@@ -40,13 +41,32 @@ Python 语义参考入口：
 
 测试输入：`Hello`，token id `9419`，position 0，单 token prefill。
 
-C++ `llmcp-run` 结果：
+C++ `llmcp-run` 单 token 结果：
 
 ```text
 token: 9419
-logits: 248320, max_abs 2.265625e+00, mean_abs 3.731686e-01
+logits: 248320, max_abs 1.875000e-01, mean_abs 2.476386e-02
 top1 ours=11 hf=11, top5 overlap=5/5
 ```
+
+多 token prefill：
+
+```bash
+./build/bin/llmcp-run --weights build/weights.bin \
+  --manifest build/weights.json --text 'Hello world!' --max-new-tokens 0
+# next: 271
+```
+
+greedy decode：
+
+```bash
+./build/bin/llmcp-run --weights build/weights.bin \
+  --manifest build/weights.json --text 'Hello world' --max-new-tokens 2
+# tokens: 0 271
+```
+
+多 token 的后续 decode 还可能有漂移（前两个 token 与 HF greedy 一致），
+主要是 chunked prefill 的 state 与 decode recurrence 的衔接还没完全对齐。
 
 Python 语义参考结果：
 

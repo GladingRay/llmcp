@@ -43,7 +43,7 @@ M0 基础设施已落地：
 - `llmcp-dump`：把完整计算图 dump 成 `.mlir`，支持 `--verify-module` 和 `--print-stats`
 - `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；attention 支持 `position` / `cache_length`，prefill 与 decode 追加均可
 - `llmcp-pack`：真实权重打包为 8.41GB arena + JSON manifest
-- `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、单 token 全模型 C++ 执行；真实权重 top-1/top-5 对齐 HF
+- `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
 - 测试：6 个 CTest 目标（lit、dump、lower、pack、numeric、gtest）全部通过
 
 当前处于 M1 早期：单 token C++ 执行已打通，多 token prefill / decode、lowered-MLIR AOT 和性能优化尚未开始。
