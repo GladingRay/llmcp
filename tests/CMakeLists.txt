@@ -46,4 +46,28 @@ if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
   set_tests_properties(llmcp-lower-real PROPERTIES TIMEOUT 120)
 endif()
 
+find_program(LLMCP_PYTHON
+  NAMES python3
+  HINTS /Users/guorui/Work/models/venv314/bin)
+find_program(LLMCP_MLIR_OPT NAMES mlir-opt HINTS /opt/homebrew/opt/llvm@20/bin)
+find_program(LLMCP_MLIR_TRANSLATE NAMES mlir-translate
+  HINTS /opt/homebrew/opt/llvm@20/bin)
+find_program(LLMCP_CLANG NAMES clang++ HINTS /opt/homebrew/opt/llvm@20/bin)
+set(LLMCP_RUNNER_LIB_DIR /opt/homebrew/opt/llvm@20/lib)
+
+if(LLMCP_PYTHON AND LLMCP_MLIR_OPT AND LLMCP_MLIR_TRANSLATE AND LLMCP_CLANG)
+  add_test(NAME llmcp-numeric
+    COMMAND ${LLMCP_PYTHON}
+      "${CMAKE_CURRENT_SOURCE_DIR}/numeric/run_numeric.py"
+      --llmcp-opt "${LLMCP_OPT}"
+      --mlir-opt "${LLMCP_MLIR_OPT}"
+      --mlir-translate "${LLMCP_MLIR_TRANSLATE}"
+      --clang "${LLMCP_CLANG}"
+      --runner-lib-dir "${LLMCP_RUNNER_LIB_DIR}"
+      --workdir "${CMAKE_CURRENT_BINARY_DIR}/numeric")
+  set_tests_properties(llmcp-numeric PROPERTIES TIMEOUT 120)
+else()
+  message(WARNING "numeric test dependencies not found; llmcp-numeric skipped")
+endif()
+
 add_subdirectory(unittests)

@@ -15,8 +15,16 @@ if(NOT lower_result EQUAL 0)
 endif()
 
 file(READ "@LLMCP_LINALG@" contents)
-string(FIND "${contents}" "llmcp.linear" linear_pos)
-string(FIND "${contents}" "llmcp.rms_norm" rms_pos)
-if(NOT linear_pos EQUAL -1 OR NOT rms_pos EQUAL -1)
-  message(FATAL_ERROR "lowered graph still contains llmcp.linear/llmcp.rms_norm")
-endif()
+foreach(remaining_op
+    "llmcp.linear "
+    "llmcp.rms_norm "
+    "llmcp.add "
+    "llmcp.silu_mul "
+    "llmcp.embedding "
+    "llmcp.gated_rms_norm "
+    "llmcp.lm_head ")
+  string(FIND "${contents}" "${remaining_op}" position)
+  if(NOT position EQUAL -1)
+    message(FATAL_ERROR "lowered graph still contains ${remaining_op}")
+  endif()
+endforeach()

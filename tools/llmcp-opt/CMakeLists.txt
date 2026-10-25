@@ -11,10 +11,12 @@ target_link_libraries(llmcp-opt PRIVATE
   MLIRLinalgDialect
   MLIRMathDialect
   MLIRTensorDialect
+  MLIRVectorDialect
   MLIRFuncDialect
   MLIRLinalgDialect
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRSCFDialect
   MLIRTensorDialect
+  MLIRVectorDialect
 )

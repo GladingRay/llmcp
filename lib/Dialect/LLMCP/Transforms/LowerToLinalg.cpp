@@ -209,6 +209,265 @@ public:
   }
 };
 
+class AddOpLowering : public OpRewritePattern<AddOp> {
+public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(AddOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto resultType = cast<RankedTensorType>(op.getResult().getType());
+    Value output = createEmpty(rewriter, loc, resultType, op.getLhs());
+    SmallVector<AffineMap> maps(3, rewriter.getMultiDimIdentityMap(2));
+    SmallVector<utils::IteratorType> iterators(2,
+                                               utils::IteratorType::parallel);
+    auto generic = rewriter.create<linalg::GenericOp>(
+        loc, resultType, ValueRange{op.getLhs(), op.getRhs()},
+        ValueRange{output}, maps, iterators,
+        [&](OpBuilder &builder, Location loc, ValueRange args) {
+          Value value = builder.create<arith::AddFOp>(loc, args[0], args[1]);
+          builder.create<linalg::YieldOp>(loc, value);
+        });
+    rewriter.replaceOp(op, generic.getResult(0));
+    return success();
+  }
+};
+
+class SiluMulOpLowering : public OpRewritePattern<SiluMulOp> {
+public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SiluMulOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto resultType = cast<RankedTensorType>(op.getResult().getType());
+    auto f32Type = rewriter.getF32Type();
+    Value output = createEmpty(rewriter, loc, resultType, op.getGate());
+    SmallVector<AffineMap> maps(3, rewriter.getMultiDimIdentityMap(2));
+    SmallVector<utils::IteratorType> iterators(2,
+                                               utils::IteratorType::parallel);
+    auto generic = rewriter.create<linalg::GenericOp>(
+        loc, resultType, ValueRange{op.getGate(), op.getUp()},
+        ValueRange{output}, maps, iterators,
+        [&](OpBuilder &builder, Location loc, ValueRange args) {
+          Value gate = args[0];
+          Value up = args[1];
+          if (gate.getType().isBF16()) {
+            gate = builder.create<arith::ExtFOp>(loc, f32Type, gate);
+            up = builder.create<arith::ExtFOp>(loc, f32Type, up);
+          }
+          Value negated = builder.create<arith::NegFOp>(loc, gate);
+          Value exponent = builder.create<math::ExpOp>(loc, negated);
+          Value one = builder.create<arith::ConstantOp>(
+              loc, builder.getF32FloatAttr(1.0f));
+          Value denominator = builder.create<arith::AddFOp>(loc, one, exponent);
+          Value sigmoid = builder.create<arith::DivFOp>(loc, one, denominator);
+          Value silu = builder.create<arith::MulFOp>(loc, gate, sigmoid);
+          Value value = builder.create<arith::MulFOp>(loc, silu, up);
+          Value truncated = builder.create<arith::TruncFOp>(
+              loc, resultType.getElementType(), value);
+          builder.create<linalg::YieldOp>(loc, truncated);
+        });
+    rewriter.replaceOp(op, generic.getResult(0));
+    return success();
+  }
+};
+
+class EmbeddingOpLowering : public OpRewritePattern<EmbeddingOp> {
+public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(EmbeddingOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto resultType = cast<RankedTensorType>(op.getResult().getType());
+    Value table = toTensor(rewriter, loc, op.getTable());
+    Value output = createEmpty(rewriter, loc, resultType, op.getTokens());
+    SmallVector<AffineMap> maps = {
+        AffineMap::get(2, 0, {rewriter.getAffineDimExpr(0)},
+                       rewriter.getContext()),
+        rewriter.getMultiDimIdentityMap(2)};
+    SmallVector<utils::IteratorType> iterators(2,
+                                               utils::IteratorType::parallel);
+    auto generic = rewriter.create<linalg::GenericOp>(
+        loc, resultType, ValueRange{op.getTokens()}, ValueRange{output}, maps,
+        iterators, [&](OpBuilder &builder, Location loc, ValueRange args) {
+          Value row = builder.create<linalg::IndexOp>(loc, 0);
+          Value column = builder.create<linalg::IndexOp>(loc, 1);
+          Value token = builder.create<tensor::ExtractOp>(loc, op.getTokens(),
+                                                          ValueRange{row});
+          Value value = builder.create<tensor::ExtractOp>(
+              loc, table, ValueRange{token, column});
+          builder.create<linalg::YieldOp>(loc, value);
+        });
+    rewriter.replaceOp(op, generic.getResult(0));
+    return success();
+  }
+};
+
+class GatedRmsNormOpLowering : public OpRewritePattern<GatedRmsNormOp> {
+public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(GatedRmsNormOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
+    auto resultType = dyn_cast<RankedTensorType>(op.getResult().getType());
+    if (!inputType || !resultType || inputType.getRank() != 2)
+      return failure();
+
+    const int64_t hidden = inputType.getDimSize(1);
+    const int64_t group = op.getGroupSize();
+    if (ShapedType::isDynamic(hidden) || group <= 0 || hidden % group != 0)
+      return failure();
+    const int64_t groups = hidden / group;
+
+    const int64_t batchDim = inputType.getDimSize(0);
+    auto expandedType = RankedTensorType::get({batchDim, groups, group},
+                                              inputType.getElementType());
+    Value batchSize =
+        rewriter.createOrFold<tensor::DimOp>(loc, op.getInput(), 0);
+    SmallVector<ReassociationIndices> reassociation = {{0}, {1, 2}};
+    SmallVector<OpFoldResult> expandedShape = {
+        batchSize, rewriter.getIndexAttr(groups), rewriter.getIndexAttr(group)};
+
+    auto expand = [&](Value value) -> Value {
+      return rewriter.create<tensor::ExpandShapeOp>(
+          loc, expandedType, value, reassociation, expandedShape);
+    };
+    Value input = expand(op.getInput());
+    Value gate = expand(op.getGate());
+    Value weight = toTensor(rewriter, loc, op.getWeight());
+
+    auto f32Type = rewriter.getF32Type();
+    auto f32ExpandedType =
+        RankedTensorType::get({batchDim, groups, group}, f32Type);
+    Value inputF32 = createEmpty(rewriter, loc, f32ExpandedType, input);
+    Value gateF32 = createEmpty(rewriter, loc, f32ExpandedType, input);
+
+    SmallVector<AffineMap> castMaps = {rewriter.getMultiDimIdentityMap(3),
+                                       rewriter.getMultiDimIdentityMap(3)};
+    SmallVector<utils::IteratorType> castIters(3,
+                                               utils::IteratorType::parallel);
+    auto castGeneric = rewriter.create<linalg::GenericOp>(
+        loc, f32ExpandedType, ValueRange{input}, ValueRange{inputF32}, castMaps,
+        castIters, [&](OpBuilder &builder, Location loc, ValueRange args) {
+          Value value = builder.create<arith::ExtFOp>(loc, f32Type, args[0]);
+          builder.create<linalg::YieldOp>(loc, value);
+        });
+    auto gateGeneric = rewriter.create<linalg::GenericOp>(
+        loc, f32ExpandedType, ValueRange{gate}, ValueRange{gateF32}, castMaps,
+        castIters, [&](OpBuilder &builder, Location loc, ValueRange args) {
+          Value value = builder.create<arith::ExtFOp>(loc, f32Type, args[0]);
+          builder.create<linalg::YieldOp>(loc, value);
+        });
+
+    auto groupType = RankedTensorType::get({batchDim, groups}, f32Type);
+    Value rowEmpty = createEmpty(rewriter, loc, groupType, op.getInput());
+    Value zero =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+    Value sumInit =
+        rewriter
+            .create<linalg::FillOp>(loc, ValueRange{zero}, ValueRange{rowEmpty})
+            .getResult(0);
+
+    SmallVector<AffineMap> sumMaps = {
+        rewriter.getMultiDimIdentityMap(3),
+        AffineMap::get(
+            3, 0, {rewriter.getAffineDimExpr(0), rewriter.getAffineDimExpr(1)},
+            rewriter.getContext())};
+    SmallVector<utils::IteratorType> sumIters = {
+        utils::IteratorType::parallel, utils::IteratorType::parallel,
+        utils::IteratorType::reduction};
+    auto sum = rewriter.create<linalg::GenericOp>(
+        loc, groupType, ValueRange{castGeneric.getResult(0)},
+        ValueRange{sumInit}, sumMaps, sumIters,
+        [&](OpBuilder &builder, Location loc, ValueRange args) {
+          Value square = builder.create<arith::MulFOp>(loc, args[0], args[0]);
+          Value value = builder.create<arith::AddFOp>(loc, args[1], square);
+          builder.create<linalg::YieldOp>(loc, value);
+        });
+
+    Value rstdEmpty = createEmpty(rewriter, loc, groupType, op.getInput());
+    SmallVector<AffineMap> statMaps = {rewriter.getMultiDimIdentityMap(2),
+                                       rewriter.getMultiDimIdentityMap(2)};
+    SmallVector<utils::IteratorType> statIters(2,
+                                               utils::IteratorType::parallel);
+    auto rstd = rewriter.create<linalg::GenericOp>(
+        loc, groupType, ValueRange{sum.getResult(0)}, ValueRange{rstdEmpty},
+        statMaps, statIters,
+        [&](OpBuilder &builder, Location loc, ValueRange args) {
+          Value dim = builder.create<arith::ConstantOp>(
+              loc, builder.getF32FloatAttr(static_cast<float>(group)));
+          Value mean = builder.create<arith::DivFOp>(loc, args[0], dim);
+          Value eps = builder.create<arith::ConstantOp>(
+              loc, builder.getF32FloatAttr(op.getEpsAttr().getValueAsDouble()));
+          Value variance = builder.create<arith::AddFOp>(loc, mean, eps);
+          Value value = builder.create<math::RsqrtOp>(loc, variance);
+          builder.create<linalg::YieldOp>(loc, value);
+        });
+
+    Value outputExpanded = createEmpty(rewriter, loc, expandedType, input);
+    SmallVector<AffineMap> maps = {
+        rewriter.getMultiDimIdentityMap(3), rewriter.getMultiDimIdentityMap(3),
+        AffineMap::get(3, 0, {rewriter.getAffineDimExpr(2)},
+                       rewriter.getContext()),
+        AffineMap::get(
+            3, 0, {rewriter.getAffineDimExpr(0), rewriter.getAffineDimExpr(1)},
+            rewriter.getContext()),
+        rewriter.getMultiDimIdentityMap(3)};
+    SmallVector<utils::IteratorType> iterators(3,
+                                               utils::IteratorType::parallel);
+    auto scaled = rewriter.create<linalg::GenericOp>(
+        loc, expandedType,
+        ValueRange{castGeneric.getResult(0), gateGeneric.getResult(0), weight,
+                   rstd.getResult(0)},
+        ValueRange{outputExpanded}, maps, iterators,
+        [&](OpBuilder &builder, Location loc, ValueRange args) {
+          Value gate = args[1];
+          Value negated = builder.create<arith::NegFOp>(loc, gate);
+          Value exponent = builder.create<math::ExpOp>(loc, negated);
+          Value one = builder.create<arith::ConstantOp>(
+              loc, builder.getF32FloatAttr(1.0f));
+          Value denominator = builder.create<arith::AddFOp>(loc, one, exponent);
+          Value sigmoid = builder.create<arith::DivFOp>(loc, one, denominator);
+          Value silu = builder.create<arith::MulFOp>(loc, gate, sigmoid);
+          Value normalized = builder.create<arith::MulFOp>(loc, args[0], silu);
+          Value value = builder.create<arith::MulFOp>(loc, normalized, args[2]);
+          Value scaledValue =
+              builder.create<arith::MulFOp>(loc, value, args[3]);
+          Value truncated = builder.create<arith::TruncFOp>(
+              loc, resultType.getElementType(), scaledValue);
+          builder.create<linalg::YieldOp>(loc, truncated);
+        });
+
+    SmallVector<ReassociationIndices> collapseReassociation = {{0}, {1, 2}};
+    auto collapsed = rewriter.create<tensor::CollapseShapeOp>(
+        loc, resultType, scaled.getResult(0), collapseReassociation);
+    rewriter.replaceOp(op, collapsed.getResult());
+    return success();
+  }
+};
+
+class LmHeadOpLowering : public OpRewritePattern<LmHeadOp> {
+public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(LmHeadOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto resultType = cast<RankedTensorType>(op.getLogits().getType());
+    Value table = toTensor(rewriter, loc, op.getTable());
+    Value output = createEmpty(rewriter, loc, resultType, op.getHidden());
+    auto matmul = rewriter.create<linalg::MatmulTransposeBOp>(
+        loc, TypeRange{resultType}, ValueRange{op.getHidden(), table},
+        ValueRange{output});
+    rewriter.replaceOp(op, matmul.getResult(0));
+    return success();
+  }
+};
+
 struct LowerToLinalgPass
     : public PassWrapper<LowerToLinalgPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerToLinalgPass)
@@ -227,7 +486,9 @@ struct LowerToLinalgPass
     context->getOrLoadDialect<math::MathDialect>();
 
     RewritePatternSet patterns(context);
-    patterns.add<LinearOpLowering, RmsNormOpLowering>(context);
+    patterns.add<LinearOpLowering, RmsNormOpLowering, AddOpLowering,
+                 SiluMulOpLowering, EmbeddingOpLowering, GatedRmsNormOpLowering,
+                 LmHeadOpLowering>(context);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }
