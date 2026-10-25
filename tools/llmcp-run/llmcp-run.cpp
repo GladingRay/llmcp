@@ -13,6 +13,8 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "tokenizers_cpp.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -49,6 +51,12 @@ cl::opt<bool> dumpLogits("dump-logits", cl::desc("Write f32 logits to stdout"),
                          cl::init(false));
 cl::opt<bool> debug("debug", cl::desc("Print per-layer stats"),
                     cl::init(false));
+cl::opt<bool> tokenizeOnly("tokenize-only",
+                           cl::desc("Only encode --text, do not load the model"),
+                           cl::init(false));
+cl::opt<long long> expectToken(
+    "expect-token", cl::desc("Fail unless the first encoded token matches"),
+    cl::init(-1));
 cl::opt<bool> dumpCosSin("dump-cos-sin",
                          cl::desc("Print generated cos/sin values"),
                          cl::init(false));
@@ -68,104 +76,6 @@ struct Weight {
   const uint8_t *data = nullptr;
   Shape shape;
   std::string dtype;
-};
-
-struct Tokenizer {
-  std::unordered_map<std::string, int64_t> vocab;
-  std::unordered_map<std::string, int64_t> ranks;
-
-  Error load(StringRef path) {
-    auto buffer = MemoryBuffer::getFile(path);
-    if (!buffer)
-      return errorCodeToError(buffer.getError());
-    auto json = json::parse((*buffer)->getBuffer());
-    if (!json)
-      return json.takeError();
-    auto *root = json->getAsObject();
-    auto *model = root ? root->getObject("model") : nullptr;
-    auto *vocabObject = model ? model->getObject("vocab") : nullptr;
-    if (!vocabObject)
-      return createStringError(inconvertibleErrorCode(),
-                               "tokenizer vocab missing");
-    for (const auto &item : *vocabObject) {
-      int64_t id = item.second.getAsInteger().value_or(-1);
-      if (id >= 0)
-        vocab[item.first.str()] = id;
-    }
-    auto *merges = model->getArray("merges");
-    if (!merges)
-      return createStringError(inconvertibleErrorCode(),
-                               "tokenizer merges missing");
-    int64_t rank = 0;
-    for (const json::Value &value : *merges) {
-      auto merge = value.getAsString();
-      if (!merge)
-        continue;
-      size_t space = merge->find(' ');
-      if (space == StringRef::npos)
-        continue;
-      std::string key = merge->substr(0, space).str() + '\x1f' +
-                        merge->substr(space + 1).str();
-      ranks[key] = rank++;
-    }
-    return Error::success();
-  }
-
-  Expected<std::vector<int64_t>> encode(StringRef text) const {
-    std::vector<std::string> pieces;
-    std::string current;
-    for (char c : text) {
-      if (c == ' ' || c == '\t' || c == '\n') {
-        if (!current.empty()) {
-          pieces.push_back(current);
-          current.clear();
-        }
-      } else {
-        current.push_back(c);
-      }
-    }
-    if (!current.empty())
-      pieces.push_back(current);
-
-    std::vector<int64_t> ids;
-    for (const std::string &piece : pieces) {
-      std::vector<std::string> symbols;
-      for (char c : piece)
-        symbols.emplace_back(1, c);
-      while (symbols.size() > 1) {
-        int64_t bestRank = INT64_MAX;
-        size_t bestIndex = 0;
-        for (size_t i = 0; i + 1 < symbols.size(); ++i) {
-          auto it = ranks.find(symbols[i] + '\x1f' + symbols[i + 1]);
-          if (it != ranks.end() && it->second < bestRank) {
-            bestRank = it->second;
-            bestIndex = i;
-          }
-        }
-        if (bestRank == INT64_MAX)
-          break;
-        std::vector<std::string> merged;
-        for (size_t i = 0; i < symbols.size();) {
-          if (i + 1 < symbols.size() && i == bestIndex) {
-            merged.push_back(symbols[i] + symbols[i + 1]);
-            i += 2;
-          } else {
-            merged.push_back(symbols[i]);
-            ++i;
-          }
-        }
-        symbols = std::move(merged);
-      }
-      for (const std::string &symbol : symbols) {
-        auto it = vocab.find(symbol);
-        if (it == vocab.end())
-          return createStringError(inconvertibleErrorCode(),
-                                   "token not in vocab: " + symbol);
-        ids.push_back(it->second);
-      }
-    }
-    return ids;
-  }
 };
 
 struct Arena {
@@ -546,32 +456,42 @@ std::vector<float> runModel(const Arena &arena, int64_t token,
 
 int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "llmcp-run\n");
+
+  int64_t selectedToken = tokenId;
+  if (!prompt.empty()) {
+    auto blob = MemoryBuffer::getFile(tokenizerPath);
+    if (!blob) {
+      errs() << "llmcp-run: " << blob.getError().message() << "\n";
+      return 1;
+    }
+    auto tokenizer = tokenizers::Tokenizer::FromBlobJSON(
+        (*blob)->getBuffer().str());
+    auto ids = tokenizer->Encode(prompt);
+    if (tokenizeOnly) {
+      for (size_t i = 0; i < ids.size(); ++i)
+        outs() << (i ? "," : "") << ids[i];
+      outs() << "\n";
+      if (expectToken >= 0 && (ids.empty() || ids[0] != expectToken))
+        return 1;
+      return 0;
+    }
+    if (ids.size() != 1) {
+      errs() << "llmcp-run: expected one token, got " << ids.size() << "\n";
+      return 1;
+    }
+    selectedToken = ids[0];
+    outs() << "token: " << selectedToken << "\n";
+  } else if (tokenizeOnly) {
+    outs() << tokenId << "\n";
+    return 0;
+  }
+
   Arena arena;
   if (Error error = arena.load(weightsPath, manifestPath)) {
     errs() << "llmcp-run: " << toString(std::move(error)) << "\n";
     return 1;
   }
   Config config;
-  int64_t selectedToken = tokenId;
-  if (!prompt.empty()) {
-    Tokenizer tokenizer;
-    if (Error error = tokenizer.load(tokenizerPath)) {
-      errs() << "llmcp-run: " << toString(std::move(error)) << "\n";
-      return 1;
-    }
-    auto idsOrErr = tokenizer.encode(prompt);
-    if (!idsOrErr) {
-      errs() << "llmcp-run: " << toString(idsOrErr.takeError()) << "\n";
-      return 1;
-    }
-    if (idsOrErr->size() != 1) {
-      errs() << "llmcp-run: expected one token, got " << idsOrErr->size()
-             << "\n";
-      return 1;
-    }
-    selectedToken = (*idsOrErr)[0];
-    outs() << "token: " << selectedToken << "\n";
-  }
   int64_t rotaryDim = 64;
   auto [cosValues, sinValues] = makeCosSin(position, rotaryDim, 10000000.0f);
   if (dumpCosSin) {

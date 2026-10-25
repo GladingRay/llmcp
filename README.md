@@ -21,7 +21,7 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 
 - LLVM/MLIR 20.1.8（Homebrew `llvm@20`）
 - Python：`/Users/guorui/Work/models/venv314`（Python 3.14.8，`torch 2.14.1`，`transformers 5.20.2`）
-- 第三方源码：git submodule 固定版本（`utf8proc v2.11.0`、`googletest v1.18.0`），见 [third_party/README.md](third_party/README.md)
+- 第三方源码：git submodule 固定版本（`utf8proc v2.11.0`、`googletest v1.18.0`、`tokenizers-cpp`），见 [third_party/README.md](third_party/README.md)
 - 依赖清单、用途与安装命令见 [设计文档 4.3 节](docs/design.md#43-依赖清单与用途)
 
 ## 文档
@@ -42,15 +42,17 @@ M0 基础设施已落地：
 - `ModelBuilder`：生成完整 prefill 计算图，包含 embedding、32 层、final norm、lm_head，以及 4 个入口函数
 - `llmcp-dump`：把完整计算图 dump 成 `.mlir`，支持 `--verify-module` 和 `--print-stats`
 - `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；attention 支持 `position` / `cache_length`，prefill 与 decode 追加均可
-- 测试：12 个 lit 用例 + 14 个 gtest 用例 + 13 个数值 case（覆盖 10 类已 lower op，含 attention prefill/decode，对 PyTorch 参考）+ 真实模型 dump/lowering 集成测试，全部通过
+- `llmcp-pack`：真实权重打包为 8.41GB arena + JSON manifest
+- `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、单 token 全模型 C++ 执行；真实权重 top-1/top-5 对齐 HF
+- 测试：6 个 CTest 目标（lit、dump、lower、pack、numeric、gtest）全部通过
 
-仍在 M0/M1 之间：tokenizer、HF golden 导出、`llmcp → linalg` lowering 尚未开始。
+当前处于 M1 早期：单 token C++ 执行已打通，多 token prefill / decode、lowered-MLIR AOT 和性能优化尚未开始。
 
 ## 构建与测试
 
 ```bash
 # 0. 拉取 vendored 第三方源码
-git submodule update --init --recursive
+git submodule update --init third_party/utf8proc third_party/googletest third_party/tokenizers-cpp
 
 # 1. 构建（C/C++ 都用 Homebrew clang 20）
 cmake -G Ninja -S . -B build \

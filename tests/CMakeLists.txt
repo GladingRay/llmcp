@@ -49,6 +49,12 @@ if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
     COMMAND $<TARGET_FILE:llmcp-pack>
       --model /Users/guorui/Work/models/qwen3.5-4b --dry-run)
   set_tests_properties(llmcp-pack-real PROPERTIES TIMEOUT 120)
+
+  add_test(NAME llmcp-tokenizer
+    COMMAND $<TARGET_FILE:llmcp-run> --tokenize-only --text Hello
+      --tokenizer /Users/guorui/Work/models/qwen3.5-4b/tokenizer.json
+      --expect-token 9419)
+  set_tests_properties(llmcp-tokenizer PROPERTIES TIMEOUT 120)
 endif()
 
 find_program(LLMCP_PYTHON

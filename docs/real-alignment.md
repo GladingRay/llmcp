@@ -25,7 +25,7 @@ C++ 执行器：
 
 - mmap `weights.bin`；
 - 读取 `weights.json` 并建立 tensor → offset 映射；
-- 从 `tokenizer.json` 加载 vocab/merges，做 byte-level BPE（当前 minimal ASCII 预分词）；
+- 通过 `tokenizers-cpp` 的 `Tokenizer::FromBlobJSON` 加载完整 `tokenizer.json`（HF BPE / ByteLevel / Unicode）；
 - 生成 position 0 的 cos/sin；
 - 调用 `runModel`，执行 32 层 embedding / DeltaNet / attention / MLP / final norm / lm_head；
 - 与 HF golden logits 比较。
