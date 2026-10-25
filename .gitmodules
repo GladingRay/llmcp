@@ -6,3 +6,7 @@
 	path = third_party/googletest
 	url = https://github.com/google/googletest.git
 	shallow = true
+[submodule "third_party/tokenizers-cpp"]
+	path = third_party/tokenizers-cpp
+	url = https://github.com/mlc-ai/tokenizers-cpp.git
+	shallow = true

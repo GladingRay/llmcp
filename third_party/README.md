@@ -6,19 +6,25 @@
 |---|---|---|---:|---|
 | `third_party/utf8proc` | v2.11.0 | `d7bf128df773c2a1a7242eb80e51e91a769fc985` | MIT | Unicode NFC 归一化与字符分类；用于 Qwen BPE tokenizer 的预分词 |
 | `third_party/googletest` | v1.18.0 | `063de7e9578f82b369302001269680b4b1553359` | BSD-3-Clause | C++ 单元测试（`gtest` / `gtest_main`） |
+| `third_party/tokenizers-cpp` | main (`418d0b3`) | `418d0b308a8cfc331c66ac17dc29f0dee440a1f2` | Apache-2.0 | HuggingFace `tokenizer.json` 的 C++ 绑定；HF-only 构建只需要 `huggingface_tokenizer.cc` + Rust `tokenizers` |
 
 ## 初始化
 
 ```bash
-git submodule update --init third_party/utf8proc third_party/googletest
+# tokenizers-cpp 的 msgpack/sentencepiece 子模块不参与 HF-only 构建，
+# 不要加 --recursive，否则会去拉不可达的旧 commit。
+git submodule update --init third_party/utf8proc third_party/googletest third_party/tokenizers-cpp
 ```
+
+`tokenizers-cpp` 的 Rust wrapper 需要 `cargo`；默认从本地 cargo cache 离线构建，可传
+`-DLLMCP_CARGO_OFFLINE=OFF` 允许联网。
 
 如果是第一次 clone 仓库：
 
 ```bash
 git clone <repo-url>
 cd llmcp
-git submodule update --init third_party/utf8proc third_party/googletest
+git submodule update --init third_party/utf8proc third_party/googletest third_party/tokenizers-cpp
 ```
 
 ## 版本升级流程

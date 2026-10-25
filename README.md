@@ -21,7 +21,7 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 
 - LLVM/MLIR 20.1.8（Homebrew `llvm@20`）
 - Python：`/Users/guorui/Work/models/venv314`（Python 3.14.8，`torch 2.14.1`，`transformers 5.20.2`）
-- 第三方源码：git submodule 固定版本（`utf8proc v2.11.0`、`googletest v1.18.0`），见 [third_party/README.md](third_party/README.md)
+- 第三方源码：git submodule 固定版本（`utf8proc v2.11.0`、`googletest v1.18.0`、`tokenizers-cpp`），见 [third_party/README.md](third_party/README.md)
 - 依赖清单、用途与安装命令见 [设计文档 4.3 节](docs/design.md#43-依赖清单与用途)
 
 ## 文档
@@ -44,7 +44,7 @@ M0 基础设施已落地：
 - `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；attention 支持 `position` / `cache_length`，prefill 与 decode 追加均可
 - `llmcp-pack`：真实权重打包为 8.41GB arena + JSON manifest
 - `llmcp-compile`：把完整 llmcp 图 AOT 降级到 LLVM IR / object / shared library，导出 4 个 `llmcp_*` 入口
-- `llmcp-run`：mmap arena、手写 HF BPE tokenizer、cos/sin、多 token prefill + greedy decode；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
+- `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
 - 测试：8 个 CTest 目标（lit、dump、lower、pack、tokenizer、compile、numeric、gtest）全部通过
 
 当前处于 M1 早期：手写路径已完成单 token 对齐和多 token prefill/greedy decode（前两个 decode token 与 HF 一致，长序列仍有漂移）；完整图的 AOT 代码生成和单 token AOT 调用已完成（`--aot`），多 token AOT decode、采样和性能优化尚未开始。
@@ -53,7 +53,7 @@ M0 基础设施已落地：
 
 ```bash
 # 0. 拉取 vendored 第三方源码
-git submodule update --init third_party/utf8proc third_party/googletest
+git submodule update --init third_party/utf8proc third_party/googletest third_party/tokenizers-cpp
 
 # 1. 构建（C/C++ 都用 Homebrew clang 20）
 cmake -G Ninja -S . -B build \

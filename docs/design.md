@@ -482,7 +482,7 @@ build/include/llmcp/Dialect/LLMCP/IR/
 - **CLI11 / fmt / spdlog**：用 `llvm::cl`、`llvm::formatv`、`llvm::errs`，保持与 MLIR 工具风格一致。
 - **Eigen / oneDNN / MKL / OpenBLAS**：主路径是 MLIR 生成 kernel；macOS 如需对标，用系统 `Accelerate.framework`（无需安装），不默认链接。
 - **OpenMP / TBB / Taskflow**：用 C++17 `std::thread` + 自研线程池。本机虽已装 `libomp 21.1.0`，但首期不链接，避免与 LLVM 20 运行时混淆。
-- **protobuf / flatbuffers / pybind11 / tokenizers-cpp**：无需要；权重格式自己解析，ABI 用 C，tokenizer 自己实现。
+- **protobuf / flatbuffers / pybind11**：无需要；权重格式自己解析，ABI 用 C。tokenizer 使用 tokenizers-cpp。
 - **Git LFS / valgrind / perf**：golden 不入库；内存检查用 ASan，性能分析用 Instruments/`sample`/`llvm-mca`。
 
 #### 4.3.4 安装命令
@@ -1797,12 +1797,12 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + 手写 tokenizer，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，长序列 decode 仍漂移；完整图 AOT 代码生成（LLVM IR/object/shared）已完成，单 token AOT 运行时驱动已接入 `llmcp-run --aot`；多 token AOT decode 和采样尚未开始。
+> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，长序列 decode 仍漂移；完整图 AOT 代码生成（LLVM IR/object/shared）已完成，单 token AOT 运行时驱动已接入 `llmcp-run --aot`；多 token AOT decode 和采样尚未开始。
 
 - [x] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [x] `LLMCPDialect`/`LLMCPOps`（全部 10 个 op）。
 - [x] `ModelConfig` 解析与校验；`WeightLayout`（bf16）；`llmcp-pack` 生成 arena + manifest。
-- [x] tokenizer：手写 HF BPE + byte-level + whitespace 预分词；与 HF 对照。
+- [x] tokenizer：tokenizers-cpp HF BPE + ByteLevel + added tokens；与 HF 对照。
 - [ ] 确认 `venv314` 的依赖（`pytest 9.1.1`、`lit 23.1.4` 已装）、HF 参考脚本、8 组 prompt、golden 格式。
 - [ ] tiny 模型（2 层、hidden 64）与 NumPy 参考。
 - [ ] 环境验证记录、CI 骨架。

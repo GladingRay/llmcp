@@ -51,10 +51,9 @@ if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
   set_tests_properties(llmcp-pack-real PROPERTIES TIMEOUT 120)
 
   add_test(NAME llmcp-tokenizer
-    COMMAND ${LLMCP_PYTHON}
-      "${CMAKE_CURRENT_SOURCE_DIR}/tokenizer/run_tokenizer.py"
-      --llmcp-run $<TARGET_FILE:llmcp-run>
-      --tokenizer /Users/guorui/Work/models/qwen3.5-4b/tokenizer.json)
+    COMMAND $<TARGET_FILE:llmcp-run> --tokenize-only --text Hello
+      --tokenizer /Users/guorui/Work/models/qwen3.5-4b/tokenizer.json
+      --expect-token 9419)
   set_tests_properties(llmcp-tokenizer PROPERTIES TIMEOUT 120)
 
   add_test(NAME llmcp-compile-real
