@@ -9,3 +9,4 @@
 6. 不同的模块要放在不同的文件中，不同的大组件要放到不同的目录中。
 7. 我本机上装的是homebrew的llvm@20。
 8. qwen3.5 4B 的路径在 `/Users/guorui/Work/models/qwen3.5-4b` 。
+9. python环境：`/Users/guorui/Work/models/venv314`。
