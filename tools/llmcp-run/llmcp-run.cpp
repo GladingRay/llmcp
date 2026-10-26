@@ -814,6 +814,12 @@ int main(int argc, char **argv) {
     }
     if (!generated.empty()) {
       std::vector<int32_t> generatedI32(generated.begin(), generated.end());
+      std::vector<int32_t> fullI32;
+      fullI32.reserve(tokens.size() + generated.size());
+      for (int64_t id : tokens)
+        fullI32.push_back(static_cast<int32_t>(id));
+      fullI32.insert(fullI32.end(), generatedI32.begin(), generatedI32.end());
+      outs() << "decoded: " << tokenizer->Decode(fullI32) << "\n";
       outs() << "generated: " << tokenizer->Decode(generatedI32) << "\n";
       outs() << "tokens:";
       for (int64_t id : generated)

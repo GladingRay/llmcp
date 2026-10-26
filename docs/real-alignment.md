@@ -96,10 +96,18 @@ AOT 路径严格按正常顺序执行：先加载 tokenizer，再调用 AOT，�
 ./build/bin/llmcp-run --weights build/weights.bin \
   --manifest build/weights.json --text 'Hello world' \
   --max-new-tokens 4 --aot build/libqwen35_aot.dylib
+# decoded: Hello world!
+#
+# The following
+# generated: !
+#
+# The following
 # tokens: 0 271 760 2614
 ```
 
-这与 HF greedy 的 `[0, 271, 760, 2614]` 一致。
+`decoded:` 是 prompt + generated 的完整明文，`generated:` 是新增 token 的明文；
+二者都由 tokenizer 的 decode 阶段产生。这与 HF greedy 的
+`[0, 271, 760, 2614]` 一致。
 
 Python 语义参考结果：
 
