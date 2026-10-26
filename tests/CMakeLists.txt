@@ -95,6 +95,11 @@ else()
   message(WARNING "numeric test dependencies not found; llmcp-numeric skipped")
 endif()
 
+add_test(NAME llmcp-microbench
+  COMMAND $<TARGET_FILE:llmcp-microbench>
+    --seconds 0.05 --buffer-mb 16 --threads 2)
+set_tests_properties(llmcp-microbench PROPERTIES TIMEOUT 120)
+
 add_test(NAME llmcp-matmul-benchmark
   COMMAND $<TARGET_FILE:llmcp-matmul-benchmark>
     --m 64 --n 64 --k 64 --iters 1)

@@ -58,6 +58,7 @@ add_subdirectory(include/llmcp/Dialect/LLMCP/IR)
 
 add_subdirectory(lib)
 add_subdirectory(tools)
+add_subdirectory(microbench)
 
 if(LLMCP_BUILD_TESTS)
   enable_testing()

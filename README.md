@@ -46,6 +46,7 @@ M0 基础设施已落地：
 - `llmcp-compile`：把完整 llmcp 图 AOT 降级到 LLVM IR / object / shared library，导出 4 个 `llmcp_*` 入口
 - `llmcp-benchmark`：加载 AOT dylib，统计 prefill/decode 耗时与 token/s
 - `llmcp-matmul-benchmark`：生成单个 `llmcp.linear`，逐级 AOT 到 dylib，输出 GFLOPS
+- `llmcp-microbench`：本机 CPU 标量/NEON/FP16/BF16/I8 峰值 FLOPS 与内存带宽
 - `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode、Qwen chat template、逐 token 流式输出；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
 - 测试：9 个 CTest 目标（lit、dump、lower、pack、tokenizer、chat-template、compile、numeric、gtest）全部通过
 
@@ -145,4 +146,7 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 
 # 单算子 matmul AOT 微基准
 ./build/bin/llmcp-matmul-benchmark --m 256 --n 256 --k 256 --iters 10
+
+# CPU 指令与带宽微基准
+./build/bin/llmcp-microbench --seconds 1 --buffer-mb 256
 ```
