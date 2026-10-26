@@ -257,14 +257,16 @@ int main(int argc, char **argv) {
 
   std::vector<int64_t> generated;
   generated.reserve(static_cast<size_t>(decodeTokens));
+  std::vector<float> lastLogits(logits.end() - 248320, logits.end());
   auto decodeBegin = std::chrono::steady_clock::now();
   for (int64_t i = 0; i < decodeTokens; ++i) {
-    int64_t next = argmax(logits);
+    int64_t next = argmax(lastLogits);
     generated.push_back(next);
     std::vector<int64_t> one{next};
     int64_t position = prefillTokens + i;
     if (!runtime.forward(arena, one, position, position + 1, logits))
       return 1;
+    lastLogits.assign(logits.end() - 248320, logits.end());
   }
   auto decodeEnd = std::chrono::steady_clock::now();
   double decodeSeconds = seconds(decodeBegin, decodeEnd);
