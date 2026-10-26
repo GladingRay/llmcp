@@ -10,7 +10,10 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
@@ -50,6 +53,159 @@ Value createEmpty(PatternRewriter &rewriter, Location loc,
       loc, type, getDynamicSizes(rewriter, loc, type, source));
 }
 
+constexpr int64_t kVectorTile = 32;
+
+Value emitVectorMatmul(PatternRewriter &rewriter, Location loc, Value input,
+                       Value weight, RankedTensorType resultType,
+                       bool transposeB) {
+  auto inputType = cast<RankedTensorType>(input.getType());
+  auto weightType = cast<RankedTensorType>(weight.getType());
+  const int64_t channels = resultType.getDimSize(1);
+  const int64_t reduction = inputType.getDimSize(1);
+  if (ShapedType::isDynamic(channels) || ShapedType::isDynamic(reduction) ||
+      channels % kVectorTile != 0 || weightType.getRank() != 2)
+    return Value();
+
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value tile = rewriter.create<arith::ConstantIndexOp>(loc, kVectorTile);
+  Value channelsValue = rewriter.create<arith::ConstantIndexOp>(loc, channels);
+  Value reductionValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, reduction);
+  Value rows = rewriter.create<tensor::DimOp>(loc, input, 0);
+
+  auto outputType = MemRefType::get({ShapedType::kDynamic, channels},
+                                    resultType.getElementType());
+  Value output =
+      rewriter.create<memref::AllocOp>(loc, outputType, ValueRange{rows});
+  auto f32 = rewriter.getF32Type();
+  auto vectorType = VectorType::get({kVectorTile}, f32);
+
+  auto rowLoop =
+      rewriter.create<scf::ForOp>(loc, zero, rows, one, ValueRange{});
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  auto columnLoop =
+      rewriter.create<scf::ForOp>(loc, zero, channelsValue, tile, ValueRange{});
+  rewriter.setInsertionPointToStart(columnLoop.getBody());
+  Value column = columnLoop.getInductionVar();
+
+  Value zeroF =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+  Value accInit = rewriter.create<vector::BroadcastOp>(loc, vectorType, zeroF);
+  auto reductionLoop = rewriter.create<scf::ForOp>(loc, zero, reductionValue,
+                                                   one, ValueRange{accInit});
+  rewriter.setInsertionPointToStart(reductionLoop.getBody());
+  Value reductionIndex = reductionLoop.getInductionVar();
+  Value a = rewriter.create<tensor::ExtractOp>(loc, input,
+                                               ValueRange{row, reductionIndex});
+  if (a.getType().isBF16())
+    a = rewriter.create<arith::ExtFOp>(loc, f32, a);
+
+  auto bf16Vector = VectorType::get({kVectorTile}, weightType.getElementType());
+  AffineMap bMap = transposeB
+                       ? AffineMap::get(2, 0, {rewriter.getAffineDimExpr(1)},
+                                        rewriter.getContext())
+                       : AffineMap::get(2, 0, {rewriter.getAffineDimExpr(0)},
+                                        rewriter.getContext());
+  Value bIndices0 = transposeB ? reductionIndex : column;
+  Value bIndices1 = transposeB ? column : reductionIndex;
+  SmallVector<bool> inBounds = {true};
+  Value bVec = rewriter.create<vector::TransferReadOp>(
+      loc, bf16Vector, weight, ValueRange{bIndices0, bIndices1}, bMap,
+      inBounds);
+  if (cast<VectorType>(bVec.getType()).getElementType().isBF16())
+    bVec = rewriter.create<arith::ExtFOp>(loc, vectorType, bVec);
+
+  Value aVec = rewriter.create<vector::BroadcastOp>(loc, vectorType, a);
+  Value acc = rewriter.create<vector::FMAOp>(loc, aVec, bVec,
+                                             reductionLoop.getRegionIterArg(0));
+  rewriter.create<scf::YieldOp>(loc, acc);
+  rewriter.setInsertionPointAfter(reductionLoop);
+
+  Value result = reductionLoop.getResult(0);
+  if (resultType.getElementType().isBF16())
+    result = rewriter.create<arith::TruncFOp>(
+        loc, VectorType::get({kVectorTile}, rewriter.getBF16Type()), result);
+  AffineMap outputMap = AffineMap::get(2, 0, {rewriter.getAffineDimExpr(1)},
+                                       rewriter.getContext());
+  rewriter.create<vector::TransferWriteOp>(
+      loc, result, output, ValueRange{row, column}, outputMap, inBounds);
+  rewriter.setInsertionPointAfter(columnLoop);
+  rewriter.setInsertionPointAfter(rowLoop);
+  return rewriter.create<bufferization::ToTensorOp>(loc, resultType, output,
+                                                    /*restrict=*/true);
+}
+
+Value emitVectorDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
+                          Value weight, RankedTensorType resultType) {
+  auto inputType = cast<RankedTensorType>(input.getType());
+  auto weightType = cast<RankedTensorType>(weight.getType());
+  const int64_t channels = resultType.getDimSize(1);
+  const int64_t reduction = inputType.getDimSize(1);
+  if (ShapedType::isDynamic(channels) || ShapedType::isDynamic(reduction) ||
+      reduction % kVectorTile != 0 || weightType.getRank() != 2)
+    return Value();
+
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value tile = rewriter.create<arith::ConstantIndexOp>(loc, kVectorTile);
+  Value channelsValue = rewriter.create<arith::ConstantIndexOp>(loc, channels);
+  Value reductionValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, reduction);
+  Value rows = rewriter.create<tensor::DimOp>(loc, input, 0);
+  auto outputType = MemRefType::get({ShapedType::kDynamic, channels},
+                                    resultType.getElementType());
+  Value output =
+      rewriter.create<memref::AllocOp>(loc, outputType, ValueRange{rows});
+  auto f32 = rewriter.getF32Type();
+  auto vectorType = VectorType::get({kVectorTile}, f32);
+  auto bf16Vector = VectorType::get({kVectorTile}, inputType.getElementType());
+  SmallVector<bool> inBounds = {true};
+  AffineMap rowMap = AffineMap::get(2, 0, {rewriter.getAffineDimExpr(1)},
+                                    rewriter.getContext());
+
+  auto rowLoop =
+      rewriter.create<scf::ForOp>(loc, zero, rows, one, ValueRange{});
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  auto columnLoop =
+      rewriter.create<scf::ForOp>(loc, zero, channelsValue, one, ValueRange{});
+  rewriter.setInsertionPointToStart(columnLoop.getBody());
+  Value column = columnLoop.getInductionVar();
+
+  Value zeroF =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+  auto reductionLoop = rewriter.create<scf::ForOp>(loc, zero, reductionValue,
+                                                   tile, ValueRange{zeroF});
+  rewriter.setInsertionPointToStart(reductionLoop.getBody());
+  Value block = reductionLoop.getInductionVar();
+  Value aVec = rewriter.create<vector::TransferReadOp>(
+      loc, bf16Vector, input, ValueRange{row, block}, rowMap, inBounds);
+  Value bVec = rewriter.create<vector::TransferReadOp>(
+      loc, bf16Vector, weight, ValueRange{column, block}, rowMap, inBounds);
+  Value aF32 = rewriter.create<arith::ExtFOp>(loc, vectorType, aVec);
+  Value bF32 = rewriter.create<arith::ExtFOp>(loc, vectorType, bVec);
+  Value product = rewriter.create<arith::MulFOp>(loc, aF32, bF32);
+  Value dot = rewriter.create<vector::ReductionOp>(
+      loc, vector::CombiningKind::ADD, product);
+  Value sum = rewriter.create<arith::AddFOp>(
+      loc, reductionLoop.getRegionIterArg(0), dot);
+  rewriter.create<scf::YieldOp>(loc, sum);
+  rewriter.setInsertionPointAfter(reductionLoop);
+
+  Value result = reductionLoop.getResult(0);
+  if (resultType.getElementType().isBF16())
+    result =
+        rewriter.create<arith::TruncFOp>(loc, rewriter.getBF16Type(), result);
+  rewriter.create<memref::StoreOp>(loc, result, output,
+                                   ValueRange{row, column});
+  rewriter.setInsertionPointAfter(columnLoop);
+  rewriter.setInsertionPointAfter(rowLoop);
+  return rewriter.create<bufferization::ToTensorOp>(loc, resultType, output,
+                                                    /*restrict=*/true);
+}
+
 Value castToF32(PatternRewriter &rewriter, Location loc, Value input) {
   auto inputType = cast<RankedTensorType>(input.getType());
   auto f32Type = rewriter.getF32Type();
@@ -77,6 +233,19 @@ public:
     auto resultType = cast<RankedTensorType>(op.getOutput().getType());
     auto input = op.getInput();
     Value weight = toTensor(rewriter, loc, op.getWeight());
+
+    if (!op.getTransposeB()) {
+      if (Value vectorized =
+              emitVectorDotMatmul(rewriter, loc, input, weight, resultType)) {
+        rewriter.replaceOp(op, vectorized);
+        return success();
+      }
+    }
+    if (Value vectorized = emitVectorMatmul(rewriter, loc, input, weight,
+                                            resultType, op.getTransposeB())) {
+      rewriter.replaceOp(op, vectorized);
+      return success();
+    }
 
     auto f32Type = rewriter.getF32Type();
     auto accType = RankedTensorType::get(resultType.getShape(), f32Type);
@@ -466,6 +635,17 @@ public:
     Location loc = op.getLoc();
     auto resultType = cast<RankedTensorType>(op.getLogits().getType());
     Value table = toTensor(rewriter, loc, op.getTable());
+    if (Value vectorized = emitVectorDotMatmul(rewriter, loc, op.getHidden(),
+                                               table, resultType)) {
+      rewriter.replaceOp(op, vectorized);
+      return success();
+    }
+    if (Value vectorized =
+            emitVectorMatmul(rewriter, loc, op.getHidden(), table, resultType,
+                             /*transposeB=*/false)) {
+      rewriter.replaceOp(op, vectorized);
+      return success();
+    }
     Value output = createEmpty(rewriter, loc, resultType, op.getHidden());
     Value zero =
         rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
@@ -497,6 +677,7 @@ struct LowerToLinalgPass
     context->getOrLoadDialect<tensor::TensorDialect>();
     context->getOrLoadDialect<arith::ArithDialect>();
     context->getOrLoadDialect<math::MathDialect>();
+    context->getOrLoadDialect<vector::VectorDialect>();
 
     RewritePatternSet patterns(context);
     populateCausalConv1dLoweringPatterns(patterns);

@@ -1798,7 +1798,7 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，长序列 decode 仍漂移；完整图 AOT 代码生成（LLVM IR/object/shared）已完成，AOT 运行时驱动已支持多 token prefill / greedy decode，并修复了 matmul accumulator 未初始化导致的 NaN；4 token 贪心与 HF 一致；采样和性能优化尚未开始。
+> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，长序列 decode 仍漂移；完整图 AOT 代码生成（LLVM IR/object/shared）已完成，AOT 运行时驱动已支持多 token prefill / greedy decode，并修复了 matmul accumulator 未初始化导致的 NaN；4 token 贪心与 HF 一致；LinearOp/LmHeadOp 已使用 32-lane tile + vector dot，进一步 tiling/threading 和采样仍待做。
 
 - [x] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [x] `LLMCPDialect`/`LLMCPOps`（全部 10 个 op）。

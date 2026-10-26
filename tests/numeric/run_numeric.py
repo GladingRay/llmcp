@@ -205,7 +205,7 @@ def emit_causal_conv1d(x, weight, state) -> str:
         f"memref<{channels}x1x{kernel}xbf16>, "
         f"memref<1x{state_len}x{channels}xbf16>) -> tensor<{seq}x{channels}xbf16>",
     ]
-    # Output tensor.
+#Output tensor.
     for t in range(seq):
         for c in range(channels):
             lines += [
@@ -217,7 +217,7 @@ def emit_causal_conv1d(x, weight, state) -> str:
                 f"  func.call @printF32(%of{t}_{c}) : (f32) -> ()",
                 "  func.call @printNewline() : () -> ()",
             ]
-    # Updated state.
+#Updated state.
     lines.append("  %lz = arith.constant 0 : index")
     for i in range(state_len):
         for c in range(channels):
@@ -410,8 +410,12 @@ def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
         "--one-shot-bufferize=bufferize-function-boundaries=1",
         "--convert-linalg-to-loops", "--lower-affine", "--convert-scf-to-cf",
         "--convert-cf-to-llvm", "--convert-arith-to-llvm",
-        "--convert-math-to-llvm", "--convert-func-to-llvm",
-        "--expand-strided-metadata", "--finalize-memref-to-llvm", "--reconcile-unrealized-casts",
+        "--convert-math-to-llvm", "--convert-vector-to-scf",
+           "--convert-scf-to-cf", "--lower-affine",
+           "--convert-cf-to-llvm", "--convert-vector-to-llvm",
+           "--convert-arith-to-llvm",
+        "--convert-func-to-llvm", "--convert-arith-to-llvm",
+        "--expand-strided-metadata", "--finalize-memref-to-llvm", "--reconcile-unrealized-casts", "--convert-arith-to-llvm",
         "-o", str(llvm_mlir),
     ])
     run([args.mlir_translate, "--mlir-to-llvmir", str(llvm_mlir), "-o",
@@ -455,14 +459,21 @@ def main():
     torch.manual_seed(0)
     bf16 = torch.bfloat16
 
-    # linear
+#linear
     x = torch.randn(2, 4).to(bf16)
     w = torch.randn(3, 4).to(bf16)
     ref = (x.float() @ w.float().T).to(bf16).float().flatten()
     compile_and_run(args, "linear", emit_linear(x.tolist(), w.tolist()), ref,
                     (2e-2, 1e-2))
 
-    # rms_norm
+#vectorized linear path(N and K are multiples of the 32 - lane tile)
+    x = torch.randn(2, 64).to(bf16)
+    w = torch.randn(64, 64).to(bf16)
+    ref = (x.float() @ w.float().T).to(bf16).float().flatten()
+    compile_and_run(args, "linear_vec", emit_linear(x.tolist(), w.tolist()),
+                    ref, (2e-2, 1e-2))
+
+#rms_norm
     x = torch.randn(2, 8).to(bf16)
     w = torch.randn(8).to(bf16)
     xf = x.float()
@@ -472,14 +483,14 @@ def main():
     compile_and_run(args, "rms", emit_rms(x.tolist(), w.tolist()), ref,
                     (2e-2, 1e-2))
 
-    # add
+#add
     a = torch.randn(2, 4).to(bf16)
     b = torch.randn(2, 4).to(bf16)
     ref = (a.float() + b.float()).to(bf16).float().flatten()
     compile_and_run(args, "add", emit_add(a.tolist(), b.tolist()), ref,
                     (2e-2, 1e-2))
 
-    # silu_mul
+#silu_mul
     gate = torch.randn(2, 4).to(bf16)
     up = torch.randn(2, 4).to(bf16)
     ref = (gate.float() * torch.sigmoid(gate.float()) * up.float()).to(
@@ -487,14 +498,14 @@ def main():
     compile_and_run(args, "silu_mul", emit_silu_mul(gate.tolist(), up.tolist()),
                     ref, (2e-2, 1e-2))
 
-    # embedding
+#embedding
     table = torch.randn(4, 3).to(bf16)
     tokens = [2, 0]
     ref = table[[2, 0]].float().flatten()
     compile_and_run(args, "embedding",
                     emit_embedding(tokens, table.tolist()), ref, (2e-2, 1e-2))
 
-    # gated_rms_norm
+#gated_rms_norm
     m, groups, group = 2, 2, 4
     x = torch.randn(m, groups * group).to(bf16)
     gate = torch.randn(m, groups * group).to(bf16)
@@ -509,7 +520,7 @@ def main():
                                         weight.tolist(), group),
                     ref, (2e-2, 1e-2))
 
-    # lm_head
+#lm_head
     hidden = torch.randn(2, 3).to(bf16)
     table = torch.randn(4, 3).to(bf16)
     ref = (hidden.float() @ table.float().T).flatten()
@@ -517,7 +528,15 @@ def main():
                                                   table.tolist()),
                     ref, (1e-3, 1e-3))
 
-    # causal_conv1d (prefill + state update)
+#vectorized lm_head path
+    hidden = torch.randn(2, 64).to(bf16)
+    table = torch.randn(64, 64).to(bf16)
+    ref = (hidden.float() @ table.float().T).flatten()
+    compile_and_run(args, "lm_head_vec",
+                    emit_lm_head(hidden.tolist(), table.tolist()), ref,
+                    (1e-3, 1e-3))
+
+#causal_conv1d(prefill + state update)
     seq, channels, kernel = 3, 4, 3
     state_len = kernel - 1
     x = torch.randn(seq, channels).to(bf16)
@@ -541,7 +560,7 @@ def main():
                                        state[0].tolist()),
                     ref, (2e-2, 1e-2))
 
-    # causal_conv1d decode path: seq_len = 1, state shifts by one.
+#causal_conv1d decode path : seq_len = 1, state shifts by one.
     seq = 1
     x = torch.randn(seq, channels).to(bf16)
     state = torch.randn(1, state_len, channels).to(bf16)
@@ -562,7 +581,7 @@ def main():
                                        state[0].tolist()),
                     ref, (2e-2, 1e-2))
 
-    # gated_delta_net: small recurrent reference.
+#gated_delta_net : small recurrent reference.
     seq, num_k, num_v, head_k, head_v = 2, 2, 4, 2, 2
     channels = 2 * num_k * head_k + num_v * head_v
     conv = torch.randn(seq, channels).to(bf16)
@@ -603,7 +622,7 @@ def main():
                                          state.tolist()),
                     ref, (2e-2, 1e-2))
 
-    # gated_delta_net decode path: one token, state update only.
+#gated_delta_net decode path : one token, state update only.
     seq = 1
     conv = torch.randn(seq, channels).to(bf16)
     a = torch.randn(seq, num_v).to(bf16)
@@ -640,8 +659,8 @@ def main():
                                          state.tolist()),
                     ref, (2e-2, 1e-2))
 
-    # attention: q/gate split, q/k norm, partial RoPE, GQA, causal softmax,
-    # output gate, and KV cache write.
+#attention : q / gate split, q / k norm, partial RoPE, GQA, causal softmax,
+#output gate, and KV cache write.
     seq, num_heads, num_kv_heads, head_dim, rotary = 2, 2, 1, 4, 2
     cache_capacity = 2
     qg = torch.randn(seq, num_heads * 2 * head_dim).to(bf16)
@@ -703,7 +722,7 @@ def main():
                                    0, seq),
                     ref, (2e-2, 1e-2))
 
-    # attention decode: append one token at cache position 1.
+#attention decode : append one token at cache position 1.
     seq = 1
     qg = torch.randn(seq, num_heads * 2 * head_dim).to(bf16)
     k = torch.randn(seq, num_kv_heads * head_dim).to(bf16)

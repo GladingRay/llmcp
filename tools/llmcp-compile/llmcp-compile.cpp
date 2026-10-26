@@ -150,14 +150,30 @@ int main(int argc, char **argv) {
   if (llvm::Error error = runTool(
           *llmcpOptOrErr, {graph, "--llmcp-lower-to-linalg", "-o", linalg}))
     return fail(std::move(error));
-  if (llvm::Error error = runTool(
-          *mlirOptOrErr,
-          {linalg, "--one-shot-bufferize=bufferize-function-boundaries=1",
-           "--convert-linalg-to-loops", "--lower-affine", "--convert-scf-to-cf",
-           "--convert-cf-to-llvm", "--convert-arith-to-llvm",
-           "--convert-math-to-llvm", "--convert-func-to-llvm",
-           "--expand-strided-metadata", "--finalize-memref-to-llvm",
-           "--reconcile-unrealized-casts", "-o", llvmMlir}))
+  if (llvm::Error error =
+          runTool(*mlirOptOrErr,
+                  {linalg,
+                   "--one-shot-bufferize=bufferize-function-boundaries=1",
+                   "--convert-linalg-to-loops",
+                   "--lower-affine",
+                   "--convert-scf-to-cf",
+                   "--convert-cf-to-llvm",
+                   "--convert-arith-to-llvm",
+                   "--convert-math-to-llvm",
+                   "--convert-vector-to-scf",
+                   "--convert-scf-to-cf",
+                   "--lower-affine",
+                   "--convert-cf-to-llvm",
+                   "--convert-vector-to-llvm",
+                   "--convert-arith-to-llvm",
+                   "--convert-func-to-llvm",
+                   "--convert-arith-to-llvm",
+                   "--expand-strided-metadata",
+                   "--finalize-memref-to-llvm",
+                   "--reconcile-unrealized-casts",
+                   "--convert-arith-to-llvm",
+                   "-o",
+                   llvmMlir}))
     return fail(std::move(error));
   if (llvm::Error error = runTool(*mlirTranslateOrErr,
                                   {"--mlir-to-llvmir", llvmMlir, "-o", llvmIr}))

@@ -17,6 +17,7 @@ add_mlir_library(MLIRLLMCPTransforms
     MLIRPass
     MLIRSupport
     MLIRTensorDialect
+    MLIRVectorDialect
     MLIRTransforms
     LLVMSupport
 )
