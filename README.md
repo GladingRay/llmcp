@@ -44,6 +44,7 @@ M0 基础设施已落地：
 - `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；attention 支持 `position` / `cache_length`，prefill 与 decode 追加均可
 - `llmcp-pack`：真实权重打包为 8.41GB arena + JSON manifest
 - `llmcp-compile`：把完整 llmcp 图 AOT 降级到 LLVM IR / object / shared library，导出 4 个 `llmcp_*` 入口
+- `llmcp-benchmark`：加载 AOT dylib，统计 prefill/decode 耗时与 token/s
 - `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode、Qwen chat template、逐 token 流式输出；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
 - 测试：8 个 CTest 目标（lit、dump、lower、pack、tokenizer、compile、numeric、gtest）全部通过
 
@@ -135,4 +136,9 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 ./build/bin/llmcp-run --weights build/weights.bin \
   --manifest build/weights.json --text Hello --chat --max-new-tokens 8 \
   --aot build/libqwen35_aot.dylib
+
+# AOT 性能测试
+./build/bin/llmcp-benchmark --weights build/weights.bin \
+  --manifest build/weights.json --aot build/libqwen35_aot.dylib \
+  --prefill-tokens 16 --decode-tokens 4
 ```

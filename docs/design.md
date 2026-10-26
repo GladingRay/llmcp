@@ -360,6 +360,7 @@ llmcp/
 │   ├── llmcp-dump/llmcp-dump.cpp      # 生成并 dump 完整 llmcp 计算图
 │   ├── llmcp-pack/llmcp-pack.cpp      # safetensors → weights.bin + manifest
 │   ├── llmcp-run/llmcp-run.cpp        # CLI 推理
+│   ├── llmcp-benchmark/llmcp-benchmark.cpp # AOT prefill/decode 性能
 │   └── llmcp-tokenize/                # tokenizer 对照工具（可选）
 ├── python/
 │   ├── reference/
