@@ -47,7 +47,7 @@ M0 基础设施已落地：
 - `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
 - 测试：8 个 CTest 目标（lit、dump、lower、pack、tokenizer、compile、numeric、gtest）全部通过
 
-当前处于 M1 早期：手写路径已完成单 token 对齐和多 token prefill/greedy decode（前两个 decode token 与 HF 一致，长序列仍有漂移）；完整图的 AOT 代码生成和单 token AOT 调用已完成（`--aot`），多 token AOT decode、采样和性能优化尚未开始。
+当前处于 M1 早期：手写路径已完成单 token 对齐和多 token prefill/greedy decode（长序列仍有漂移）；完整图 AOT 代码生成和多 token AOT prefill/greedy decode 已完成，4 token 贪心结果与 HF 一致；采样和性能优化尚未开始。
 
 ## 构建与测试
 
@@ -126,7 +126,7 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 ./build/bin/llmcp-run --weights build/weights.bin \
   --manifest build/weights.json --text 'Hello world' --max-new-tokens 2
 
-# AOT 单 token 路径
+# AOT 多 token 路径
 ./build/bin/llmcp-run --weights build/weights.bin \
   --manifest build/weights.json --text Hello \
   --aot build/libqwen35_aot.dylib

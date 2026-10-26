@@ -675,54 +675,90 @@ template <typename T, int N> struct ManualRef {
   int64_t strides[N];
 };
 
-bool runAotManual(const Arena &arena, int64_t token,
-                  std::vector<float> &logits) {
-  void *handle = dlopen(aotPath.c_str(), RTLD_NOW | RTLD_LOCAL);
-  if (!handle) {
-    errs() << "llmcp-run: dlopen: " << dlerror() << "\n";
-    return false;
-  }
+struct AotRuntime {
   using Fn = void (*)(void *, void *, void *, void *, void *, void *, void *,
                       void *, void *, void *);
-  auto fn = reinterpret_cast<Fn>(dlsym(handle, "_mlir_ciface_llmcp_model_aot"));
-  if (!fn) {
-    errs() << "llmcp-run: dlsym: " << dlerror() << "\n";
-    return false;
+  void *handle = nullptr;
+  Fn fn = nullptr;
+  int64_t capacity = 0;
+  std::vector<uint16_t> kv;
+  std::vector<float> delta;
+  std::vector<uint16_t> conv;
+
+  ~AotRuntime() {
+    if (handle)
+      dlclose(handle);
   }
-  static int64_t tokenValue = 9419;
-  tokenValue = token;
-  static float cos[64], sin[64], out[248320];
-  static uint16_t kv[8 * 2 * 4 * 1 * 256];
-  static float delta[24 * 32 * 128 * 128];
-  static uint16_t conv[24 * 3 * 8192];
-  for (int i = 0; i < 64; ++i) {
-    cos[i] = 1.0f;
-    sin[i] = 0.0f;
+
+  bool init(const std::string &path, int64_t maxSequence) {
+    capacity = maxSequence;
+    kv.assign(static_cast<size_t>(8 * 2 * 4 * capacity * 256), 0);
+    delta.assign(static_cast<size_t>(24 * 32 * 128 * 128), 0.0f);
+    conv.assign(static_cast<size_t>(24 * 3 * 8192), 0);
+    handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!handle) {
+      errs() << "llmcp-run: dlopen: " << dlerror() << "\n";
+      return false;
+    }
+    fn = reinterpret_cast<Fn>(dlsym(handle, "_mlir_ciface_llmcp_model_aot"));
+    if (!fn) {
+      errs() << "llmcp-run: dlsym: " << dlerror() << "\n";
+      return false;
+    }
+    return true;
   }
-  memset(kv, 0, sizeof(kv));
-  memset(delta, 0, sizeof(delta));
-  memset(conv, 0, sizeof(conv));
-  memset(out, 0, sizeof(out));
-  ManualRef<int64_t, 1> rt{&tokenValue, &tokenValue, 0, {1}, {1}};
-  ManualRef<float, 2> rc{cos, cos, 0, {1, 64}, {64, 1}};
-  ManualRef<float, 2> rs{sin, sin, 0, {1, 64}, {64, 1}};
-  ManualRef<int8_t, 1> ra{
-      const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
-      const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
-      0,
-      {static_cast<int64_t>(arena.size)},
-      {1}};
-  ManualRef<uint16_t, 5> rk{
-      kv, kv, 0, {8, 2, 4, 1, 256}, {2048, 1024, 256, 256, 1}};
-  ManualRef<float, 4> rd{
-      delta, delta, 0, {24, 32, 128, 128}, {32 * 128 * 128, 128 * 128, 128, 1}};
-  ManualRef<uint16_t, 3> rv{conv, conv, 0, {24, 3, 8192}, {3 * 8192, 8192, 1}};
-  ManualRef<float, 2> ro{out, out, 0, {1, 248320}, {248320, 1}};
-  fn(&rt, &rc, &rs, (void *)0, (void *)1, &ra, &rk, &rd, &rv, &ro);
-  logits.assign(out, out + 248320);
-  dlclose(handle);
-  return true;
-}
+
+  bool forward(const Arena &arena, const std::vector<int64_t> &tokens,
+               int64_t startPos, int64_t cacheLength,
+               std::vector<float> &logits) {
+    int64_t sequence = static_cast<int64_t>(tokens.size());
+    if (startPos + sequence > capacity)
+      return false;
+    std::vector<int64_t> tokenData = tokens;
+    std::vector<float> cos(static_cast<size_t>(sequence * 64));
+    std::vector<float> sin(static_cast<size_t>(sequence * 64));
+    for (int64_t t = 0; t < sequence; ++t) {
+      auto [c, s] = makeCosSin(startPos + t, 64, 10000000.0f);
+      std::copy(c.begin(), c.end(), cos.begin() + t * 64);
+      std::copy(s.begin(), s.end(), sin.begin() + t * 64);
+    }
+    logits.assign(static_cast<size_t>(sequence * 248320), 0.0f);
+
+    ManualRef<int64_t, 1> rt{tokenData.data(), tokenData.data(), 0, {0}, {1}};
+    rt.sizes[0] = sequence;
+    ManualRef<float, 2> rc{cos.data(), cos.data(), 0, {0, 64}, {64, 1}};
+    rc.sizes[0] = sequence;
+    ManualRef<float, 2> rs{sin.data(), sin.data(), 0, {0, 64}, {64, 1}};
+    rs.sizes[0] = sequence;
+    ManualRef<int8_t, 1> ra{
+        const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
+        const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
+        0,
+        {static_cast<int64_t>(arena.size)},
+        {1}};
+    ManualRef<uint16_t, 5> rk{
+        kv.data(),
+        kv.data(),
+        0,
+        {8, 2, 4, 0, 256},
+        {2 * 4 * capacity * 256, 4 * capacity * 256, capacity * 256, 256, 1}};
+    rk.sizes[3] = capacity;
+    ManualRef<float, 4> rd{delta.data(),
+                           delta.data(),
+                           0,
+                           {24, 32, 128, 128},
+                           {32 * 128 * 128, 128 * 128, 128, 1}};
+    ManualRef<uint16_t, 3> rv{
+        conv.data(), conv.data(), 0, {24, 3, 8192}, {3 * 8192, 8192, 1}};
+    ManualRef<float, 2> ro{
+        logits.data(), logits.data(), 0, {0, 248320}, {248320, 1}};
+    ro.sizes[0] = sequence;
+
+    fn(&rt, &rc, &rs, (void *)startPos, (void *)cacheLength, &ra, &rk, &rd, &rv,
+       &ro);
+    return true;
+  }
+};
 
 int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "llmcp-run\n");
@@ -758,13 +794,37 @@ int main(int argc, char **argv) {
       errs() << "llmcp-run: " << toString(std::move(error)) << "\n";
       return 1;
     }
-    std::vector<float> aotLogits;
-    if (!runAotManual(aotArena, tokens[0], aotLogits))
+    AotRuntime aot;
+    if (!aot.init(aotPath,
+                  static_cast<int64_t>(tokens.size()) + maxNewTokens + 16))
       return 1;
-    outs() << "aot logits: " << aotLogits.size() << " next "
-           << argmax(aotLogits) << "\n";
+    std::vector<float> allLogits;
+    if (!aot.forward(aotArena, tokens, 0, tokens.size(), allLogits))
+      return 1;
+    std::vector<float> logits(allLogits.end() - 248320, allLogits.end());
+    std::vector<int64_t> generated;
+    for (int64_t i = 0; i < maxNewTokens; ++i) {
+      int64_t next = argmax(logits);
+      generated.push_back(next);
+      std::vector<int64_t> one{next};
+      int64_t pos = static_cast<int64_t>(tokens.size() + generated.size() - 1);
+      if (!aot.forward(aotArena, one, pos, pos + 1, allLogits))
+        return 1;
+      logits.assign(allLogits.end() - 248320, allLogits.end());
+    }
+    if (!generated.empty()) {
+      std::vector<int32_t> generatedI32(generated.begin(), generated.end());
+      outs() << "generated: " << tokenizer->Decode(generatedI32) << "\n";
+      outs() << "tokens:";
+      for (int64_t id : generated)
+        outs() << " " << id;
+      outs() << "\n";
+    } else {
+      outs() << "aot logits: " << logits.size() << " next " << argmax(logits)
+             << "\n";
+    }
     if (dumpLogits)
-      for (float value : aotLogits)
+      for (float value : logits)
         outs() << value << "\n";
     return 0;
   }

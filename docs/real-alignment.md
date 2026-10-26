@@ -81,6 +81,26 @@ AOT 路径严格按正常顺序执行：先加载 tokenizer，再调用 AOT，�
 之前的 NaN 根因是 lowering 中 `linalg.matmul` 的输出 accumulator 未初始化；
 现在 `LinearOp` / `LmHeadOp` 会先用 `linalg.fill` 清零。
 
+多 token AOT prefill：
+
+```bash
+./build/bin/llmcp-run --weights build/weights.bin \
+  --manifest build/weights.json --text 'Hello world!' \
+  --aot build/libqwen35_aot.dylib
+# aot logits: 248320 next 271
+```
+
+多 token AOT 贪心生成：
+
+```bash
+./build/bin/llmcp-run --weights build/weights.bin \
+  --manifest build/weights.json --text 'Hello world' \
+  --max-new-tokens 4 --aot build/libqwen35_aot.dylib
+# tokens: 0 271 760 2614
+```
+
+这与 HF greedy 的 `[0, 271, 760, 2614]` 一致。
+
 Python 语义参考结果：
 
 ```text
@@ -102,7 +122,7 @@ top5 hf:   [11, 0, 13, 1017, 4858]
 
 ## 边界
 
-当前 C++ 执行器有两条路径：默认手写 `runModel`，以及 `--aot` 加载 `libqwen35_aot.dylib` 的 AOT 单 token 路径。两条路径都可用；AOT 的 NaN 已通过初始化 matmul accumulator 修复。
+当前 C++ 执行器有两条路径：默认手写 `runModel`，以及 `--aot` 加载 `libqwen35_aot.dylib` 的 AOT 多 token 路径。AOT 的 NaN 已通过初始化 matmul accumulator 修复；多 token prefill / 4 token 贪心已与 HF 对齐。
 
 尚未完成：
 
