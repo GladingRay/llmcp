@@ -803,9 +803,16 @@ int main(int argc, char **argv) {
       return 1;
     std::vector<float> logits(allLogits.end() - 248320, allLogits.end());
     std::vector<int64_t> generated;
+    if (maxNewTokens > 0) {
+      outs() << "output: ";
+      outs().flush();
+    }
     for (int64_t i = 0; i < maxNewTokens; ++i) {
       int64_t next = argmax(logits);
       generated.push_back(next);
+      std::vector<int32_t> oneI32{static_cast<int32_t>(next)};
+      outs() << tokenizer->Decode(oneI32);
+      outs().flush();
       std::vector<int64_t> one{next};
       int64_t pos = static_cast<int64_t>(tokens.size() + generated.size() - 1);
       if (!aot.forward(aotArena, one, pos, pos + 1, allLogits))
@@ -813,14 +820,7 @@ int main(int argc, char **argv) {
       logits.assign(allLogits.end() - 248320, allLogits.end());
     }
     if (!generated.empty()) {
-      std::vector<int32_t> generatedI32(generated.begin(), generated.end());
-      std::vector<int32_t> fullI32;
-      fullI32.reserve(tokens.size() + generated.size());
-      for (int64_t id : tokens)
-        fullI32.push_back(static_cast<int32_t>(id));
-      fullI32.insert(fullI32.end(), generatedI32.begin(), generatedI32.end());
-      outs() << "decoded: " << tokenizer->Decode(fullI32) << "\n";
-      outs() << "generated: " << tokenizer->Decode(generatedI32) << "\n";
+      outs() << "\n";
       outs() << "tokens:";
       for (int64_t id : generated)
         outs() << " " << id;
@@ -846,9 +846,16 @@ int main(int argc, char **argv) {
 
   Vec logits = runModel(arena, tokens, 0, runtime, config, /*decode=*/false);
   std::vector<int64_t> generated;
+  if (maxNewTokens > 0) {
+    outs() << "output: ";
+    outs().flush();
+  }
   for (int64_t i = 0; i < maxNewTokens; ++i) {
     int64_t next = argmax(logits);
     generated.push_back(next);
+    std::vector<int32_t> oneI32{static_cast<int32_t>(next)};
+    outs() << tokenizer->Decode(oneI32);
+    outs().flush();
     std::vector<int64_t> one{next};
     logits = runModel(
         arena, one, static_cast<int64_t>(tokens.size() + generated.size() - 1),
@@ -856,8 +863,7 @@ int main(int argc, char **argv) {
   }
 
   if (!generated.empty()) {
-    std::vector<int32_t> generatedI32(generated.begin(), generated.end());
-    outs() << "generated: " << tokenizer->Decode(generatedI32) << "\n";
+    outs() << "\n";
     outs() << "tokens:";
     for (int64_t id : generated)
       outs() << " " << id;
