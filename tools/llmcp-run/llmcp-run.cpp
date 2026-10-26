@@ -45,6 +45,12 @@ cl::opt<std::string> prompt("text", cl::desc("Prompt text"), cl::init(""));
 cl::opt<std::string> tokenizerPath(
     "tokenizer", cl::desc("HuggingFace tokenizer.json"),
     cl::init("/Users/guorui/Work/models/qwen3.5-4b/tokenizer.json"));
+cl::opt<bool> chat("chat", cl::desc("Wrap --text in the Qwen chat template"),
+                   cl::init(false));
+cl::opt<std::string> systemPrompt("system", cl::desc("Optional system message"),
+                                  cl::init(""));
+cl::opt<bool> noThinking("no-thinking", cl::desc("Use an empty <think> block"),
+                         cl::init(false));
 cl::opt<long long> maxNewTokens("max-new-tokens",
                                 cl::desc("Greedy decode token count"),
                                 cl::init(0));
@@ -760,6 +766,24 @@ struct AotRuntime {
   }
 };
 
+std::string makeChatPrompt(StringRef user, StringRef system, bool thinking) {
+  std::string prompt;
+  if (!system.empty()) {
+    prompt += "<|im_start|>system\n";
+    prompt += system.str();
+    prompt += "<|im_end|>\n";
+  }
+  prompt += "<|im_start|>user\n";
+  prompt += user.str();
+  prompt += "<|im_end|>\n";
+  prompt += "<|im_start|>assistant\n";
+  if (thinking)
+    prompt += "<think>\n";
+  else
+    prompt += "<think>\n\n</think>\n\n";
+  return prompt;
+}
+
 int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "llmcp-run\n");
 
@@ -773,12 +797,15 @@ int main(int argc, char **argv) {
 
   std::vector<int64_t> tokens;
   if (!prompt.empty()) {
-    auto ids = tokenizer->Encode(prompt);
+    std::string text =
+        chat ? makeChatPrompt(prompt, systemPrompt, !noThinking) : prompt;
+    auto ids = tokenizer->Encode(text);
     for (int32_t id : ids)
       tokens.push_back(id);
   } else {
     tokens.push_back(tokenId);
   }
+  int32_t eosToken = tokenizer->TokenToId("<|im_end|>");
   if (tokenizeOnly) {
     for (size_t i = 0; i < tokens.size(); ++i)
       outs() << (i ? "," : "") << tokens[i];
@@ -809,6 +836,8 @@ int main(int argc, char **argv) {
     }
     for (int64_t i = 0; i < maxNewTokens; ++i) {
       int64_t next = argmax(logits);
+      if (next == eosToken)
+        break;
       generated.push_back(next);
       std::vector<int32_t> oneI32{static_cast<int32_t>(next)};
       outs() << tokenizer->Decode(oneI32);
@@ -852,6 +881,8 @@ int main(int argc, char **argv) {
   }
   for (int64_t i = 0; i < maxNewTokens; ++i) {
     int64_t next = argmax(logits);
+    if (next == eosToken)
+      break;
     generated.push_back(next);
     std::vector<int32_t> oneI32{static_cast<int32_t>(next)};
     outs() << tokenizer->Decode(oneI32);

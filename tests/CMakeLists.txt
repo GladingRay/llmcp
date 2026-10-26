@@ -56,6 +56,14 @@ if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
       --expect-token 9419)
   set_tests_properties(llmcp-tokenizer PROPERTIES TIMEOUT 120)
 
+  add_test(NAME llmcp-chat-template
+    COMMAND $<TARGET_FILE:llmcp-run> --tokenize-only --chat --text Hello
+      --tokenizer /Users/guorui/Work/models/qwen3.5-4b/tokenizer.json)
+  set_tests_properties(llmcp-chat-template PROPERTIES
+    PASS_REGULAR_EXPRESSION
+    "248045,846,198,9419,248046,198,248045,74455,198,248068,198"
+    TIMEOUT 120)
+
   add_test(NAME llmcp-compile-real
     COMMAND $<TARGET_FILE:llmcp-compile>
       --model /Users/guorui/Work/models/qwen3.5-4b

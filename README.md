@@ -44,7 +44,7 @@ M0 基础设施已落地：
 - `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；attention 支持 `position` / `cache_length`，prefill 与 decode 追加均可
 - `llmcp-pack`：真实权重打包为 8.41GB arena + JSON manifest
 - `llmcp-compile`：把完整 llmcp 图 AOT 降级到 LLVM IR / object / shared library，导出 4 个 `llmcp_*` 入口
-- `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode，AOT/手写路径逐 token decode 并流式输出明文；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
+- `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode、Qwen chat template、逐 token 流式输出；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
 - 测试：8 个 CTest 目标（lit、dump、lower、pack、tokenizer、compile、numeric、gtest）全部通过
 
 当前处于 M1 早期：手写路径已完成单 token 对齐和多 token prefill/greedy decode（长序列仍有漂移）；完整图 AOT 代码生成和多 token AOT prefill/greedy decode 已完成，4 token 贪心结果与 HF 一致；采样和性能优化尚未开始。
@@ -129,5 +129,10 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 # AOT 多 token 路径
 ./build/bin/llmcp-run --weights build/weights.bin \
   --manifest build/weights.json --text Hello \
+  --aot build/libqwen35_aot.dylib
+
+# Chat template（默认 thinking；可加 --no-thinking / --system）
+./build/bin/llmcp-run --weights build/weights.bin \
+  --manifest build/weights.json --text Hello --chat --max-new-tokens 8 \
   --aot build/libqwen35_aot.dylib
 ```

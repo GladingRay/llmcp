@@ -131,13 +131,12 @@ top5 hf:   [11, 0, 13, 1017, 4858]
 
 尚未完成：
 
-1. 长序列 decode 的完整数值对齐（当前前两个 token 与 HF 一致）；
-2. 用 lowered MLIR 执行并与 HF logits 对比；
-3. 采样和 chat template。
+1. 更长序列的 AOT decode 数值对齐（当前 4 token 贪心与 HF 一致）；
+2. temperature / top-k / top-p 采样；
+3. 性能优化（当前仍是标量、单线程）。
 
 ## 下一步
 
-1. 校准 chunked prefill 的最终 DeltaNet state 与 decode recurrence 的衔接，消除长序列 decode 漂移；
-2. 加 temperature / top-k / top-p 采样和 chat template；
-3. 为 AOT shared library 写运行时驱动，替换手写 `llmcp-run`；
-4. 做 tiling/vectorize，降低单 token 的几十秒级延迟。
+1. 加 temperature / top-k / top-p 采样；
+2. 用更长的 prompt / 生成序列验证 AOT 状态与 HF 的一致性；
+3. 做 tiling/vectorize，降低单 token 的几十秒级延迟。
