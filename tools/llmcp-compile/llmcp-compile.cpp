@@ -191,6 +191,9 @@ int main(int argc, char **argv) {
     else
       args = {"-shared", llvmIr,    "-O" + optLevel, "-Wno-override-module",
               "-o",      outputPath};
+#if defined(__aarch64__)
+    args.push_back("-mcpu=native");
+#endif
     if (llvm::Error error = runTool(*clangOrErr, args))
       return fail(std::move(error));
   }

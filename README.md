@@ -41,7 +41,7 @@ M0 基础设施已落地：
 - `llmcp-inspect`：对真实 Qwen3.5-4B 输出 32 层 / 738 tensor / 8.41GB 文本布局
 - `ModelBuilder`：生成完整 prefill 计算图，包含 embedding、32 层、final norm、lm_head，以及 4 个入口函数
 - `llmcp-dump`：把完整计算图 dump 成 `.mlir`，支持 `--verify-module` 和 `--print-stats`
-- `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；`LinearOp` / `LmHeadOp` 使用 32-lane tile + vector dot 路径（bf16→f32 累加），attention 支持 `position` / `cache_length`
+- `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；`LinearOp` / `LmHeadOp` 使用 32-lane tile + vector dot 路径（arm64 上直接生成 `bfdot`），attention 支持 `position` / `cache_length`
 - `llmcp-pack`：真实权重打包为 8.41GB arena + JSON manifest
 - `llmcp-compile`：把完整 llmcp 图 AOT 降级到 LLVM IR / object / shared library，导出 4 个 `llmcp_*` 入口
 - `llmcp-benchmark`：加载 AOT dylib，统计 prefill/decode 耗时与 token/s
@@ -50,7 +50,7 @@ M0 基础设施已落地：
 - `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode、Qwen chat template、逐 token 流式输出；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
 - 测试：9 个 CTest 目标（lit、dump、lower、pack、tokenizer、chat-template、compile、numeric、gtest）全部通过
 
-当前处于 M1 早期：手写路径已完成单 token 对齐和多 token prefill/greedy decode（长序列仍有漂移）；完整图 AOT 代码生成和多 token AOT prefill/greedy decode 已完成，4 token 贪心结果与 HF 一致；Linear/LmHead 的首轮 vectorized matmul 已完成，进一步 tiling/threading 和采样仍待做。
+当前处于 M1 早期：手写路径已完成单 token 对齐和多 token prefill/greedy decode（长序列仍有漂移）；完整图 AOT 代码生成和多 token AOT prefill/greedy decode 已完成，4 token 贪心结果与 HF 一致；Linear/LmHead 已生成 arm64 `bfdot` matmul，进一步 tiling/threading 和采样仍待做。
 
 ## 构建与测试
 

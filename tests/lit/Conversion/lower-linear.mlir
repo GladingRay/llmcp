@@ -6,7 +6,7 @@ func.func @linear(%x: tensor<1x2560xbf16>, %w: memref<9216x2560xbf16>)
   // CHECK: bufferization.to_tensor
   // CHECK: scf.for
   // CHECK: vector.transfer_read
-  // CHECK: arith.mulf
+  // CHECK: llvm.call_intrinsic "llvm.aarch64.neon.bfdot"
   // CHECK: vector.reduction
   // CHECK: arith.truncf
   // CHECK: memref.store

@@ -8,6 +8,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -206,6 +207,81 @@ Value emitVectorDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
                                                     /*restrict=*/true);
 }
 
+#if defined(__aarch64__)
+Value emitBfDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
+                      Value weight, RankedTensorType resultType) {
+  auto inputType = cast<RankedTensorType>(input.getType());
+  auto weightType = cast<RankedTensorType>(weight.getType());
+  const int64_t channels = resultType.getDimSize(1);
+  const int64_t reduction = inputType.getDimSize(1);
+  if (ShapedType::isDynamic(channels) || ShapedType::isDynamic(reduction) ||
+      reduction % 8 != 0 ||
+      inputType.getElementType() != rewriter.getBF16Type() ||
+      weightType.getElementType() != rewriter.getBF16Type())
+    return Value();
+
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value blockSize = rewriter.create<arith::ConstantIndexOp>(loc, 8);
+  Value channelsValue = rewriter.create<arith::ConstantIndexOp>(loc, channels);
+  Value reductionValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, reduction);
+  Value rows = rewriter.create<tensor::DimOp>(loc, input, 0);
+  auto outputType = MemRefType::get({ShapedType::kDynamic, channels},
+                                    resultType.getElementType());
+  Value output =
+      rewriter.create<memref::AllocOp>(loc, outputType, ValueRange{rows});
+
+  auto f32 = rewriter.getF32Type();
+  auto bf16 = rewriter.getBF16Type();
+  auto bf16Vector = VectorType::get({8}, bf16);
+  auto f32Vector = VectorType::get({4}, f32);
+  SmallVector<bool> inBounds = {true};
+  AffineMap rowMap = AffineMap::get(2, 0, {rewriter.getAffineDimExpr(1)},
+                                    rewriter.getContext());
+
+  auto rowLoop =
+      rewriter.create<scf::ForOp>(loc, zero, rows, one, ValueRange{});
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  auto columnLoop =
+      rewriter.create<scf::ForOp>(loc, zero, channelsValue, one, ValueRange{});
+  rewriter.setInsertionPointToStart(columnLoop.getBody());
+  Value column = columnLoop.getInductionVar();
+
+  Value zeroF =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+  Value accInit = rewriter.create<vector::BroadcastOp>(loc, f32Vector, zeroF);
+  auto reductionLoop = rewriter.create<scf::ForOp>(
+      loc, zero, reductionValue, blockSize, ValueRange{accInit});
+  rewriter.setInsertionPointToStart(reductionLoop.getBody());
+  Value block = reductionLoop.getInductionVar();
+  Value aVec = rewriter.create<vector::TransferReadOp>(
+      loc, bf16Vector, input, ValueRange{row, block}, rowMap, inBounds);
+  Value bVec = rewriter.create<vector::TransferReadOp>(
+      loc, bf16Vector, weight, ValueRange{column, block}, rowMap, inBounds);
+  auto bfDot = rewriter.create<LLVM::CallIntrinsicOp>(
+      loc, f32Vector,
+      StringAttr::get(rewriter.getContext(), "llvm.aarch64.neon.bfdot"),
+      ValueRange{reductionLoop.getRegionIterArg(0), aVec, bVec});
+  Value acc = bfDot.getResult(0);
+  rewriter.create<scf::YieldOp>(loc, acc);
+  rewriter.setInsertionPointAfter(reductionLoop);
+
+  Value sum = rewriter.create<vector::ReductionOp>(
+      loc, vector::CombiningKind::ADD, reductionLoop.getResult(0));
+  Value result = sum;
+  if (resultType.getElementType().isBF16())
+    result = rewriter.create<arith::TruncFOp>(loc, bf16, result);
+  rewriter.create<memref::StoreOp>(loc, result, output,
+                                   ValueRange{row, column});
+  rewriter.setInsertionPointAfter(columnLoop);
+  rewriter.setInsertionPointAfter(rowLoop);
+  return rewriter.create<bufferization::ToTensorOp>(loc, resultType, output,
+                                                    /*restrict=*/true);
+}
+#endif
+
 Value castToF32(PatternRewriter &rewriter, Location loc, Value input) {
   auto inputType = cast<RankedTensorType>(input.getType());
   auto f32Type = rewriter.getF32Type();
@@ -235,6 +311,13 @@ public:
     Value weight = toTensor(rewriter, loc, op.getWeight());
 
     if (!op.getTransposeB()) {
+#if defined(__aarch64__)
+      if (Value vectorized =
+              emitBfDotMatmul(rewriter, loc, input, weight, resultType)) {
+        rewriter.replaceOp(op, vectorized);
+        return success();
+      }
+#endif
       if (Value vectorized =
               emitVectorDotMatmul(rewriter, loc, input, weight, resultType)) {
         rewriter.replaceOp(op, vectorized);
@@ -635,6 +718,13 @@ public:
     Location loc = op.getLoc();
     auto resultType = cast<RankedTensorType>(op.getLogits().getType());
     Value table = toTensor(rewriter, loc, op.getTable());
+#if defined(__aarch64__)
+    if (Value vectorized =
+            emitBfDotMatmul(rewriter, loc, op.getHidden(), table, resultType)) {
+      rewriter.replaceOp(op, vectorized);
+      return success();
+    }
+#endif
     if (Value vectorized = emitVectorDotMatmul(rewriter, loc, op.getHidden(),
                                                table, resultType)) {
       rewriter.replaceOp(op, vectorized);
@@ -678,6 +768,7 @@ struct LowerToLinalgPass
     context->getOrLoadDialect<arith::ArithDialect>();
     context->getOrLoadDialect<math::MathDialect>();
     context->getOrLoadDialect<vector::VectorDialect>();
+    context->getOrLoadDialect<LLVM::LLVMDialect>();
 
     RewritePatternSet patterns(context);
     populateCausalConv1dLoweringPatterns(patterns);

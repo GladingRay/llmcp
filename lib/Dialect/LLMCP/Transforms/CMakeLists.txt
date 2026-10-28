@@ -13,6 +13,7 @@ add_mlir_library(MLIRLLMCPTransforms
     MLIRBufferizationDialect
     MLIRIR
     MLIRLinalgDialect
+    MLIRLLVMDialect
     MLIRMathDialect
     MLIRPass
     MLIRSupport

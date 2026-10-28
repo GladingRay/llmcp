@@ -8,6 +8,7 @@ compares the printed values against a PyTorch reference.
 import argparse
 import math
 import os
+import platform
 import pathlib
 import subprocess
 
@@ -420,11 +421,12 @@ def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
     ])
     run([args.mlir_translate, "--mlir-to-llvmir", str(llvm_mlir), "-o",
          str(llvm_ir)])
-    run([
-        args.clang, str(llvm_ir), "-o", str(exe),
-        f"-L{args.runner_lib_dir}", "-lmlir_runner_utils",
-        "-lmlir_c_runner_utils",
-    ])
+    clang_args = [args.clang, str(llvm_ir), "-o", str(exe),
+                  f"-L{args.runner_lib_dir}", "-lmlir_runner_utils",
+                  "-lmlir_c_runner_utils"]
+    if platform.machine() in ("arm64", "aarch64"):
+        clang_args.append("-mcpu=native")
+    run(clang_args)
 
     env = dict(os.environ)
     env["DYLD_LIBRARY_PATH"] = args.runner_lib_dir + ":" + env.get(

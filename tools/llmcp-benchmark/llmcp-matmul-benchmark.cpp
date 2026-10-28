@@ -201,8 +201,11 @@ int main(int argc, char **argv) {
     return fail(toString(std::move(error)));
   if (verbose)
     std::cout << "stage 4: LLVM IR -> shared library\n";
-  if (Error error =
-          runTool(*clangOrErr, {"-shared", llvmIr, "-O2", "-o", dylib}))
+  std::vector<std::string> clangArgs = {"-shared", llvmIr, "-O2", "-o", dylib};
+#if defined(__aarch64__)
+  clangArgs.push_back("-mcpu=native");
+#endif
+  if (Error error = runTool(*clangOrErr, clangArgs))
     return fail(toString(std::move(error)));
 
   void *handle = dlopen(dylib.c_str(), RTLD_NOW | RTLD_LOCAL);

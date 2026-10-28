@@ -5,7 +5,7 @@ func.func @lm_head(%h: tensor<2x64xbf16>, %table: memref<64x64xbf16>)
     -> tensor<2x64xf32> {
   // CHECK: bufferization.to_tensor
   // CHECK: vector.transfer_read
-  // CHECK: arith.mulf
+  // CHECK: llvm.call_intrinsic "llvm.aarch64.neon.bfdot"
   // CHECK: vector.reduction
   // CHECK: memref.store
   // CHECK-NOT: linalg.matmul
