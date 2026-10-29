@@ -44,6 +44,9 @@ cl::opt<std::string>
                       cl::init("/opt/homebrew/opt/llvm@20/bin/mlir-translate"));
 cl::opt<std::string> clangPath("clang", cl::desc("Path to clang"),
                                cl::init("/opt/homebrew/opt/llvm@20/bin/clang"));
+cl::opt<std::string> runnerLibDir("runner-lib-dir",
+                                  cl::desc("MLIR runner runtime directory"),
+                                  cl::init("/opt/homebrew/opt/llvm@20/lib"));
 cl::opt<std::string> optLevel("opt-level", cl::desc("Clang optimization level"),
                               cl::init("2"));
 cl::opt<bool> keepTemps("keep-temps", cl::desc("Keep intermediate files"),
@@ -150,11 +153,16 @@ int main(int argc, char **argv) {
   if (llvm::Error error = runTool(
           *llmcpOptOrErr, {graph, "--llmcp-lower-to-linalg", "-o", linalg}))
     return fail(std::move(error));
+  if (llvm::Error error = runTool(
+          *llmcpOptOrErr, {linalg, "--llmcp-parallelize", "-o", linalg}))
+    return fail(std::move(error));
   if (llvm::Error error =
           runTool(*mlirOptOrErr,
                   {linalg,
                    "--one-shot-bufferize=bufferize-function-boundaries=1",
-                   "--convert-linalg-to-loops",
+                   "--convert-linalg-to-parallel-loops",
+                   "--convert-scf-to-openmp",
+                   "--convert-openmp-to-llvm",
                    "--lower-affine",
                    "--convert-scf-to-cf",
                    "--convert-cf-to-llvm",
@@ -191,6 +199,15 @@ int main(int argc, char **argv) {
     else
       args = {"-shared", llvmIr,    "-O" + optLevel, "-Wno-override-module",
               "-o",      outputPath};
+    if (emit == "shared") {
+      args.push_back("-L/opt/homebrew/opt/libomp/lib");
+      args.push_back("-lomp");
+      args.push_back("-Wl,-rpath,/opt/homebrew/opt/libomp/lib");
+      args.push_back("-L" + runnerLibDir);
+      args.push_back("-lmlir_runner_utils");
+      args.push_back("-lmlir_c_runner_utils");
+      args.push_back("-Wl,-rpath," + runnerLibDir);
+    }
 #if defined(__aarch64__)
     args.push_back("-mcpu=native");
 #endif

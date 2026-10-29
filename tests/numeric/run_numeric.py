@@ -406,10 +406,13 @@ def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
 
     run([args.llmcp_opt, str(source), "--llmcp-lower-to-linalg", "-o",
          str(linalg)])
+    run([args.llmcp_opt, str(linalg), "--llmcp-parallelize", "-o",
+         str(linalg)])
     run([
         args.mlir_opt, str(linalg),
         "--one-shot-bufferize=bufferize-function-boundaries=1",
-        "--convert-linalg-to-loops", "--lower-affine", "--convert-scf-to-cf",
+        "--convert-linalg-to-parallel-loops", "--convert-scf-to-openmp",
+        "--convert-openmp-to-llvm", "--lower-affine", "--convert-scf-to-cf",
         "--convert-cf-to-llvm", "--convert-arith-to-llvm",
         "--convert-math-to-llvm", "--convert-vector-to-scf",
            "--convert-scf-to-cf", "--lower-affine",
@@ -423,14 +426,16 @@ def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
          str(llvm_ir)])
     clang_args = [args.clang, str(llvm_ir), "-o", str(exe),
                   f"-L{args.runner_lib_dir}", "-lmlir_runner_utils",
-                  "-lmlir_c_runner_utils"]
+                  "-lmlir_c_runner_utils", "-L/opt/homebrew/opt/libomp/lib",
+                  "-lomp", "-Wl,-rpath,/opt/homebrew/opt/libomp/lib"]
     if platform.machine() in ("arm64", "aarch64"):
         clang_args.append("-mcpu=native")
     run(clang_args)
 
     env = dict(os.environ)
-    env["DYLD_LIBRARY_PATH"] = args.runner_lib_dir + ":" + env.get(
-        "DYLD_LIBRARY_PATH", "")
+    env["DYLD_LIBRARY_PATH"] = (args.runner_lib_dir +
+                               ":/opt/homebrew/opt/libomp/lib:" +
+                               env.get("DYLD_LIBRARY_PATH", ""))
     output = subprocess.run([str(exe)], check=True, env=env,
                             capture_output=True, text=True).stdout
     actual = [float(line) for line in output.splitlines() if line.strip()]

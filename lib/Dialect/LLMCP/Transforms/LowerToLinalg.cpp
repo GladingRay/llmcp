@@ -85,6 +85,7 @@ Value emitVectorMatmul(PatternRewriter &rewriter, Location loc, Value input,
   auto rowLoop =
       rewriter.create<scf::ForOp>(loc, zero, rows, one, ValueRange{});
   rewriter.setInsertionPointToStart(rowLoop.getBody());
+  rowLoop->setAttr("llmcp.parallel", UnitAttr::get(rewriter.getContext()));
   Value row = rowLoop.getInductionVar();
   auto columnLoop =
       rewriter.create<scf::ForOp>(loc, zero, channelsValue, tile, ValueRange{});
@@ -169,6 +170,7 @@ Value emitVectorDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
   auto rowLoop =
       rewriter.create<scf::ForOp>(loc, zero, rows, one, ValueRange{});
   rewriter.setInsertionPointToStart(rowLoop.getBody());
+  rowLoop->setAttr("llmcp.parallel", UnitAttr::get(rewriter.getContext()));
   Value row = rowLoop.getInductionVar();
   auto columnLoop =
       rewriter.create<scf::ForOp>(loc, zero, channelsValue, one, ValueRange{});
@@ -243,6 +245,7 @@ Value emitBfDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
   auto rowLoop =
       rewriter.create<scf::ForOp>(loc, zero, rows, one, ValueRange{});
   rewriter.setInsertionPointToStart(rowLoop.getBody());
+  rowLoop->setAttr("llmcp.parallel", UnitAttr::get(rewriter.getContext()));
   Value row = rowLoop.getInductionVar();
   auto columnLoop =
       rewriter.create<scf::ForOp>(loc, zero, channelsValue, one, ValueRange{});

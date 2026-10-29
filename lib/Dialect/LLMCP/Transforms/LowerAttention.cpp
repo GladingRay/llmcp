@@ -113,10 +113,10 @@ public:
         loc, MemRefType::get({qgType.getDimSize(0), numHeads, headDim}, bf16),
         sequenceSizes);
     Value scores = rewriter.create<memref::AllocOp>(
-        loc, MemRefType::get({ShapedType::kDynamic}, f32),
+        loc, MemRefType::get({numHeads, ShapedType::kDynamic}, f32),
         ValueRange{cacheLength});
-    Value normTemp =
-        rewriter.create<memref::AllocOp>(loc, MemRefType::get({headDim}, f32));
+    Value normTemp = rewriter.create<memref::AllocOp>(
+        loc, MemRefType::get({numHeads, headDim}, f32));
     SmallVector<Value> outputSizes;
     for (int64_t i = 0; i < resultType.getRank(); ++i)
       if (resultType.isDynamicDim(i))
@@ -184,8 +184,8 @@ public:
                       Value normalized = rewriter.create<arith::MulFOp>(
                           loc, rewriter.create<arith::MulFOp>(loc, value, inv),
                           centered);
-                      rewriter.create<memref::StoreOp>(loc, normalized,
-                                                       normTemp, ValueRange{d});
+                      rewriter.create<memref::StoreOp>(
+                          loc, normalized, normTemp, ValueRange{head, d});
                     });
                 rewriter.setInsertionPointAfter(normalize);
 
@@ -207,9 +207,9 @@ public:
                           rewriter.create<arith::ConstantOp>(
                               loc, builder.getF32FloatAttr(-1.0f)));
                       Value value = rewriter.create<memref::LoadOp>(
-                          loc, normTemp, ValueRange{d});
+                          loc, normTemp, ValueRange{head, d});
                       Value partnerValue = rewriter.create<memref::LoadOp>(
-                          loc, normTemp, ValueRange{partner});
+                          loc, normTemp, ValueRange{head, partner});
                       Value cos = rewriter.create<tensor::ExtractOp>(
                           loc, op.getCos(), ValueRange{position, d});
                       Value sin = rewriter.create<tensor::ExtractOp>(
@@ -231,7 +231,7 @@ public:
                     rewriter, loc, rotaryValue, headDimValue, one, ValueRange{},
                     [&](OpBuilder &builder, Location loc, Value d, ValueRange) {
                       Value value = rewriter.create<memref::LoadOp>(
-                          loc, normTemp, ValueRange{d});
+                          loc, normTemp, ValueRange{head, d});
                       Value resultBf16 =
                           rewriter.create<arith::TruncFOp>(loc, bf16, value);
                       rewriter.create<memref::StoreOp>(
@@ -240,6 +240,8 @@ public:
                     });
                 rewriter.setInsertionPointAfter(tail);
               });
+          headLoop->setAttr("llmcp.parallel",
+                            UnitAttr::get(rewriter.getContext()));
           rewriter.setInsertionPointAfter(headLoop);
         });
     rewriter.setInsertionPointAfter(qNormLoop);
@@ -287,8 +289,8 @@ public:
                       Value normalized = rewriter.create<arith::MulFOp>(
                           loc, rewriter.create<arith::MulFOp>(loc, value, inv),
                           centered);
-                      rewriter.create<memref::StoreOp>(loc, normalized,
-                                                       normTemp, ValueRange{d});
+                      rewriter.create<memref::StoreOp>(
+                          loc, normalized, normTemp, ValueRange{kvHead, d});
                     });
                 rewriter.setInsertionPointAfter(normalize);
 
@@ -310,9 +312,9 @@ public:
                           rewriter.create<arith::ConstantOp>(
                               loc, builder.getF32FloatAttr(-1.0f)));
                       Value value = rewriter.create<memref::LoadOp>(
-                          loc, normTemp, ValueRange{d});
+                          loc, normTemp, ValueRange{kvHead, d});
                       Value partnerValue = rewriter.create<memref::LoadOp>(
-                          loc, normTemp, ValueRange{partner});
+                          loc, normTemp, ValueRange{kvHead, partner});
                       Value cos = rewriter.create<tensor::ExtractOp>(
                           loc, op.getCos(), ValueRange{position, d});
                       Value sin = rewriter.create<tensor::ExtractOp>(
@@ -337,7 +339,7 @@ public:
                     rewriter, loc, rotaryValue, headDimValue, one, ValueRange{},
                     [&](OpBuilder &builder, Location loc, Value d, ValueRange) {
                       Value value = rewriter.create<memref::LoadOp>(
-                          loc, normTemp, ValueRange{d});
+                          loc, normTemp, ValueRange{kvHead, d});
                       Value resultBf16 =
                           rewriter.create<arith::TruncFOp>(loc, bf16, value);
                       rewriter.create<memref::StoreOp>(
@@ -365,6 +367,8 @@ public:
                     });
                 rewriter.setInsertionPointAfter(writeV);
               });
+          kvHeadLoop->setAttr("llmcp.parallel",
+                              UnitAttr::get(rewriter.getContext()));
           rewriter.setInsertionPointAfter(kvHeadLoop);
         });
     rewriter.setInsertionPointAfter(kvNormLoop);
@@ -413,8 +417,8 @@ public:
                       rewriter.setInsertionPointAfter(dotLoop);
                       Value score = rewriter.create<arith::MulFOp>(
                           loc, dotLoop.getResult(0), scaleValue);
-                      rewriter.create<memref::StoreOp>(loc, score, scores,
-                                                       ValueRange{keyPos});
+                      rewriter.create<memref::StoreOp>(
+                          loc, score, scores, ValueRange{head, keyPos});
                     });
                 rewriter.setInsertionPointAfter(scoreLoop);
 
@@ -423,7 +427,7 @@ public:
                     [&](OpBuilder &builder, Location loc, Value keyPos,
                         ValueRange args) {
                       Value score = rewriter.create<memref::LoadOp>(
-                          loc, scores, ValueRange{keyPos});
+                          loc, scores, ValueRange{head, keyPos});
                       Value max = rewriter.create<arith::MaxNumFOp>(
                           loc, args[0], score);
                       rewriter.create<scf::YieldOp>(loc, max);
@@ -435,13 +439,13 @@ public:
                     [&](OpBuilder &builder, Location loc, Value keyPos,
                         ValueRange args) {
                       Value score = rewriter.create<memref::LoadOp>(
-                          loc, scores, ValueRange{keyPos});
+                          loc, scores, ValueRange{head, keyPos});
                       Value shifted = rewriter.create<arith::SubFOp>(
                           loc, score, maxLoop.getResult(0));
                       Value probability =
                           rewriter.create<math::ExpOp>(loc, shifted);
-                      rewriter.create<memref::StoreOp>(loc, probability, scores,
-                                                       ValueRange{keyPos});
+                      rewriter.create<memref::StoreOp>(
+                          loc, probability, scores, ValueRange{head, keyPos});
                       Value sum = rewriter.create<arith::AddFOp>(loc, args[0],
                                                                  probability);
                       rewriter.create<scf::YieldOp>(loc, sum);
@@ -456,7 +460,7 @@ public:
                           [&](OpBuilder &builder, Location loc, Value keyPos,
                               ValueRange args) {
                             Value probability = rewriter.create<memref::LoadOp>(
-                                loc, scores, ValueRange{keyPos});
+                                loc, scores, ValueRange{head, keyPos});
                             Value vValue = rewriter.create<memref::LoadOp>(
                                 loc, op.getKvCache(),
                                 ValueRange{layerValue, one, kvHead, keyPos, d});
@@ -505,6 +509,8 @@ public:
                     });
                 rewriter.setInsertionPointAfter(outputDimLoop);
               });
+          queryHeadLoop->setAttr("llmcp.parallel",
+                                 UnitAttr::get(rewriter.getContext()));
           rewriter.setInsertionPointAfter(queryHeadLoop);
         });
     rewriter.setInsertionPointAfter(queryLoop);

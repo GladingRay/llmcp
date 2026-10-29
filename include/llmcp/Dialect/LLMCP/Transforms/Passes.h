@@ -15,12 +15,14 @@ namespace llmcp {
 
 /// Lowers `llmcp.linear` and `llmcp.rms_norm` to linalg/tensor operations.
 std::unique_ptr<Pass> createLowerToLinalgPass();
+std::unique_ptr<Pass> createParallelizePass();
 
 void populateCausalConv1dLoweringPatterns(RewritePatternSet &patterns);
 void populateGatedDeltaNetLoweringPatterns(RewritePatternSet &patterns);
 void populateAttentionLoweringPatterns(RewritePatternSet &patterns);
 
 void registerLowerToLinalgPass();
+void registerParallelizePass();
 
 } // namespace llmcp
 } // namespace mlir

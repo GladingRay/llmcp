@@ -72,6 +72,7 @@ public:
     // out[t, c] = silu(sum_k w[c, 0, k] * padded[t + k]).
     auto timeLoop =
         rewriter.create<scf::ForOp>(loc, zero, sequence, one, ValueRange{});
+    timeLoop->setAttr("llmcp.parallel", UnitAttr::get(rewriter.getContext()));
     rewriter.setInsertionPointToStart(timeLoop.getBody());
     auto channelLoop = rewriter.create<scf::ForOp>(loc, zero, channelsValue,
                                                    one, ValueRange{});

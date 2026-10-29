@@ -102,9 +102,9 @@ public:
         loc, rewriter.getF32FloatAttr(static_cast<float>(
                  1.0 / std::sqrt(static_cast<double>(headK)))));
 
-    auto qnType = MemRefType::get({headK}, f32);
-    auto knType = MemRefType::get({headV}, f32);
-    auto deltaType = MemRefType::get({headV}, f32);
+    auto qnType = MemRefType::get({numV, headK}, f32);
+    auto knType = MemRefType::get({numV, headV}, f32);
+    auto deltaType = MemRefType::get({numV, headV}, f32);
     Value qn = rewriter.create<memref::AllocOp>(loc, qnType);
     Value kn = rewriter.create<memref::AllocOp>(loc, knType);
     Value delta = rewriter.create<memref::AllocOp>(loc, deltaType);
@@ -189,9 +189,9 @@ public:
                       Value kNormalized =
                           rewriter.create<arith::MulFOp>(loc, kValue, kInv);
                       rewriter.create<memref::StoreOp>(loc, qNormalized, qn,
-                                                       ValueRange{index});
+                                                       ValueRange{head, index});
                       rewriter.create<memref::StoreOp>(loc, kNormalized, kn,
-                                                       ValueRange{index});
+                                                       ValueRange{head, index});
                     });
                 rewriter.setInsertionPointAfter(normalizeLoop);
 
@@ -235,7 +235,7 @@ public:
                             Value decayedState = rewriter.create<arith::MulFOp>(
                                 loc, stateValue, decay);
                             Value kValue = rewriter.create<memref::LoadOp>(
-                                loc, kn, ValueRange{kIndex});
+                                loc, kn, ValueRange{head, kIndex});
                             Value product = rewriter.create<arith::MulFOp>(
                                 loc, decayedState, kValue);
                             Value sum = rewriter.create<arith::AddFOp>(
@@ -250,8 +250,8 @@ public:
                           loc, vValue, kvLoop.getResult(0));
                       Value deltaValue =
                           rewriter.create<arith::MulFOp>(loc, difference, beta);
-                      rewriter.create<memref::StoreOp>(loc, deltaValue, delta,
-                                                       ValueRange{vIndex});
+                      rewriter.create<memref::StoreOp>(
+                          loc, deltaValue, delta, ValueRange{head, vIndex});
                     });
                 rewriter.setInsertionPointAfter(deltaLoop);
 
@@ -261,7 +261,7 @@ public:
                     [&](OpBuilder &builder, Location loc, Value kIndex,
                         ValueRange) {
                       Value kValue = rewriter.create<memref::LoadOp>(
-                          loc, kn, ValueRange{kIndex});
+                          loc, kn, ValueRange{head, kIndex});
                       auto valueLoop = createLoop(
                           rewriter, loc, zero, headVValue, one, ValueRange{},
                           [&](OpBuilder &builder, Location loc, Value vIndex,
@@ -272,7 +272,7 @@ public:
                             Value decayed = rewriter.create<arith::MulFOp>(
                                 loc, stateValue, decay);
                             Value deltaValue = rewriter.create<memref::LoadOp>(
-                                loc, delta, ValueRange{vIndex});
+                                loc, delta, ValueRange{head, vIndex});
                             Value update = rewriter.create<arith::MulFOp>(
                                 loc, kValue, deltaValue);
                             Value updated = rewriter.create<arith::AddFOp>(
@@ -299,7 +299,7 @@ public:
                                 loc, op.getState(),
                                 ValueRange{layerValue, head, kIndex, vIndex});
                             Value qValue = rewriter.create<memref::LoadOp>(
-                                loc, qn, ValueRange{kIndex});
+                                loc, qn, ValueRange{head, kIndex});
                             Value product = rewriter.create<arith::MulFOp>(
                                 loc, stateValue, qValue);
                             Value sum = rewriter.create<arith::AddFOp>(
@@ -319,6 +319,8 @@ public:
                     });
                 rewriter.setInsertionPointAfter(outputLoop);
               });
+          headLoop->setAttr("llmcp.parallel",
+                            UnitAttr::get(rewriter.getContext()));
           rewriter.setInsertionPointAfter(headLoop);
         });
     rewriter.setInsertionPointAfter(timeLoop);
