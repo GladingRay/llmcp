@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
 #include <fstream>
@@ -41,6 +42,10 @@ cl::opt<bool> keepTemps("keep-temps", cl::desc("Keep intermediate files"),
                         cl::init(false));
 cl::opt<bool> verbose("verbose", cl::desc("Print each lowering stage"),
                       cl::init(false));
+cl::opt<int> threads("threads", cl::desc("OpenMP threads (0 = runtime default)"),
+                     cl::init(0));
+cl::opt<bool> noParallel("no-parallel", cl::desc("Disable OpenMP parallelization"),
+                         cl::init(false));
 cl::opt<std::string> llmcpOptPath("llmcp-opt", cl::desc("Path to llmcp-opt"),
                                   cl::init(""));
 cl::opt<std::string>
@@ -149,6 +154,7 @@ int main(int argc, char **argv) {
     return fail(ec.message());
   std::string source = (directory + "/input.mlir").str();
   std::string linalg = (directory + "/linalg.mlir").str();
+  std::string parallel = (directory + "/parallel.mlir").str();
   std::string llvmMlir = (directory + "/llvm.mlir").str();
   std::string llvmIr = (directory + "/module.ll").str();
   std::string dylib = (directory + "/liblinear.dylib").str();
@@ -164,31 +170,38 @@ int main(int argc, char **argv) {
                             {source, "--llmcp-lower-to-linalg", "-o", linalg}))
     return fail(toString(std::move(error)));
   if (verbose)
-    std::cout << "stage 2: linalg -> vector/scf/llvm dialect\n";
-  if (Error error =
-          runTool(*mlirOptOrErr,
-                  {linalg,
-                   "--one-shot-bufferize=bufferize-function-boundaries=1",
-                   "--convert-linalg-to-loops",
-                   "--lower-affine",
-                   "--convert-scf-to-cf",
-                   "--convert-cf-to-llvm",
-                   "--convert-arith-to-llvm",
-                   "--convert-math-to-llvm",
-                   "--convert-vector-to-scf",
-                   "--convert-scf-to-cf",
-                   "--lower-affine",
-                   "--convert-cf-to-llvm",
-                   "--convert-vector-to-llvm",
-                   "--convert-arith-to-llvm",
-                   "--convert-func-to-llvm",
-                   "--convert-arith-to-llvm",
-                   "--expand-strided-metadata",
-                   "--finalize-memref-to-llvm",
-                   "--reconcile-unrealized-casts",
-                   "--convert-arith-to-llvm",
-                   "-o",
-                   llvmMlir}))
+    std::cout << "stage 2: linalg -> parallel scf\n";
+  std::string inputForLowering = linalg;
+  if (!noParallel) {
+    if (Error error = runTool(
+            *llmcpOptOrErr,
+            {linalg, "--llmcp-parallelize", "-o", parallel}))
+      return fail(toString(std::move(error)));
+    inputForLowering = parallel;
+  }
+
+  std::vector<std::string> mlirArgs = {
+      inputForLowering, "--one-shot-bufferize=bufferize-function-boundaries=1"};
+  if (noParallel)
+    mlirArgs.push_back("--convert-linalg-to-loops");
+  else {
+    mlirArgs.push_back("--convert-linalg-to-parallel-loops");
+    mlirArgs.push_back("--convert-scf-to-openmp");
+    mlirArgs.push_back("--convert-openmp-to-llvm");
+  }
+  for (const char *arg :
+       {"--lower-affine", "--convert-scf-to-cf", "--convert-cf-to-llvm",
+        "--convert-arith-to-llvm", "--convert-math-to-llvm",
+        "--convert-vector-to-scf", "--convert-scf-to-cf", "--lower-affine",
+        "--convert-cf-to-llvm", "--convert-vector-to-llvm",
+        "--convert-arith-to-llvm", "--convert-func-to-llvm",
+        "--convert-arith-to-llvm", "--expand-strided-metadata",
+        "--finalize-memref-to-llvm", "--reconcile-unrealized-casts",
+        "--convert-arith-to-llvm"})
+    mlirArgs.push_back(arg);
+  mlirArgs.push_back("-o");
+  mlirArgs.push_back(llvmMlir);
+  if (Error error = runTool(*mlirOptOrErr, mlirArgs))
     return fail(toString(std::move(error)));
   if (verbose)
     std::cout << "stage 3: LLVM dialect -> LLVM IR\n";
@@ -197,13 +210,25 @@ int main(int argc, char **argv) {
     return fail(toString(std::move(error)));
   if (verbose)
     std::cout << "stage 4: LLVM IR -> shared library\n";
-  std::vector<std::string> clangArgs = {"-shared", llvmIr, "-O2", "-o", dylib};
+  std::vector<std::string> clangArgs = {
+      "-shared", llvmIr, "-O2", "-L/opt/homebrew/opt/llvm@20/lib",
+      "-lmlir_runner_utils", "-lmlir_c_runner_utils",
+      "-Wl,-rpath,/opt/homebrew/opt/llvm@20/lib"};
+  if (!noParallel) {
+    clangArgs.push_back("-L/opt/homebrew/opt/libomp/lib");
+    clangArgs.push_back("-lomp");
+    clangArgs.push_back("-Wl,-rpath,/opt/homebrew/opt/libomp/lib");
+  }
+  clangArgs.push_back("-o");
+  clangArgs.push_back(dylib);
 #if defined(__aarch64__)
   clangArgs.push_back("-mcpu=native");
 #endif
   if (Error error = runTool(*clangOrErr, clangArgs))
     return fail(toString(std::move(error)));
 
+  if (threads > 0)
+    setenv("OMP_NUM_THREADS", std::to_string(threads).c_str(), 1);
   void *handle = dlopen(dylib.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (!handle)
     return fail(dlerror());
@@ -233,6 +258,8 @@ int main(int argc, char **argv) {
   std::cout << "n: " << nDim << "\n";
   std::cout << "k: " << kDim << "\n";
   std::cout << "iters: " << iterations << "\n";
+  if (threads > 0)
+    std::cout << "threads: " << threads << "\n";
   std::cout << "seconds: " << seconds << "\n";
   std::cout << "gflops: " << gflops << "\n";
   if (verify) {

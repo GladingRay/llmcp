@@ -101,7 +101,29 @@ decode:  M=1、N 仍然很大
 - numeric：全部通过
 - AOT：单 token `next 11`，greedy `0 271 760 2614`
 
-## 8. 性能
+## 8. matmul microbenchmark
+
+`llmcp-matmul-benchmark` 已接入同一套并行化 pipeline：
+
+```bash
+./build/bin/llmcp-matmul-benchmark \
+  --m 256 --n 256 --k 256 --iters 10 --threads 4
+```
+
+实测：
+
+```text
+256x256x256:
+  --threads 4:   41.9 GFLOPS
+  --threads 1:   14.7 GFLOPS
+  --no-parallel: 11.7 GFLOPS
+
+M=16, N=8192, K=2560:
+  --threads 4:   58.0 GFLOPS
+  --no-parallel: 20.8 GFLOPS
+```
+
+## 9. 性能
 
 AOT dylib，`4 prefill / 2 decode`：
 

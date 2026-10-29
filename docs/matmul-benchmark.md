@@ -1,5 +1,9 @@
 # Qwen3.5-4B 中的 matmul shape 与 AOT 性能
 
+> 注：下表是未启用 OpenMP 的单线程基线。当前工具默认并行，
+> 可用 `--threads N` / `--no-parallel` 对比。最新结果见
+> [parallelization.md](parallelization.md)。
+
 ## 1. 统计口径
 
 这里统计的是完整图中由 `llmcp.linear` / `llmcp.lm_head` 表示的矩阵乘：
