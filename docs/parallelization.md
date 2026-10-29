@@ -107,16 +107,16 @@ AOT dylib，`4 prefill / 2 decode`：
 
 ```text
 OMP_NUM_THREADS=1:
-  prefill: 2.84 s
-  decode:  1.00 s
+  prefill: 6.21 s
+  decode:  1.58 s
 
 OMP_NUM_THREADS=4:
-  prefill: 0.79 s
-  decode:  0.35 s
+  prefill: 0.82 s
+  decode:  0.43 s
 
 OMP_NUM_THREADS=8:
-  prefill: 0.86 s
-  decode:  0.41 s
+  prefill: 0.80 s
+  decode:  0.44 s
 ```
 
 按 N 维并行后，decode 也有明显收益，不再出现按 M 行并行时 M=1 无并行度的问题。
