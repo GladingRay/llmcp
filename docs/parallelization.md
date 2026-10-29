@@ -25,8 +25,8 @@ llmcp-parallelize
 
 | 算子 | 并行方式 |
 |---|---|
-| `linear` | bfdot 输出行循环 |
-| `lm_head` | 输出行循环 |
+| `linear` | bfdot 输出列（N）循环 |
+| `lm_head` | 输出列（N）循环 |
 | `add` | linalg 的 parallel 维度 |
 | `silu_mul` | linalg 的 parallel 维度 |
 | `embedding` | linalg 的 parallel 维度 |
@@ -84,8 +84,39 @@ libmlir_runner_utils
 libmlir_c_runner_utils
 ```
 
-## 6. 验证
+## 6. 并行维度选择
+
+`linear` / `lm_head` 并行 **N 维（输出列）**，而不是 M 维（sequence）：
+
+```text
+prefill: M 小、N 大（2560 / 8192 / 248320）
+decode:  M=1、N 仍然很大
+```
+
+按 N 并行可以覆盖 decode 和 prefill，并且避免 M=1 时没有并行度。
+
+## 7. 验证
 
 - `llmcp-parallelize` lit test：检查 `scf.parallel` / `scf.reduce`
 - numeric：全部通过
 - AOT：单 token `next 11`，greedy `0 271 760 2614`
+
+## 8. 性能
+
+AOT dylib，`4 prefill / 2 decode`：
+
+```text
+OMP_NUM_THREADS=1:
+  prefill: 2.84 s
+  decode:  1.00 s
+
+OMP_NUM_THREADS=4:
+  prefill: 0.79 s
+  decode:  0.35 s
+
+OMP_NUM_THREADS=8:
+  prefill: 0.86 s
+  decode:  0.41 s
+```
+
+按 N 维并行后，decode 也有明显收益，不再出现按 M 行并行时 M=1 无并行度的问题。
