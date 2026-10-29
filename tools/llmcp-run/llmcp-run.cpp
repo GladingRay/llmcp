@@ -11,6 +11,8 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "llmcp/Runtime/AotRuntime.h"
+
 #include "tokenizers_cpp.h"
 
 #include <algorithm>
@@ -31,6 +33,7 @@
 #endif
 
 using namespace llvm;
+using namespace mlir::llmcp::runtime;
 
 namespace {
 
@@ -73,80 +76,6 @@ cl::opt<bool> dumpCosSin("dump-cos-sin",
                          cl::desc("Print generated cos/sin values"),
                          cl::init(false));
 
-struct Shape {
-  std::vector<int64_t> dims;
-};
-
-struct Weight {
-  const uint8_t *data = nullptr;
-  Shape shape;
-  std::string dtype;
-};
-
-struct Arena {
-  int fd = -1;
-  const uint8_t *base = nullptr;
-  uint64_t size = 0;
-  std::unordered_map<std::string, Weight> weights;
-
-  ~Arena() {
-    if (base)
-      munmap(const_cast<uint8_t *>(base), size);
-    if (fd >= 0)
-      close(fd);
-  }
-
-  Error load(StringRef bin, StringRef manifest) {
-    fd = open(bin.str().c_str(), O_RDONLY);
-    if (fd < 0)
-      return errorCodeToError(std::error_code(errno, std::generic_category()));
-    struct stat st;
-    if (fstat(fd, &st) != 0)
-      return errorCodeToError(std::error_code(errno, std::generic_category()));
-    size = static_cast<uint64_t>(st.st_size);
-    base = static_cast<const uint8_t *>(
-        mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0));
-    if (base == MAP_FAILED)
-      return errorCodeToError(std::error_code(errno, std::generic_category()));
-
-    auto buffer = MemoryBuffer::getFile(manifest);
-    if (!buffer)
-      return errorCodeToError(buffer.getError());
-    auto json = json::parse((*buffer)->getBuffer());
-    if (!json)
-      return json.takeError();
-    auto *object = json->getAsObject();
-    auto *tensors = object ? object->getArray("tensors") : nullptr;
-    if (!tensors)
-      return createStringError(inconvertibleErrorCode(),
-                               "manifest has no tensors");
-    for (const json::Value &value : *tensors) {
-      auto *entry = value.getAsObject();
-      if (!entry)
-        continue;
-      Weight weight;
-      std::string name = entry->getString("name")->str();
-      uint64_t offset = entry->getInteger("offset").value_or(0);
-      uint64_t bytes = entry->getInteger("size").value_or(0);
-      weight.dtype = entry->getString("dtype")->str();
-      for (const json::Value &dim : *entry->getArray("shape"))
-        weight.shape.dims.push_back(dim.getAsInteger().value_or(0));
-      if (offset + bytes > size)
-        return createStringError(inconvertibleErrorCode(),
-                                 "tensor outside arena: " + name);
-      weight.data = base + offset;
-      weights[name] = std::move(weight);
-    }
-    return Error::success();
-  }
-
-  const Weight &get(StringRef name) const {
-    auto it = weights.find(name.str());
-    assert(it != weights.end() && "missing weight");
-    return it->second;
-  }
-};
-
 using Vec = std::vector<float>;
 using Matrix = std::vector<Vec>;
 
@@ -184,7 +113,7 @@ float readScalar(const Weight &weight, int64_t index) {
 Matrix matmul(const Weight &weight, const Matrix &x) {
   int64_t rows = static_cast<int64_t>(x.size());
   int64_t in = static_cast<int64_t>(x[0].size());
-  int64_t out = weight.shape.dims[0];
+  int64_t out = weight.shape[0];
   std::vector<float> flatX(static_cast<size_t>(rows * in));
   for (int64_t r = 0; r < rows; ++r)
     std::copy(x[r].begin(), x[r].end(), flatX.begin() + r * in);
@@ -254,18 +183,6 @@ Matrix mlp(const Matrix &x, const Arena &arena, StringRef prefix) {
       gate[r][c] =
           roundBf16((gate[r][c] / (1.0f + std::exp(-gate[r][c]))) * up[r][c]);
   return matmul(arena.get(base + ".mlp.down_proj.weight"), gate);
-}
-
-std::pair<Vec, Vec> makeCosSin(int64_t pos, int64_t rotaryDim, float theta) {
-  Vec cos(rotaryDim), sin(rotaryDim);
-  for (int64_t d = 0; d < rotaryDim / 2; ++d) {
-    float invFreq = 1.0f / std::pow(theta, static_cast<float>(2 * d) /
-                                               static_cast<float>(rotaryDim));
-    float angle = static_cast<float>(pos) * invFreq;
-    cos[d] = cos[d + rotaryDim / 2] = std::cos(angle);
-    sin[d] = sin[d + rotaryDim / 2] = std::sin(angle);
-  }
-  return {cos, sin};
 }
 
 void applyRope(Vec &values, const Vec &cos, const Vec &sin, int64_t rotary) {
@@ -672,99 +589,6 @@ int64_t argmax(const Vec &values) {
 }
 
 } // namespace
-
-template <typename T, int N> struct ManualRef {
-  T *base;
-  T *data;
-  int64_t offset;
-  int64_t sizes[N];
-  int64_t strides[N];
-};
-
-struct AotRuntime {
-  using Fn = void (*)(void *, void *, void *, void *, void *, void *, void *,
-                      void *, void *, void *);
-  void *handle = nullptr;
-  Fn fn = nullptr;
-  int64_t capacity = 0;
-  std::vector<uint16_t> kv;
-  std::vector<float> delta;
-  std::vector<uint16_t> conv;
-
-  ~AotRuntime() {
-    if (handle)
-      dlclose(handle);
-  }
-
-  bool init(const std::string &path, int64_t maxSequence) {
-    capacity = maxSequence;
-    kv.assign(static_cast<size_t>(8 * 2 * 4 * capacity * 256), 0);
-    delta.assign(static_cast<size_t>(24 * 32 * 128 * 128), 0.0f);
-    conv.assign(static_cast<size_t>(24 * 3 * 8192), 0);
-    handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-    if (!handle) {
-      errs() << "llmcp-run: dlopen: " << dlerror() << "\n";
-      return false;
-    }
-    fn = reinterpret_cast<Fn>(dlsym(handle, "_mlir_ciface_llmcp_model_aot"));
-    if (!fn) {
-      errs() << "llmcp-run: dlsym: " << dlerror() << "\n";
-      return false;
-    }
-    return true;
-  }
-
-  bool forward(const Arena &arena, const std::vector<int64_t> &tokens,
-               int64_t startPos, int64_t cacheLength,
-               std::vector<float> &logits) {
-    int64_t sequence = static_cast<int64_t>(tokens.size());
-    if (startPos + sequence > capacity)
-      return false;
-    std::vector<int64_t> tokenData = tokens;
-    std::vector<float> cos(static_cast<size_t>(sequence * 64));
-    std::vector<float> sin(static_cast<size_t>(sequence * 64));
-    for (int64_t t = 0; t < sequence; ++t) {
-      auto [c, s] = makeCosSin(startPos + t, 64, 10000000.0f);
-      std::copy(c.begin(), c.end(), cos.begin() + t * 64);
-      std::copy(s.begin(), s.end(), sin.begin() + t * 64);
-    }
-    logits.assign(static_cast<size_t>(sequence * 248320), 0.0f);
-
-    ManualRef<int64_t, 1> rt{tokenData.data(), tokenData.data(), 0, {0}, {1}};
-    rt.sizes[0] = sequence;
-    ManualRef<float, 2> rc{cos.data(), cos.data(), 0, {0, 64}, {64, 1}};
-    rc.sizes[0] = sequence;
-    ManualRef<float, 2> rs{sin.data(), sin.data(), 0, {0, 64}, {64, 1}};
-    rs.sizes[0] = sequence;
-    ManualRef<int8_t, 1> ra{
-        const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
-        const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
-        0,
-        {static_cast<int64_t>(arena.size)},
-        {1}};
-    ManualRef<uint16_t, 5> rk{
-        kv.data(),
-        kv.data(),
-        0,
-        {8, 2, 4, 0, 256},
-        {2 * 4 * capacity * 256, 4 * capacity * 256, capacity * 256, 256, 1}};
-    rk.sizes[3] = capacity;
-    ManualRef<float, 4> rd{delta.data(),
-                           delta.data(),
-                           0,
-                           {24, 32, 128, 128},
-                           {32 * 128 * 128, 128 * 128, 128, 1}};
-    ManualRef<uint16_t, 3> rv{
-        conv.data(), conv.data(), 0, {24, 3, 8192}, {3 * 8192, 8192, 1}};
-    ManualRef<float, 2> ro{
-        logits.data(), logits.data(), 0, {0, 248320}, {248320, 1}};
-    ro.sizes[0] = sequence;
-
-    fn(&rt, &rc, &rs, (void *)startPos, (void *)cacheLength, &ra, &rk, &rd, &rv,
-       &ro);
-    return true;
-  }
-};
 
 std::string makeChatPrompt(StringRef user, StringRef system, bool thinking) {
   std::string prompt;

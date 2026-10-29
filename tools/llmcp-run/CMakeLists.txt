@@ -50,6 +50,7 @@ endif()
 add_executable(llmcp-run llmcp-run.cpp)
 target_link_libraries(llmcp-run PRIVATE
   tokenizers_hf
+  MLIRLLMCPRuntime
   MLIRSupport
   LLVMSupport
 )

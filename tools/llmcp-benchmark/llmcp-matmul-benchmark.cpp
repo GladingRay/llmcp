@@ -12,6 +12,8 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "llmcp/Runtime/AotRuntime.h"
+
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -24,6 +26,7 @@
 #include <vector>
 
 using namespace llvm;
+using namespace mlir::llmcp::runtime;
 
 namespace {
 
@@ -49,13 +52,6 @@ cl::opt<std::string>
 cl::opt<std::string> clangPath("clang", cl::desc("Path to clang"),
                                cl::init("/opt/homebrew/opt/llvm@20/bin/clang"));
 
-template <typename T, int N> struct MemRef {
-  T *base;
-  T *data;
-  int64_t offset;
-  int64_t sizes[N];
-  int64_t strides[N];
-};
 
 int fail(StringRef message) {
   errs() << "llmcp-matmul-benchmark: " << message << "\n";
