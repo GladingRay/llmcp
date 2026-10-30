@@ -410,6 +410,7 @@ def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
          str(linalg)])
     run([
         args.mlir_opt, str(linalg),
+        "--linalg-fuse-elementwise-ops",
         "--one-shot-bufferize=bufferize-function-boundaries=1",
         "--convert-linalg-to-parallel-loops", "--convert-scf-to-openmp",
         "--convert-openmp-to-llvm", "--lower-affine", "--convert-scf-to-cf",

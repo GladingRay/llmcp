@@ -43,7 +43,7 @@ M0 基础设施已落地：
 - `llmcp-dump`：把完整计算图 dump 成 `.mlir`，支持 `--verify-module` 和 `--print-stats`
 - `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；`LinearOp` / `LmHeadOp` 使用 32-lane tile + vector dot 路径（arm64 上直接生成 `bfdot`），attention 支持 `position` / `cache_length`
 - `llmcp-pack`：真实权重打包为 8.41GB arena + JSON manifest
-- `llmcp-compile`：完整 llmcp 图经过 linalg、OpenMP 算子并行化、bfdot，再 AOT 降级到 LLVM IR / object / shared library，导出 4 个 `llmcp_*` 入口
+- `llmcp-compile`：完整 llmcp 图经过 linalg、elementwise 融合、OpenMP 算子并行化、bfdot，再 AOT 降级到 LLVM IR / object / shared library，导出 4 个 `llmcp_*` 入口
 - `llmcp-benchmark`：加载 AOT dylib，统计 prefill/decode 耗时与 token/s
 - `llmcp-matmul-benchmark`：生成单个 `llmcp.linear`，并行 AOT 到 dylib，输出 GFLOPS
 - `CacheLineAlignedVector`：128 字节对齐的 tensor 存储，供 runner/benchmark/runtime 共用

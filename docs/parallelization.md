@@ -70,6 +70,7 @@ OMP_NUM_THREADS=8 ./build/bin/llmcp-run ...
 ```text
 --llmcp-lower-to-linalg
 --llmcp-parallelize
+--linalg-fuse-elementwise-ops
 --convert-linalg-to-parallel-loops
 --convert-scf-to-openmp
 --convert-openmp-to-llvm
@@ -101,7 +102,32 @@ decode:  M=1、N 仍然很大
 - numeric：全部通过
 - AOT：单 token `next 11`，greedy `0 271 760 2614`
 
-## 8. matmul microbenchmark
+## 8. elementwise 融合
+
+在 bufferization 之前加入：
+
+```text
+--linalg-fuse-elementwise-ops
+```
+
+融合范围：
+
+- add；
+- silu_mul；
+- bf16/f32 cast；
+- gated RMSNorm 内部的 elementwise 链；
+- 其他 linalg elementwise producer-consumer。
+
+当前完整图中 `linalg.generic` 数量：
+
+```text
+融合前: 217
+融合后: 169
+```
+
+减少的是可以安全融合的 elementwise 链，reduction/matmul/自定义 scf 循环不受影响。
+
+## 9. matmul microbenchmark
 
 `llmcp-matmul-benchmark` 已接入同一套并行化 pipeline：
 
@@ -123,7 +149,7 @@ M=16, N=8192, K=2560:
   --no-parallel: 20.8 GFLOPS
 ```
 
-## 9. 性能
+## 10. 性能
 
 AOT dylib，`4 prefill / 2 decode`：
 
@@ -142,3 +168,15 @@ OMP_NUM_THREADS=8:
 ```
 
 按 N 维并行后，decode 也有明显收益，不再出现按 M 行并行时 M=1 无并行度的问题。
+
+
+### elementwise 融合后
+
+8 线程，32-token decode：
+
+```text
+prefill: 约 0.37 s
+decode:  约 6.4-6.6 s
+```
+
+融合前同条件约 7.0-7.3 s，约有 5-10% 改善。

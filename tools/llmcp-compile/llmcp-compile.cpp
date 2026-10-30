@@ -159,6 +159,7 @@ int main(int argc, char **argv) {
   if (llvm::Error error =
           runTool(*mlirOptOrErr,
                   {linalg,
+                   "--linalg-fuse-elementwise-ops",
                    "--one-shot-bufferize=bufferize-function-boundaries=1",
                    "--convert-linalg-to-parallel-loops",
                    "--convert-scf-to-openmp",
