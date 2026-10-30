@@ -29,6 +29,7 @@
 #include <vector>
 
 using namespace llvm;
+using llmcp::CacheLineAlignedVector;
 using namespace mlir::llmcp::runtime;
 
 namespace {
@@ -49,7 +50,7 @@ cl::opt<int64_t> tokenId("token", cl::desc("Synthetic token id"),
 cl::opt<bool> verbose("verbose", cl::desc("Print per-phase detail"),
                       cl::init(false));
 
-int64_t argmax(const std::vector<float> &values) {
+int64_t argmax(const CacheLineAlignedVector<float> &values) {
   return static_cast<int64_t>(std::max_element(values.begin(), values.end()) -
                               values.begin());
 }
@@ -81,7 +82,7 @@ int main(int argc, char **argv) {
     return 1;
 
   std::vector<int64_t> prompt(static_cast<size_t>(prefillTokens), tokenId);
-  std::vector<float> logits;
+  CacheLineAlignedVector<float> logits;
 
   auto prefillBegin = std::chrono::steady_clock::now();
   if (!runtime.forward(arena, prompt, 0, prefillTokens, logits))
@@ -91,7 +92,7 @@ int main(int argc, char **argv) {
 
   std::vector<int64_t> generated;
   generated.reserve(static_cast<size_t>(decodeTokens));
-  std::vector<float> lastLogits(logits.end() - 248320, logits.end());
+  CacheLineAlignedVector<float> lastLogits(logits.end() - 248320, logits.end());
   auto decodeBegin = std::chrono::steady_clock::now();
   for (int64_t i = 0; i < decodeTokens; ++i) {
     int64_t next = argmax(lastLogits);

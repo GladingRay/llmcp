@@ -10,6 +10,8 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
+#include "llmcp/Support/CacheLineAlignedVector.h"
+
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -51,7 +53,8 @@ template <typename T, int N> struct MemRef {
   int64_t strides[N];
 };
 
-std::pair<std::vector<float>, std::vector<float>>
+std::pair<::llmcp::CacheLineAlignedVector<float>,
+          ::llmcp::CacheLineAlignedVector<float>>
 makeCosSin(int64_t pos, int64_t rotaryDim, float theta);
 
 /// Runtime state for the AOT `llmcp_model_aot` entry point.
@@ -68,15 +71,15 @@ public:
   bool init(const std::string &path, int64_t maxSequence);
   bool forward(const Arena &arena, const std::vector<int64_t> &tokens,
                int64_t startPos, int64_t cacheLength,
-               std::vector<float> &logits);
+               ::llmcp::CacheLineAlignedVector<float> &logits);
 
 private:
   void *handle = nullptr;
   Fn fn = nullptr;
   int64_t capacity = 0;
-  std::vector<uint16_t> kv;
-  std::vector<float> delta;
-  std::vector<uint16_t> conv;
+  ::llmcp::CacheLineAlignedVector<uint16_t> kv;
+  ::llmcp::CacheLineAlignedVector<float> delta;
+  ::llmcp::CacheLineAlignedVector<uint16_t> conv;
 };
 
 } // namespace runtime

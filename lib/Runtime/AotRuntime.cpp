@@ -77,9 +77,10 @@ const Weight &Arena::get(StringRef name) const {
   return it->second;
 }
 
-std::pair<std::vector<float>, std::vector<float>>
+std::pair<::llmcp::CacheLineAlignedVector<float>,
+          ::llmcp::CacheLineAlignedVector<float>>
 mlir::llmcp::runtime::makeCosSin(int64_t pos, int64_t rotaryDim, float theta) {
-  std::vector<float> cos(rotaryDim), sin(rotaryDim);
+  ::llmcp::CacheLineAlignedVector<float> cos(rotaryDim), sin(rotaryDim);
   for (int64_t d = 0; d < rotaryDim / 2; ++d) {
     float invFreq = 1.0f / std::pow(theta, static_cast<float>(2 * d) /
                                                static_cast<float>(rotaryDim));
@@ -113,15 +114,17 @@ bool AotRuntime::init(const std::string &path, int64_t maxSequence) {
   return true;
 }
 
-bool AotRuntime::forward(const Arena &arena,
-                         const std::vector<int64_t> &tokens, int64_t startPos,
-                         int64_t cacheLength, std::vector<float> &logits) {
+bool AotRuntime::forward(const Arena &arena, const std::vector<int64_t> &tokens,
+                         int64_t startPos, int64_t cacheLength,
+                         ::llmcp::CacheLineAlignedVector<float> &logits) {
   int64_t sequence = static_cast<int64_t>(tokens.size());
   if (startPos + sequence > capacity)
     return false;
   std::vector<int64_t> tokenData = tokens;
-  std::vector<float> cos(static_cast<size_t>(sequence * 64));
-  std::vector<float> sin(static_cast<size_t>(sequence * 64));
+  ::llmcp::CacheLineAlignedVector<float> cos(
+      static_cast<size_t>(sequence * 64));
+  ::llmcp::CacheLineAlignedVector<float> sin(
+      static_cast<size_t>(sequence * 64));
   for (int64_t t = 0; t < sequence; ++t) {
     auto [c, s] = makeCosSin(startPos + t, 64, 10000000.0f);
     std::copy(c.begin(), c.end(), cos.begin() + t * 64);
@@ -137,14 +140,16 @@ bool AotRuntime::forward(const Arena &arena,
   rs.sizes[0] = sequence;
   MemRef<int8_t, 1> ra{
       const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
-      const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)), 0,
-      {static_cast<int64_t>(arena.size)}, {1}};
-  MemRef<uint16_t, 5> rk{kv.data(),
-                         kv.data(),
-                         0,
-                         {8, 2, 4, 0, 256},
-                         {2 * 4 * capacity * 256, 4 * capacity * 256,
-                          capacity * 256, 256, 1}};
+      const_cast<int8_t *>(reinterpret_cast<const int8_t *>(arena.base)),
+      0,
+      {static_cast<int64_t>(arena.size)},
+      {1}};
+  MemRef<uint16_t, 5> rk{
+      kv.data(),
+      kv.data(),
+      0,
+      {8, 2, 4, 0, 256},
+      {2 * 4 * capacity * 256, 4 * capacity * 256, capacity * 256, 256, 1}};
   rk.sizes[3] = capacity;
   MemRef<float, 4> rd{delta.data(),
                       delta.data(),

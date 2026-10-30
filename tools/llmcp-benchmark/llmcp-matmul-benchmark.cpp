@@ -13,6 +13,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "llmcp/Runtime/AotRuntime.h"
+#include "llmcp/Support/CacheLineAlignedVector.h"
 
 #include <chrono>
 #include <cmath>
@@ -27,6 +28,7 @@
 #include <vector>
 
 using namespace llvm;
+using llmcp::CacheLineAlignedVector;
 using namespace mlir::llmcp::runtime;
 
 namespace {
@@ -42,9 +44,11 @@ cl::opt<bool> keepTemps("keep-temps", cl::desc("Keep intermediate files"),
                         cl::init(false));
 cl::opt<bool> verbose("verbose", cl::desc("Print each lowering stage"),
                       cl::init(false));
-cl::opt<int> threads("threads", cl::desc("OpenMP threads (0 = runtime default)"),
+cl::opt<int> threads("threads",
+                     cl::desc("OpenMP threads (0 = runtime default)"),
                      cl::init(0));
-cl::opt<bool> noParallel("no-parallel", cl::desc("Disable OpenMP parallelization"),
+cl::opt<bool> noParallel("no-parallel",
+                         cl::desc("Disable OpenMP parallelization"),
                          cl::init(false));
 cl::opt<std::string> llmcpOptPath("llmcp-opt", cl::desc("Path to llmcp-opt"),
                                   cl::init(""));
@@ -56,7 +60,6 @@ cl::opt<std::string>
                       cl::init("/opt/homebrew/opt/llvm@20/bin/mlir-translate"));
 cl::opt<std::string> clangPath("clang", cl::desc("Path to clang"),
                                cl::init("/opt/homebrew/opt/llvm@20/bin/clang"));
-
 
 int fail(StringRef message) {
   errs() << "llmcp-matmul-benchmark: " << message << "\n";
@@ -173,9 +176,8 @@ int main(int argc, char **argv) {
     std::cout << "stage 2: linalg -> parallel scf\n";
   std::string inputForLowering = linalg;
   if (!noParallel) {
-    if (Error error = runTool(
-            *llmcpOptOrErr,
-            {linalg, "--llmcp-parallelize", "-o", parallel}))
+    if (Error error = runTool(*llmcpOptOrErr,
+                              {linalg, "--llmcp-parallelize", "-o", parallel}))
       return fail(toString(std::move(error)));
     inputForLowering = parallel;
   }
@@ -211,8 +213,12 @@ int main(int argc, char **argv) {
   if (verbose)
     std::cout << "stage 4: LLVM IR -> shared library\n";
   std::vector<std::string> clangArgs = {
-      "-shared", llvmIr, "-O2", "-L/opt/homebrew/opt/llvm@20/lib",
-      "-lmlir_runner_utils", "-lmlir_c_runner_utils",
+      "-shared",
+      llvmIr,
+      "-O2",
+      "-L/opt/homebrew/opt/llvm@20/lib",
+      "-lmlir_runner_utils",
+      "-lmlir_c_runner_utils",
       "-Wl,-rpath,/opt/homebrew/opt/llvm@20/lib"};
   if (!noParallel) {
     clangArgs.push_back("-L/opt/homebrew/opt/libomp/lib");
@@ -237,9 +243,9 @@ int main(int argc, char **argv) {
   if (!fn)
     return fail(dlerror());
 
-  std::vector<uint16_t> a(static_cast<size_t>(mDim * kDim), 0x3f80);
-  std::vector<uint16_t> b(static_cast<size_t>(nDim * kDim), 0x3f80);
-  std::vector<uint16_t> c(static_cast<size_t>(mDim * nDim), 0);
+  CacheLineAlignedVector<uint16_t> a(static_cast<size_t>(mDim * kDim), 0x3f80);
+  CacheLineAlignedVector<uint16_t> b(static_cast<size_t>(nDim * kDim), 0x3f80);
+  CacheLineAlignedVector<uint16_t> c(static_cast<size_t>(mDim * nDim), 0);
   MemRef<uint16_t, 2> ra{a.data(), a.data(), 0, {mDim, kDim}, {kDim, 1}};
   MemRef<uint16_t, 2> rb{b.data(), b.data(), 0, {nDim, kDim}, {kDim, 1}};
   MemRef<uint16_t, 2> rc{c.data(), c.data(), 0, {mDim, nDim}, {nDim, 1}};

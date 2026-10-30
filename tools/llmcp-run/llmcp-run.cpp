@@ -12,6 +12,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "llmcp/Runtime/AotRuntime.h"
+#include "llmcp/Support/CacheLineAlignedVector.h"
 
 #include "tokenizers_cpp.h"
 
@@ -33,6 +34,7 @@
 #endif
 
 using namespace llvm;
+using llmcp::CacheLineAlignedVector;
 using namespace mlir::llmcp::runtime;
 
 namespace {
@@ -76,7 +78,7 @@ cl::opt<bool> dumpCosSin("dump-cos-sin",
                          cl::desc("Print generated cos/sin values"),
                          cl::init(false));
 
-using Vec = std::vector<float>;
+using Vec = CacheLineAlignedVector<float>;
 using Matrix = std::vector<Vec>;
 
 float bf16ToFloat(uint16_t value) {
@@ -114,16 +116,16 @@ Matrix matmul(const Weight &weight, const Matrix &x) {
   int64_t rows = static_cast<int64_t>(x.size());
   int64_t in = static_cast<int64_t>(x[0].size());
   int64_t out = weight.shape[0];
-  std::vector<float> flatX(static_cast<size_t>(rows * in));
+  Vec flatX(static_cast<size_t>(rows * in));
   for (int64_t r = 0; r < rows; ++r)
     std::copy(x[r].begin(), x[r].end(), flatX.begin() + r * in);
-  std::vector<float> flatY(static_cast<size_t>(rows * out), 0.0f);
+  Vec flatY(static_cast<size_t>(rows * out), 0.0f);
 
   constexpr int64_t kBlock = 256;
 #ifdef __APPLE__
   for (int64_t start = 0; start < out; start += kBlock) {
     int64_t count = std::min(kBlock, out - start);
-    std::vector<float> block(static_cast<size_t>(count * in));
+    Vec block(static_cast<size_t>(count * in));
     for (int64_t r = 0; r < count; ++r)
       for (int64_t c = 0; c < in; ++c)
         block[r * in + c] = readScalar(weight, (start + r) * in + c);
@@ -649,10 +651,10 @@ int main(int argc, char **argv) {
     if (!aot.init(aotPath,
                   static_cast<int64_t>(tokens.size()) + maxNewTokens + 16))
       return 1;
-    std::vector<float> allLogits;
+    Vec allLogits;
     if (!aot.forward(aotArena, tokens, 0, tokens.size(), allLogits))
       return 1;
-    std::vector<float> logits(allLogits.end() - 248320, allLogits.end());
+    Vec logits(allLogits.end() - 248320, allLogits.end());
     std::vector<int64_t> generated;
     if (maxNewTokens > 0) {
       outs() << "output: ";
@@ -725,7 +727,7 @@ int main(int argc, char **argv) {
     outs() << "\n";
   }
 
-  std::vector<float> golden;
+  Vec golden;
   if (!goldenPath.empty()) {
     auto buffer = MemoryBuffer::getFile(goldenPath);
     if (!buffer) {

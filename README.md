@@ -46,6 +46,7 @@ M0 基础设施已落地：
 - `llmcp-compile`：完整 llmcp 图经过 linalg、OpenMP 算子并行化、bfdot，再 AOT 降级到 LLVM IR / object / shared library，导出 4 个 `llmcp_*` 入口
 - `llmcp-benchmark`：加载 AOT dylib，统计 prefill/decode 耗时与 token/s
 - `llmcp-matmul-benchmark`：生成单个 `llmcp.linear`，并行 AOT 到 dylib，输出 GFLOPS
+- `CacheLineAlignedVector`：128 字节对齐的 tensor 存储，供 runner/benchmark/runtime 共用
 - `llmcp-microbench`：本机 CPU 标量/NEON/FP16/BF16/I8 峰值 FLOPS 与内存带宽
 - `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode、Qwen chat template、逐 token 流式输出；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
 - 测试：9 个 CTest 目标（lit、dump、lower、pack、tokenizer、chat-template、compile、numeric、gtest）全部通过
