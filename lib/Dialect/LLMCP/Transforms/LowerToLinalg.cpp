@@ -379,8 +379,7 @@ public:
   LogicalResult matchAndRewrite(RmsNormOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
-    auto input = op.getInput();
-    auto inputType = dyn_cast<RankedTensorType>(input.getType());
+    auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
     auto resultType = dyn_cast<RankedTensorType>(op.getOutput().getType());
     if (!inputType || !resultType || inputType.getRank() != 2)
       return failure();
@@ -389,84 +388,79 @@ public:
     if (ShapedType::isDynamic(hidden))
       return failure();
 
-    auto f32Type = rewriter.getF32Type();
-    Value xf = castToF32(rewriter, loc, input);
-    Value weight = toTensor(rewriter, loc, op.getWeight());
+    auto f32 = rewriter.getF32Type();
+    auto bf16 = rewriter.getBF16Type();
+    Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value hiddenValue = rewriter.create<arith::ConstantIndexOp>(loc, hidden);
+    Value rows = rewriter.create<tensor::DimOp>(loc, op.getInput(), 0);
 
-    // sum(x^2) over the last dimension.
-    auto rowType = RankedTensorType::get({inputType.getDimSize(0)}, f32Type);
-    Value rowEmpty = createEmpty(rewriter, loc, rowType, input);
-    Value zero =
-        rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+    auto outputType = MemRefType::get({ShapedType::kDynamic, hidden},
+                                      resultType.getElementType());
+    Value output =
+        rewriter.create<memref::AllocOp>(loc, outputType, ValueRange{rows});
+
+    // One parallel region per RMSNorm: each row performs the reduction,
+    // rstd computation, and scaling without leaving the region.
+    auto parallel = rewriter.create<scf::ParallelOp>(
+        loc, ValueRange{zero}, ValueRange{rows}, ValueRange{one});
+    rewriter.setInsertionPointToStart(parallel.getBody());
+    Value row = parallel.getInductionVars().front();
     Value sumInit =
-        rewriter
-            .create<linalg::FillOp>(loc, ValueRange{zero}, ValueRange{rowEmpty})
-            .getResult(0);
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+    auto sumLoop = rewriter.create<scf::ForOp>(loc, zero, hiddenValue, one,
+                                               ValueRange{sumInit});
+    rewriter.setInsertionPointToStart(sumLoop.getBody());
+    Value d = sumLoop.getInductionVar();
+    Value x = rewriter.create<tensor::ExtractOp>(loc, op.getInput(),
+                                                 ValueRange{row, d});
+    if (x.getType().isBF16())
+      x = rewriter.create<arith::ExtFOp>(loc, f32, x);
+    Value square = rewriter.create<arith::MulFOp>(loc, x, x);
+    Value sum = rewriter.create<arith::AddFOp>(loc, sumLoop.getRegionIterArg(0),
+                                               square);
+    rewriter.create<scf::YieldOp>(loc, sum);
+    rewriter.setInsertionPointAfter(sumLoop);
 
-    SmallVector<AffineMap> sumMaps = {
-        rewriter.getMultiDimIdentityMap(2),
-        AffineMap::get(2, 0, {rewriter.getAffineDimExpr(0)},
-                       rewriter.getContext())};
-    SmallVector<utils::IteratorType> sumIters = {
-        utils::IteratorType::parallel, utils::IteratorType::reduction};
-    auto sum = rewriter.create<linalg::GenericOp>(
-        loc, rowType, ValueRange{xf}, ValueRange{sumInit}, sumMaps, sumIters,
-        [&](OpBuilder &builder, Location loc, ValueRange args) {
-          Value square = builder.create<arith::MulFOp>(loc, args[0], args[0]);
-          Value sum = builder.create<arith::AddFOp>(loc, args[1], square);
-          builder.create<linalg::YieldOp>(loc, sum);
-        });
+    Value dimValue = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32FloatAttr(static_cast<float>(hidden)));
+    Value mean =
+        rewriter.create<arith::DivFOp>(loc, sumLoop.getResult(0), dimValue);
+    Value eps = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32FloatAttr(op.getEpsAttr().getValueAsDouble()));
+    Value variance = rewriter.create<arith::AddFOp>(loc, mean, eps);
+    Value rstd = rewriter.create<math::RsqrtOp>(loc, variance);
 
-    // rstd = rsqrt(mean(x^2) + eps).
-    Value rstdEmpty = createEmpty(rewriter, loc, rowType, input);
-    SmallVector<AffineMap> statMaps = {rewriter.getMultiDimIdentityMap(1),
-                                       rewriter.getMultiDimIdentityMap(1)};
-    SmallVector<utils::IteratorType> statIters(1,
-                                               utils::IteratorType::parallel);
-    auto rstd = rewriter.create<linalg::GenericOp>(
-        loc, rowType, ValueRange{sum.getResult(0)}, ValueRange{rstdEmpty},
-        statMaps, statIters,
-        [&](OpBuilder &builder, Location loc, ValueRange args) {
-          Value dim = builder.create<arith::ConstantOp>(
-              loc, builder.getF32FloatAttr(static_cast<float>(hidden)));
-          Value mean = builder.create<arith::DivFOp>(loc, args[0], dim);
-          Value eps = builder.create<arith::ConstantOp>(
-              loc, builder.getF32FloatAttr(op.getEpsAttr().getValueAsDouble()));
-          Value variance = builder.create<arith::AddFOp>(loc, mean, eps);
-          Value value = builder.create<math::RsqrtOp>(loc, variance);
-          builder.create<linalg::YieldOp>(loc, value);
-        });
+    auto scaleLoop =
+        rewriter.create<scf::ForOp>(loc, zero, hiddenValue, one, ValueRange{});
+    rewriter.setInsertionPointToStart(scaleLoop.getBody());
+    Value scaleD = scaleLoop.getInductionVar();
+    Value value = rewriter.create<tensor::ExtractOp>(loc, op.getInput(),
+                                                     ValueRange{row, scaleD});
+    if (value.getType().isBF16())
+      value = rewriter.create<arith::ExtFOp>(loc, f32, value);
+    Value weight = rewriter.create<memref::LoadOp>(loc, op.getWeight(),
+                                                   ValueRange{scaleD});
+    if (weight.getType().isBF16())
+      weight = rewriter.create<arith::ExtFOp>(loc, f32, weight);
+    if (op.getZeroCentered()) {
+      Value oneF = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getF32FloatAttr(1.0f));
+      weight = rewriter.create<arith::AddFOp>(loc, weight, oneF);
+    }
+    Value normalized = rewriter.create<arith::MulFOp>(
+        loc, rewriter.create<arith::MulFOp>(loc, value, rstd), weight);
+    Value result = normalized;
+    if (resultType.getElementType().isBF16())
+      result = rewriter.create<arith::TruncFOp>(loc, bf16, result);
+    rewriter.create<memref::StoreOp>(loc, result, output,
+                                     ValueRange{row, scaleD});
+    rewriter.setInsertionPointAfter(scaleLoop);
+    rewriter.setInsertionPointAfter(parallel);
 
-    Value output = createEmpty(rewriter, loc, resultType, input);
-    SmallVector<AffineMap> maps = {
-        rewriter.getMultiDimIdentityMap(2),
-        AffineMap::get(2, 0, {rewriter.getAffineDimExpr(1)},
-                       rewriter.getContext()),
-        AffineMap::get(2, 0, {rewriter.getAffineDimExpr(0)},
-                       rewriter.getContext()),
-        rewriter.getMultiDimIdentityMap(2)};
-    SmallVector<utils::IteratorType> iterators(2,
-                                               utils::IteratorType::parallel);
-    auto scaled = rewriter.create<linalg::GenericOp>(
-        loc, resultType, ValueRange{xf, weight, rstd.getResult(0)},
-        ValueRange{output}, maps, iterators,
-        [&](OpBuilder &builder, Location loc, ValueRange args) {
-          Value w = args[1];
-          if (w.getType().isBF16())
-            w = builder.create<arith::ExtFOp>(loc, f32Type, w);
-          if (op.getZeroCentered()) {
-            Value one = builder.create<arith::ConstantOp>(
-                loc, builder.getF32FloatAttr(1.0f));
-            w = builder.create<arith::AddFOp>(loc, w, one);
-          }
-          Value normalized = builder.create<arith::MulFOp>(loc, args[0], w);
-          Value value = builder.create<arith::MulFOp>(loc, normalized, args[2]);
-          Value truncated = builder.create<arith::TruncFOp>(
-              loc, resultType.getElementType(), value);
-          builder.create<linalg::YieldOp>(loc, truncated);
-        });
-
-    rewriter.replaceOp(op, scaled.getResult(0));
+    Value tensor = rewriter.create<bufferization::ToTensorOp>(
+        loc, resultType, output, /*restrict=*/true);
+    rewriter.replaceOp(op, tensor);
     return success();
   }
 };
