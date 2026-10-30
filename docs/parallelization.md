@@ -30,7 +30,7 @@ llmcp-parallelize
 | `add` | linalg 的 parallel 维度 |
 | `silu_mul` | linalg 的 parallel 维度 |
 | `embedding` | linalg 的 parallel 维度 |
-| `rms_norm` | linalg 的 parallel 维度 |
+| `rms_norm` | 每个 row 一个 parallel region，内部完成 reduction/rstd/scale |
 | `gated_rms_norm` | linalg 的 parallel 维度 |
 | `causal_conv1d` | time 维循环 |
 | `gated_delta_net` | 每个 value head 并行 |
