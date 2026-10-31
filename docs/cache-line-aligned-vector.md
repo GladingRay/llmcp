@@ -1,8 +1,5 @@
 # CacheLineAlignedVector
 
-> 当前实现切换为普通 `std::vector<T>`，用于对比/排查性能；
-> `CacheLineAlignedAllocator` 仍保留在头文件中。
-
 ## 1. 目的
 
 本机 `hw.cachelinesize = 128`，因此 tensor 的堆分配按 128 字节对齐：
