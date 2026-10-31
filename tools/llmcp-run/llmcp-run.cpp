@@ -311,28 +311,43 @@ Matrix fullAttention(const Matrix &x, const Arena &arena, StringRef prefix,
       }
 
       int64_t kvHead = h / (config.heads / config.kvHeads);
-      Vec scores(static_cast<size_t>(global + 1));
-      float maxScore = -1.0e30f;
-      for (int64_t p = 0; p <= global; ++p) {
-        float sum = 0.0f;
-        for (int64_t d = 0; d < config.headDim; ++d)
-          sum += query[d] * cache.keys[p][kvHead * config.headDim + d];
-        scores[p] = sum / std::sqrt(static_cast<float>(config.headDim));
-        maxScore = std::max(maxScore, scores[p]);
-      }
-      float denominator = 0.0f;
-      for (int64_t p = 0; p <= global; ++p) {
-        scores[p] = std::exp(scores[p] - maxScore);
-        denominator += scores[p];
-      }
+      constexpr int64_t kBlock = 64;
       Vec context(config.headDim, 0.0f);
-      for (int64_t p = 0; p <= global; ++p)
+      Vec scores(kBlock, 0.0f);
+      float runningMax = -1.0e30f;
+      float runningSum = 0.0f;
+      for (int64_t blockStart = 0; blockStart <= global;
+           blockStart += kBlock) {
+        int64_t blockEnd = std::min(blockStart + kBlock, global + 1);
+        float tileMax = -1.0e30f;
+        for (int64_t p = blockStart; p < blockEnd; ++p) {
+          float sum = 0.0f;
+          for (int64_t d = 0; d < config.headDim; ++d)
+            sum += query[d] * cache.keys[p][kvHead * config.headDim + d];
+          scores[p - blockStart] =
+              sum / std::sqrt(static_cast<float>(config.headDim));
+          tileMax = std::max(tileMax, scores[p - blockStart]);
+        }
+
+        float newMax = std::max(runningMax, tileMax);
+        float correction = std::exp(runningMax - newMax);
+        runningSum *= correction;
         for (int64_t d = 0; d < config.headDim; ++d)
-          context[d] += scores[p] / denominator *
-                        cache.values[p][kvHead * config.headDim + d];
+          context[d] *= correction;
+
+        for (int64_t p = blockStart; p < blockEnd; ++p) {
+          float probability = std::exp(scores[p - blockStart] - newMax);
+          runningSum += probability;
+          for (int64_t d = 0; d < config.headDim; ++d)
+            context[d] += probability *
+                          cache.values[p][kvHead * config.headDim + d];
+        }
+        runningMax = newMax;
+      }
       for (int64_t d = 0; d < config.headDim; ++d) {
         float gateValue = 1.0f / (1.0f + std::exp(-gate[d]));
-        output[t][h * config.headDim + d] = roundBf16(context[d] * gateValue);
+        output[t][h * config.headDim + d] =
+            roundBf16(context[d] / runningSum * gateValue);
       }
     }
   }

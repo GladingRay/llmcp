@@ -112,9 +112,12 @@ public:
     Value qNormalized = rewriter.create<memref::AllocOp>(
         loc, MemRefType::get({qgType.getDimSize(0), numHeads, headDim}, bf16),
         sequenceSizes);
-    Value scores = rewriter.create<memref::AllocOp>(
-        loc, MemRefType::get({numHeads, ShapedType::kDynamic}, f32),
-        ValueRange{cacheLength});
+    constexpr int64_t kBlock = 64;
+    Value blockValue = rewriter.create<arith::ConstantIndexOp>(loc, kBlock);
+    Value acc = rewriter.create<memref::AllocOp>(
+        loc, MemRefType::get({numHeads, headDim}, f32));
+    Value scoreTile = rewriter.create<memref::AllocOp>(
+        loc, MemRefType::get({numHeads, kBlock}, f32));
     Value normTemp = rewriter.create<memref::AllocOp>(
         loc, MemRefType::get({numHeads, headDim}, f32));
     SmallVector<Value> outputSizes;
@@ -388,93 +391,151 @@ public:
                                                    queryPos),
                     one);
 
-                auto scoreLoop = createLoop(
-                    rewriter, loc, zero, queryEnd, one, ValueRange{},
-                    [&](OpBuilder &builder, Location loc, Value keyPos,
-                        ValueRange) {
-                      auto dotLoop = createLoop(
-                          rewriter, loc, zero, headDimValue, one,
-                          ValueRange{zeroF},
-                          [&](OpBuilder &builder, Location loc, Value d,
+                // Initialize the output accumulator for this head.
+                auto initAcc = createLoop(
+                    rewriter, loc, zero, headDimValue, one, ValueRange{},
+                    [&](OpBuilder &builder, Location loc, Value d, ValueRange) {
+                      rewriter.create<memref::StoreOp>(loc, zeroF, acc,
+                                                       ValueRange{head, d});
+                    });
+                rewriter.setInsertionPointAfter(initAcc);
+
+                // FlashAttention-2 style online softmax over key blocks.
+                auto keyBlockLoop = createLoop(
+                    rewriter, loc, zero, queryEnd, blockValue,
+                    ValueRange{negInf, zeroF},
+                    [&](OpBuilder &builder, Location loc, Value blockStart,
+                        ValueRange blockArgs) {
+                      Value runningMax = blockArgs[0];
+                      Value runningSum = blockArgs[1];
+                      Value blockEnd = rewriter.create<arith::MinUIOp>(
+                          loc,
+                          rewriter.create<arith::AddIOp>(loc, blockStart,
+                                                         blockValue),
+                          queryEnd);
+
+                      auto tileMaxLoop = createLoop(
+                          rewriter, loc, blockStart, blockEnd, one,
+                          ValueRange{negInf},
+                          [&](OpBuilder &builder, Location loc, Value keyPos,
                               ValueRange args) {
-                            Value qValue = rewriter.create<memref::LoadOp>(
-                                loc, qNormalized,
-                                ValueRange{queryPos, head, d});
-                            Value kValue = rewriter.create<memref::LoadOp>(
-                                loc, op.getKvCache(),
-                                ValueRange{layerValue, zero, kvHead, keyPos,
-                                           d});
-                            Value qF32 = rewriter.create<arith::ExtFOp>(
-                                loc, f32, qValue);
-                            Value kF32 = rewriter.create<arith::ExtFOp>(
-                                loc, f32, kValue);
-                            Value product =
-                                rewriter.create<arith::MulFOp>(loc, qF32, kF32);
-                            Value sum = rewriter.create<arith::AddFOp>(
-                                loc, args[0], product);
-                            rewriter.create<scf::YieldOp>(loc, sum);
+                            auto dotLoop = createLoop(
+                                rewriter, loc, zero, headDimValue, one,
+                                ValueRange{zeroF},
+                                [&](OpBuilder &builder, Location loc, Value d,
+                                    ValueRange dotArgs) {
+                                  Value qValue =
+                                      rewriter.create<memref::LoadOp>(
+                                          loc, qNormalized,
+                                          ValueRange{queryPos, head, d});
+                                  Value kValue =
+                                      rewriter.create<memref::LoadOp>(
+                                          loc, op.getKvCache(),
+                                          ValueRange{layerValue, zero, kvHead,
+                                                     keyPos, d});
+                                  Value qF32 = rewriter.create<arith::ExtFOp>(
+                                      loc, f32, qValue);
+                                  Value kF32 = rewriter.create<arith::ExtFOp>(
+                                      loc, f32, kValue);
+                                  Value product =
+                                      rewriter.create<arith::MulFOp>(
+                                          loc, qF32, kF32);
+                                  Value sum =
+                                      rewriter.create<arith::AddFOp>(
+                                          loc, dotArgs[0], product);
+                                  rewriter.create<scf::YieldOp>(loc, sum);
+                                });
+                            rewriter.setInsertionPointAfter(dotLoop);
+                            Value score = rewriter.create<arith::MulFOp>(
+                                loc, dotLoop.getResult(0), scaleValue);
+                            rewriter.create<memref::StoreOp>(
+                                loc, score, scoreTile,
+                                ValueRange{head, rewriter.create<arith::SubIOp>(
+                                                     loc, keyPos, blockStart)});
+                            Value max = rewriter.create<arith::MaxNumFOp>(
+                                loc, args[0], score);
+                            rewriter.create<scf::YieldOp>(loc, max);
                           });
-                      rewriter.setInsertionPointAfter(dotLoop);
-                      Value score = rewriter.create<arith::MulFOp>(
-                          loc, dotLoop.getResult(0), scaleValue);
-                      rewriter.create<memref::StoreOp>(
-                          loc, score, scores, ValueRange{head, keyPos});
-                    });
-                rewriter.setInsertionPointAfter(scoreLoop);
+                      rewriter.setInsertionPointAfter(tileMaxLoop);
 
-                auto maxLoop = createLoop(
-                    rewriter, loc, zero, queryEnd, one, ValueRange{negInf},
-                    [&](OpBuilder &builder, Location loc, Value keyPos,
-                        ValueRange args) {
-                      Value score = rewriter.create<memref::LoadOp>(
-                          loc, scores, ValueRange{head, keyPos});
-                      Value max = rewriter.create<arith::MaxNumFOp>(
-                          loc, args[0], score);
-                      rewriter.create<scf::YieldOp>(loc, max);
-                    });
-                rewriter.setInsertionPointAfter(maxLoop);
+                      Value newMax = rewriter.create<arith::MaxNumFOp>(
+                          loc, runningMax, tileMaxLoop.getResult(0));
+                      Value correction = rewriter.create<math::ExpOp>(
+                          loc,
+                          rewriter.create<arith::SubFOp>(loc, runningMax,
+                                                         newMax));
 
-                auto sumLoop = createLoop(
-                    rewriter, loc, zero, queryEnd, one, ValueRange{zeroF},
-                    [&](OpBuilder &builder, Location loc, Value keyPos,
-                        ValueRange args) {
-                      Value score = rewriter.create<memref::LoadOp>(
-                          loc, scores, ValueRange{head, keyPos});
-                      Value shifted = rewriter.create<arith::SubFOp>(
-                          loc, score, maxLoop.getResult(0));
-                      Value probability =
-                          rewriter.create<math::ExpOp>(loc, shifted);
-                      rewriter.create<memref::StoreOp>(
-                          loc, probability, scores, ValueRange{head, keyPos});
-                      Value sum = rewriter.create<arith::AddFOp>(loc, args[0],
-                                                                 probability);
-                      rewriter.create<scf::YieldOp>(loc, sum);
+                      auto rescaleAcc = createLoop(
+                          rewriter, loc, zero, headDimValue, one, ValueRange{},
+                          [&](OpBuilder &builder, Location loc, Value d,
+                              ValueRange) {
+                            Value value = rewriter.create<memref::LoadOp>(
+                                loc, acc, ValueRange{head, d});
+                            Value scaled =
+                                rewriter.create<arith::MulFOp>(loc, value,
+                                                               correction);
+                            rewriter.create<memref::StoreOp>(
+                                loc, scaled, acc, ValueRange{head, d});
+                          });
+                      rewriter.setInsertionPointAfter(rescaleAcc);
+                      Value scaledSum = rewriter.create<arith::MulFOp>(
+                          loc, runningSum, correction);
+
+                      auto weightLoop = createLoop(
+                          rewriter, loc, blockStart, blockEnd, one,
+                          ValueRange{scaledSum},
+                          [&](OpBuilder &builder, Location loc, Value keyPos,
+                              ValueRange weightArgs) {
+                            Value score = rewriter.create<memref::LoadOp>(
+                                loc, scoreTile,
+                                ValueRange{head, rewriter.create<arith::SubIOp>(
+                                                     loc, keyPos, blockStart)});
+                            Value probability = rewriter.create<math::ExpOp>(
+                                loc,
+                                rewriter.create<arith::SubFOp>(loc, score,
+                                                               newMax));
+                            Value newSum = rewriter.create<arith::AddFOp>(
+                                loc, weightArgs[0], probability);
+                            auto valueLoop = createLoop(
+                                rewriter, loc, zero, headDimValue, one,
+                                ValueRange{},
+                                [&](OpBuilder &builder, Location loc, Value d,
+                                    ValueRange) {
+                                  Value vValue =
+                                      rewriter.create<memref::LoadOp>(
+                                          loc, op.getKvCache(),
+                                          ValueRange{layerValue, one, kvHead,
+                                                     keyPos, d});
+                                  Value vF32 = rewriter.create<arith::ExtFOp>(
+                                      loc, f32, vValue);
+                                  Value product =
+                                      rewriter.create<arith::MulFOp>(
+                                          loc, probability, vF32);
+                                  Value current =
+                                      rewriter.create<memref::LoadOp>(
+                                          loc, acc, ValueRange{head, d});
+                                  Value updated = rewriter.create<arith::AddFOp>(
+                                      loc, current, product);
+                                  rewriter.create<memref::StoreOp>(
+                                      loc, updated, acc, ValueRange{head, d});
+                                });
+                            rewriter.setInsertionPointAfter(valueLoop);
+                            rewriter.create<scf::YieldOp>(loc, newSum);
+                          });
+                      rewriter.setInsertionPointAfter(weightLoop);
+                      rewriter.create<scf::YieldOp>(
+                          loc, ValueRange{newMax, weightLoop.getResult(0)});
                     });
-                rewriter.setInsertionPointAfter(sumLoop);
+                rewriter.setInsertionPointAfter(keyBlockLoop);
+                Value finalSum = keyBlockLoop.getResult(1);
 
                 auto outputDimLoop = createLoop(
                     rewriter, loc, zero, headDimValue, one, ValueRange{},
                     [&](OpBuilder &builder, Location loc, Value d, ValueRange) {
-                      auto weightedLoop = createLoop(
-                          rewriter, loc, zero, queryEnd, one, ValueRange{zeroF},
-                          [&](OpBuilder &builder, Location loc, Value keyPos,
-                              ValueRange args) {
-                            Value probability = rewriter.create<memref::LoadOp>(
-                                loc, scores, ValueRange{head, keyPos});
-                            Value vValue = rewriter.create<memref::LoadOp>(
-                                loc, op.getKvCache(),
-                                ValueRange{layerValue, one, kvHead, keyPos, d});
-                            Value vF32 = rewriter.create<arith::ExtFOp>(
-                                loc, f32, vValue);
-                            Value product = rewriter.create<arith::MulFOp>(
-                                loc, probability, vF32);
-                            Value sum = rewriter.create<arith::AddFOp>(
-                                loc, args[0], product);
-                            rewriter.create<scf::YieldOp>(loc, sum);
-                          });
-                      rewriter.setInsertionPointAfter(weightedLoop);
-                      Value weighted = rewriter.create<arith::DivFOp>(
-                          loc, weightedLoop.getResult(0), sumLoop.getResult(0));
+                      Value accumulated = rewriter.create<memref::LoadOp>(
+                          loc, acc, ValueRange{head, d});
+                      Value normalized = rewriter.create<arith::DivFOp>(
+                          loc, accumulated, finalSum);
                       Value gateRaw = rewriter.create<tensor::ExtractOp>(
                           loc, op.getQg(),
                           ValueRange{
@@ -495,7 +556,7 @@ public:
                           rewriter.create<arith::ExtFOp>(loc, f32, gateRaw);
                       Value gate = siluLikeSigmoid(gateF32);
                       Value gated =
-                          rewriter.create<arith::MulFOp>(loc, weighted, gate);
+                          rewriter.create<arith::MulFOp>(loc, normalized, gate);
                       Value resultBf16 =
                           rewriter.create<arith::TruncFOp>(loc, bf16, gated);
                       Value column = rewriter.create<arith::AddIOp>(
