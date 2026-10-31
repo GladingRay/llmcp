@@ -39,6 +39,30 @@ LogicalResult LinearOp::verify() {
     return emitOpError("output must be a rank-2 tensor");
 
   const bool transposeB = getTransposeB();
+  const StringRef format = getWeightFormat();
+  if (format == "q8_0") {
+    if (transposeB)
+      return emitOpError("q8_0 weights do not support transpose_b");
+    if (!weightType.getElementType().isInteger(8))
+      return emitOpError("q8_0 weight must be i8");
+    const int64_t inputK = inputType.getDimSize(1);
+    if (!ShapedType::isDynamic(inputK) && inputK % 32 != 0)
+      return emitOpError("q8_0 requires K to be a multiple of 32");
+    const int64_t expectedBytes = ShapedType::isDynamic(inputK)
+                                      ? ShapedType::kDynamic
+                                      : (inputK / 32) * 34;
+    if (!areCompatible(weightType.getDimSize(1), expectedBytes))
+      return emitOpError("q8_0 weight byte width must be (K/32)*34");
+    if (!areCompatible(weightType.getDimSize(0), outputType.getDimSize(1)))
+      return emitOpError("output inner dimension must match weight rows");
+    if (!areCompatible(inputType.getDimSize(0), outputType.getDimSize(0)))
+      return emitOpError("output outer dimension must match input");
+    if (outputType.getElementType() != inputType.getElementType())
+      return emitOpError("output element type must match input");
+    return success();
+  }
+  if (format != "bf16")
+    return emitOpError("unsupported weight_format: " + format);
   const int64_t inputK = inputType.getDimSize(1);
   const int64_t weightK =
       transposeB ? weightType.getDimSize(0) : weightType.getDimSize(1);
@@ -167,10 +191,27 @@ LogicalResult LmHeadOp::verify() {
     return emitOpError("logits must be a rank-2 tensor");
   if (!areCompatible(logits.getDimSize(0), hidden.getDimSize(0)))
     return emitOpError("logits and hidden must have the same length");
+  if (getWeightFormat() == "q8_0") {
+    if (!table.getElementType().isInteger(8))
+      return emitOpError("q8_0 table must be i8");
+    const int64_t hiddenDim = hidden.getDimSize(1);
+    if (!ShapedType::isDynamic(hiddenDim) && hiddenDim % 32 != 0)
+      return emitOpError("q8_0 requires hidden size to be a multiple of 32");
+    const int64_t expectedBytes = ShapedType::isDynamic(hiddenDim)
+                                      ? ShapedType::kDynamic
+                                      : (hiddenDim / 32) * 34;
+    if (!areCompatible(table.getDimSize(1), expectedBytes))
+      return emitOpError("q8_0 table byte width must be (K/32)*34");
+    if (!areCompatible(logits.getDimSize(1), table.getDimSize(0)))
+      return emitOpError("logits vocabulary dimension must match the table");
+    return success();
+  }
   if (!areCompatible(hidden.getDimSize(1), table.getDimSize(1)))
     return emitOpError("hidden dimension must match the table");
   if (!areCompatible(logits.getDimSize(1), table.getDimSize(0)))
     return emitOpError("logits vocabulary dimension must match the table");
+  if (getWeightFormat() != "bf16")
+    return emitOpError("unsupported weight_format: " + getWeightFormat());
   if (hidden.getElementType() != table.getElementType())
     return emitOpError("hidden element type must match the table");
   if (!logits.getElementType().isF32())

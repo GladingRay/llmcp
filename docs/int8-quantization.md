@@ -698,3 +698,18 @@ tensors:      426
 ```
 
 Arena 约 4.47 GB，权重约 4.2 GiB。
+
+
+## 15. M2 实现状态
+
+已完成：
+
+- `llmcp.linear` / `llmcp.lm_head` 增加 `weight_format = "q8_0"`；
+- Q8_1 激活动态量化（标量）；
+- Q8_0 x Q8_1 int32 点积；
+- f32 scale 累加；
+- numeric `linear_q8` / `lm_head_q8`；
+- Q8 reference 使用量化后的输入和权重计算。
+
+当前 Q8 路径是 scalar lowering，尚未接入 ARM `sdot`，也尚未让真实模型
+`llmcp-run` 直接消费 Q8 arena。下一步 M3 做 NEON sdot 和真实模型对齐。

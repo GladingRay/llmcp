@@ -31,7 +31,8 @@ def LLMCP_LinearOp : LLMCP_Op<"linear", [Pure]> {
 
   let arguments = (ins AnyTensor:$input,
                        AnyMemRef:$weight,
-                       DefaultValuedAttr<BoolAttr, "false">:$transpose_b);
+                       DefaultValuedAttr<BoolAttr, "false">:$transpose_b,
+                       DefaultValuedAttr<StrAttr, "\"bf16\"">:$weight_format);
   let results = (outs AnyTensor:$output);
 
   let assemblyFormat = [{
@@ -93,7 +94,8 @@ def LLMCP_EmbeddingOp : LLMCP_Op<"embedding", [Pure]> {
 
 def LLMCP_LmHeadOp : LLMCP_Op<"lm_head", [Pure]> {
   let summary = "Tied embedding matrix product producing logits";
-  let arguments = (ins AnyTensor:$hidden, AnyMemRef:$table);
+  let arguments = (ins AnyTensor:$hidden, AnyMemRef:$table,
+                       DefaultValuedAttr<StrAttr, "\"bf16\"">:$weight_format);
   let results = (outs AnyTensor:$logits);
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;

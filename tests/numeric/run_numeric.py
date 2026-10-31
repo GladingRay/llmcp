@@ -10,6 +10,7 @@ import math
 import os
 import platform
 import pathlib
+import struct
 import subprocess
 
 import torch
@@ -26,6 +27,16 @@ def dense_2d(values) -> str:
 
 def dense_1d(values) -> str:
     return "[" + ", ".join(fmt(v) for v in values) + "]"
+
+
+def dense_2d_int(values) -> str:
+    def signed(v):
+        v = int(v)
+        return v - 256 if v >= 128 else v
+
+    return "[" + ", ".join(
+        "[" + ", ".join(str(signed(v)) for v in row) + "]" for row in values
+    ) + "]"
 
 
 def dense_nd(values) -> str:
@@ -84,6 +95,84 @@ def emit_linear(x, w) -> str:
         f'dense<{dense_2d(w)}>'
     ]
     return wrap(body, globals_, m, n, "bf16")
+
+
+
+
+def q8_0_blocks(matrix):
+    blocks = []
+    for row in matrix:
+        for block_start in range(0, len(row), 32):
+            block = row[block_start:block_start + 32]
+            amax = max(abs(float(value)) for value in block)
+            scale = amax / 127.0 if amax != 0.0 else 0.0
+            inverse = 1.0 / scale if scale != 0.0 else 0.0
+            quantized = [
+                max(-127, min(127, int(round(float(value) * inverse))))
+                for value in block
+            ]
+            packed_scale = struct.pack("<e", scale)
+            rounded_scale = struct.unpack("<e", packed_scale)[0]
+            blocks.append((packed_scale, rounded_scale, quantized))
+    return blocks
+
+
+def q8_0_bytes(matrix):
+    data = []
+    for packed_scale, _, quantized in q8_0_blocks(matrix):
+        data.extend(packed_scale)
+        data.extend(quantized)
+    return data
+
+
+def q8_0_dequant(matrix):
+    values = []
+    for _, scale, quantized in q8_0_blocks(matrix):
+        values.extend(scale * value for value in quantized)
+    return values
+
+
+def emit_linear_q8(x, w) -> str:
+    m, k = len(x), len(x[0])
+    n = len(w)
+    encoded = q8_0_bytes(w)
+    width = len(encoded) // n
+    encoded_rows = [encoded[i * width:(i + 1) * width] for i in range(n)]
+    body = [
+        f"  %x = arith.constant dense<{dense_2d(x)}> : tensor<{m}x{k}xbf16>",
+        f"  %w = memref.get_global @w : memref<{n}x{len(encoded) // n}xi8>",
+        f"  %0 = llmcp.linear %x, %w {{weight_format = \"q8_0\"}} : "
+        f"tensor<{m}x{k}xbf16>, memref<{n}x{len(encoded) // n}xi8> -> "
+        f"tensor<{m}x{n}xbf16>",
+    ]
+    globals_ = [
+        f'memref.global "private" constant @w : '
+        f'memref<{n}x{width}xi8> = dense<{dense_2d_int(encoded_rows)}>'
+    ]
+    return wrap(body, globals_, m, n, "bf16")
+
+
+def emit_lm_head_q8(hidden, table) -> str:
+    m, h = len(hidden), len(hidden[0])
+    vocab = len(table)
+    encoded = q8_0_bytes(table)
+    width = len(encoded) // vocab
+    encoded_rows = [encoded[i * width:(i + 1) * width] for i in range(vocab)]
+    body = [
+        f"  %hidden = arith.constant dense<{dense_2d(hidden)}> : "
+        f"tensor<{m}x{h}xbf16>",
+        f"  %table = memref.get_global @table : "
+        f"memref<{vocab}x{len(encoded) // vocab}xi8>",
+        f"  %0 = llmcp.lm_head %hidden, %table {{weight_format = \"q8_0\"}} : "
+        f"(tensor<{m}x{h}xbf16>, memref<{vocab}x{len(encoded) // vocab}xi8>) "
+        f"-> tensor<{m}x{vocab}xf32>",
+    ]
+    globals_ = [
+        f'memref.global "private" constant @table : '
+        f'memref<{vocab}x{width}xi8> = '
+        f'dense<{dense_2d_int(encoded_rows)}>'
+    ]
+    return wrap(body, globals_, m, vocab, "f32")
 
 
 def emit_rms(x, w) -> str:
@@ -481,6 +570,15 @@ def main():
     compile_and_run(args, "linear_vec", emit_linear(x.tolist(), w.tolist()),
                     ref, (2e-2, 1e-2))
 
+    # INT8 Q8_0 weight path
+    x = torch.randn(2, 64).to(bf16)
+    w = torch.randn(64, 64).to(bf16)
+    xq = torch.tensor(q8_0_dequant(x.tolist()), dtype=torch.float32).reshape(x.shape)
+    wq = torch.tensor(q8_0_dequant(w.tolist()), dtype=torch.float32).reshape(w.shape)
+    ref = (xq @ wq.T).to(bf16).float().flatten()
+    compile_and_run(args, "linear_q8", emit_linear_q8(x.tolist(), w.tolist()),
+                    ref, (1e-2, 2e-3))
+
 #rms_norm
     x = torch.randn(2, 8).to(bf16)
     w = torch.randn(8).to(bf16)
@@ -535,6 +633,15 @@ def main():
     compile_and_run(args, "lm_head", emit_lm_head(hidden.tolist(),
                                                   table.tolist()),
                     ref, (1e-3, 1e-3))
+
+    hidden = torch.randn(2, 64).to(bf16)
+    table = torch.randn(64, 64).to(bf16)
+    hq = torch.tensor(q8_0_dequant(hidden.tolist()), dtype=torch.float32).reshape(hidden.shape)
+    tq = torch.tensor(q8_0_dequant(table.tolist()), dtype=torch.float32).reshape(table.shape)
+    ref = (hq @ tq.T).flatten()
+    compile_and_run(args, "lm_head_q8",
+                    emit_lm_head_q8(hidden.tolist(), table.tolist()), ref,
+                    (1e-2, 2e-3))
 
 #vectorized lm_head path
     hidden = torch.randn(2, 64).to(bf16)

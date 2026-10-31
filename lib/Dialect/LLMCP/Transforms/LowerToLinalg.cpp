@@ -56,6 +56,158 @@ Value createEmpty(PatternRewriter &rewriter, Location loc,
 
 constexpr int64_t kVectorTile = 32;
 
+Value emitQ8Matmul(PatternRewriter &rewriter, Location loc, Value input,
+                   Value weight, RankedTensorType resultType) {
+  auto inputType = cast<RankedTensorType>(input.getType());
+  auto weightType = cast<MemRefType>(weight.getType());
+  const int64_t reduction = inputType.getDimSize(1);
+  const int64_t channels = resultType.getDimSize(1);
+  if (inputType.getRank() != 2 || weightType.getRank() != 2 ||
+      ShapedType::isDynamic(reduction) || ShapedType::isDynamic(channels) ||
+      reduction % 32 != 0 || !weightType.getElementType().isInteger(8))
+    return Value();
+
+  auto f32 = rewriter.getF32Type();
+  auto i8 = rewriter.getIntegerType(8);
+  auto i16 = rewriter.getIntegerType(16);
+  auto i32 = rewriter.getIntegerType(32);
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value blockSize = rewriter.create<arith::ConstantIndexOp>(loc, 32);
+  Value blockCount =
+      rewriter.create<arith::ConstantIndexOp>(loc, reduction / 32);
+  Value channelsValue = rewriter.create<arith::ConstantIndexOp>(loc, channels);
+  Value rows = rewriter.create<tensor::DimOp>(loc, input, 0);
+  auto outputType = MemRefType::get({ShapedType::kDynamic, channels},
+                                    resultType.getElementType());
+  Value output =
+      rewriter.create<memref::AllocOp>(loc, outputType, ValueRange{rows});
+
+  auto columnLoop =
+      rewriter.create<scf::ForOp>(loc, zero, channelsValue, one, ValueRange{});
+  columnLoop->setAttr("llmcp.parallel", UnitAttr::get(rewriter.getContext()));
+  rewriter.setInsertionPointToStart(columnLoop.getBody());
+  Value column = columnLoop.getInductionVar();
+  auto rowLoop =
+      rewriter.create<scf::ForOp>(loc, zero, rows, one, ValueRange{});
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  Value accInit =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+  auto blockLoop = rewriter.create<scf::ForOp>(loc, zero, blockCount, one,
+                                               ValueRange{accInit});
+  rewriter.setInsertionPointToStart(blockLoop.getBody());
+  Value block = blockLoop.getInductionVar();
+  Value blockBase = rewriter.create<arith::MulIOp>(loc, block, blockSize);
+
+  Value maxInit =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+  auto maxLoop = rewriter.create<scf::ForOp>(loc, zero, blockSize, one,
+                                             ValueRange{maxInit});
+  rewriter.setInsertionPointToStart(maxLoop.getBody());
+  Value index = maxLoop.getInductionVar();
+  Value sourceIndex = rewriter.create<arith::AddIOp>(loc, blockBase, index);
+  Value value = rewriter.create<tensor::ExtractOp>(
+      loc, input, ValueRange{row, sourceIndex});
+  if (value.getType().isBF16())
+    value = rewriter.create<arith::ExtFOp>(loc, f32, value);
+  Value magnitude = rewriter.create<math::AbsFOp>(loc, value);
+  Value maxValue = rewriter.create<arith::MaxNumFOp>(
+      loc, maxLoop.getRegionIterArg(0), magnitude);
+  rewriter.create<scf::YieldOp>(loc, maxValue);
+  rewriter.setInsertionPointAfter(maxLoop);
+
+  Value maxAbs = maxLoop.getResult(0);
+  Value scale = rewriter.create<arith::DivFOp>(
+      loc, maxAbs,
+      rewriter.create<arith::ConstantOp>(loc,
+                                         rewriter.getF32FloatAttr(127.0f)));
+  Value zeroF =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+  Value isZero = rewriter.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OEQ,
+                                                maxAbs, zeroF);
+  auto inverse = rewriter.create<scf::IfOp>(loc, TypeRange{f32}, isZero, true);
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(&inverse.getThenRegion().front());
+    rewriter.create<scf::YieldOp>(loc, zeroF);
+  }
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(&inverse.getElseRegion().front());
+    Value oneF =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(1.0f));
+    rewriter.create<scf::YieldOp>(
+        loc, ValueRange{rewriter.create<arith::DivFOp>(loc, oneF, scale)});
+  }
+  rewriter.setInsertionPointAfter(inverse.getOperation());
+
+  Value scaleOffset = rewriter.create<arith::MulIOp>(
+      loc, block, rewriter.create<arith::ConstantIndexOp>(loc, 34));
+  Value lowByte = rewriter.create<memref::LoadOp>(
+      loc, weight, ValueRange{column, scaleOffset});
+  Value highOffset = rewriter.create<arith::AddIOp>(loc, scaleOffset, one);
+  Value highByte = rewriter.create<memref::LoadOp>(
+      loc, weight, ValueRange{column, highOffset});
+  Value low = rewriter.create<arith::ExtUIOp>(loc, i16, lowByte);
+  Value high = rewriter.create<arith::ExtUIOp>(loc, i16, highByte);
+  Value shift =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getI16IntegerAttr(8));
+  Value shifted = rewriter.create<arith::ShLIOp>(loc, high, shift);
+  Value bits = rewriter.create<arith::OrIOp>(loc, low, shifted);
+  Value half =
+      rewriter.create<arith::BitcastOp>(loc, rewriter.getF16Type(), bits);
+  Value weightScale = rewriter.create<arith::ExtFOp>(loc, f32, half);
+
+  Value dotInit =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
+  auto dotLoop = rewriter.create<scf::ForOp>(loc, zero, blockSize, one,
+                                             ValueRange{dotInit});
+  rewriter.setInsertionPointToStart(dotLoop.getBody());
+  Value dotIndex = dotLoop.getInductionVar();
+  Value dotSourceIndex =
+      rewriter.create<arith::AddIOp>(loc, blockBase, dotIndex);
+  Value aValue = rewriter.create<tensor::ExtractOp>(
+      loc, input, ValueRange{row, dotSourceIndex});
+  if (aValue.getType().isBF16())
+    aValue = rewriter.create<arith::ExtFOp>(loc, f32, aValue);
+  Value scaled =
+      rewriter.create<arith::MulFOp>(loc, aValue, inverse.getResult(0));
+  Value rounded = rewriter.create<math::RoundEvenOp>(loc, scaled);
+  Value aInt = rewriter.create<arith::FPToSIOp>(loc, i32, rounded);
+  Value weightIndex = rewriter.create<arith::AddIOp>(
+      loc, scaleOffset,
+      rewriter.create<arith::AddIOp>(
+          loc, rewriter.create<arith::ConstantIndexOp>(loc, 2), dotIndex));
+  Value wByte = rewriter.create<memref::LoadOp>(
+      loc, weight, ValueRange{column, weightIndex});
+  Value wInt = rewriter.create<arith::ExtSIOp>(loc, i32, wByte);
+  Value product = rewriter.create<arith::MulIOp>(loc, aInt, wInt);
+  Value dotSum =
+      rewriter.create<arith::AddIOp>(loc, dotLoop.getRegionIterArg(0), product);
+  rewriter.create<scf::YieldOp>(loc, dotSum);
+  rewriter.setInsertionPointAfter(dotLoop);
+
+  Value dotF = rewriter.create<arith::SIToFPOp>(loc, f32, dotLoop.getResult(0));
+  Value contribution = rewriter.create<arith::MulFOp>(
+      loc, dotF, rewriter.create<arith::MulFOp>(loc, scale, weightScale));
+  Value acc = rewriter.create<arith::AddFOp>(loc, blockLoop.getRegionIterArg(0),
+                                             contribution);
+  rewriter.create<scf::YieldOp>(loc, acc);
+  rewriter.setInsertionPointAfter(blockLoop);
+
+  Value result = blockLoop.getResult(0);
+  if (resultType.getElementType().isBF16())
+    result =
+        rewriter.create<arith::TruncFOp>(loc, rewriter.getBF16Type(), result);
+  rewriter.create<memref::StoreOp>(loc, result, output,
+                                   ValueRange{row, column});
+  rewriter.setInsertionPointAfter(rowLoop);
+  rewriter.setInsertionPointAfter(columnLoop);
+  return rewriter.create<bufferization::ToTensorOp>(loc, resultType, output,
+                                                    true);
+}
+
 Value emitVectorMatmul(PatternRewriter &rewriter, Location loc, Value input,
                        Value weight, RankedTensorType resultType,
                        bool transposeB) {
@@ -311,6 +463,13 @@ public:
     Location loc = op.getLoc();
     auto resultType = cast<RankedTensorType>(op.getOutput().getType());
     auto input = op.getInput();
+    if (op.getWeightFormat() == "q8_0") {
+      if (Value q8 =
+              emitQ8Matmul(rewriter, loc, input, op.getWeight(), resultType)) {
+        rewriter.replaceOp(op, q8);
+        return success();
+      }
+    }
     Value weight = toTensor(rewriter, loc, op.getWeight());
 
     if (!op.getTransposeB()) {
@@ -714,6 +873,13 @@ public:
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     auto resultType = cast<RankedTensorType>(op.getLogits().getType());
+    if (op.getWeightFormat() == "q8_0") {
+      if (Value q8 = emitQ8Matmul(rewriter, loc, op.getHidden(), op.getTable(),
+                                  resultType)) {
+        rewriter.replaceOp(op, q8);
+        return success();
+      }
+    }
     Value table = toTensor(rewriter, loc, op.getTable());
 #if defined(__aarch64__)
     if (Value vectorized =

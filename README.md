@@ -47,7 +47,7 @@ M0 基础设施已落地：
 - `llmcp-benchmark`：加载 AOT dylib，统计 prefill/decode 耗时与 token/s
 - `llmcp-matmul-benchmark`：生成单个 `llmcp.linear`，并行 AOT 到 dylib，输出 GFLOPS
 - `CacheLineAlignedVector`：128 字节对齐的 tensor 存储，供 runner/benchmark/runtime 共用
-- INT8 量化方案：Q8_0 权重 + Q8_1 激活，设计见 `docs/int8-quantization.md`
+- INT8 量化：Q8_0 权重打包 + Q8_1 激活标量 matmul，设计见 `docs/int8-quantization.md`
 - full attention：FlashAttention-2 风格 online softmax + key tiling
 - `llmcp-microbench`：本机 CPU 标量/NEON/FP16/BF16/I8 峰值 FLOPS 与内存带宽
 - `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode、Qwen chat template、逐 token 流式输出；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
