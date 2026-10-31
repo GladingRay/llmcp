@@ -33,6 +33,7 @@ struct Arena {
   int fd = -1;
   const uint8_t *base = nullptr;
   uint64_t size = 0;
+  std::string quantization = "none";
   std::unordered_map<std::string, Weight> weights;
 
   Arena() = default;

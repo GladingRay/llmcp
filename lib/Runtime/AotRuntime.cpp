@@ -47,6 +47,10 @@ Error Arena::load(StringRef bin, StringRef manifest) {
   if (!json)
     return json.takeError();
   auto *object = json->getAsObject();
+  if (object) {
+    if (auto value = object->getString("quantization"))
+      quantization = value->str();
+  }
   auto *tensors = object ? object->getArray("tensors") : nullptr;
   if (!tensors)
     return createStringError(inconvertibleErrorCode(),

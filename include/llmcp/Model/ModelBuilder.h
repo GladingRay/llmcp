@@ -26,9 +26,10 @@ namespace llmcp {
 /// byte-addressed weight arena.
 class ModelBuilder {
 public:
-  static llvm::Expected<OwningOpRef<ModuleOp>> build(const ModelConfig &config,
-                                                     const TensorMap &tensors,
-                                                     MLIRContext *context);
+  static llvm::Expected<OwningOpRef<ModuleOp>>
+  build(const ModelConfig &config, const TensorMap &tensors,
+        MLIRContext *context,
+        QuantizationMode quantization = QuantizationMode::None);
 };
 
 } // namespace llmcp

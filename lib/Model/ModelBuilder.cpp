@@ -117,6 +117,12 @@ private:
     return func;
   }
 
+  StringRef entryDtype(StringRef name) const {
+    auto it = entries.find(name);
+    assert(it != entries.end() && "weight must exist in the layout");
+    return it->second->dtype;
+  }
+
   Value getWeight(OpBuilder &builder, Value arena, StringRef name,
                   llvm::StringMap<Value> &cache) {
     auto cached = cache.find(name);
@@ -134,10 +140,15 @@ private:
       elementType = builder.getF32Type();
     else if (entry.dtype == "F16")
       elementType = builder.getF16Type();
+    else if (entry.dtype == "Q8_0")
+      elementType = builder.getI8Type();
     else
       llvm_unreachable("unsupported weight dtype in layout");
 
-    auto memrefType = MemRefType::get(entry.shape, elementType);
+    SmallVector<int64_t, 4> weightShape(entry.shape.begin(), entry.shape.end());
+    if (entry.dtype == "Q8_0")
+      weightShape[1] = (entry.shape[1] / 32) * 34;
+    auto memrefType = MemRefType::get(weightShape, elementType);
     auto offset = builder.create<arith::ConstantIndexOp>(loc, entry.offset);
     Value view = builder.create<memref::ViewOp>(loc, memrefType, arena, offset,
                                                 ValueRange{});
@@ -162,7 +173,10 @@ private:
     auto resultType = RankedTensorType::get(
         {inputType.getDimSize(0), weightType.getDimSize(0)},
         inputType.getElementType());
-    return builder.create<LinearOp>(loc, resultType, input, weight);
+    auto op = builder.create<LinearOp>(loc, resultType, input, weight);
+    if (entryDtype(name) == "Q8_0")
+      op.setWeightFormat("q8_0");
+    return op;
   }
 
   Value add(OpBuilder &builder, Value lhs, Value rhs) {
@@ -484,14 +498,14 @@ private:
 
 llvm::Expected<OwningOpRef<ModuleOp>>
 ModelBuilder::build(const ModelConfig &config, const TensorMap &tensors,
-                    MLIRContext *context) {
+                    MLIRContext *context, QuantizationMode quantization) {
   if (!context)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "MLIRContext must not be null");
   if (llvm::Error error = config.verify())
     return std::move(error);
 
-  auto layoutOrErr = WeightLayout::build(config, tensors);
+  auto layoutOrErr = WeightLayout::build(config, tensors, quantization);
   if (!layoutOrErr)
     return layoutOrErr.takeError();
 

@@ -74,6 +74,12 @@ if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
       --model /Users/guorui/Work/models/qwen3.5-4b
       --emit=llvm-ir --out "${CMAKE_BINARY_DIR}/qwen35_aot_test.ll")
   set_tests_properties(llmcp-compile-real PROPERTIES TIMEOUT 300)
+
+  add_test(NAME llmcp-compile-real-q8
+    COMMAND $<TARGET_FILE:llmcp-compile>
+      --model /Users/guorui/Work/models/qwen3.5-4b --quant q8_0
+      --emit=llvm-ir --out "${CMAKE_BINARY_DIR}/qwen35_aot_q8_test.ll")
+  set_tests_properties(llmcp-compile-real-q8 PROPERTIES TIMEOUT 300)
 endif()
 
 find_program(LLMCP_PYTHON

@@ -137,6 +137,15 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
   --manifest build/weights.json --text Hello \
   --aot build/libqwen35_aot.dylib
 
+# Q8 权重 AOT
+./build/bin/llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b \
+  --quant q8_0 --out build/weights-q8.bin --manifest build/weights-q8.json
+./build/bin/llmcp-compile --model /Users/guorui/Work/models/qwen3.5-4b \
+  --quant q8_0 --emit=shared --out build/libqwen35_aot_q8.dylib
+./build/bin/llmcp-run --weights build/weights-q8.bin \
+  --manifest build/weights-q8.json --text Hello \
+  --aot build/libqwen35_aot_q8.dylib
+
 # Chat template（默认 thinking；可加 --no-thinking / --system）
 ./build/bin/llmcp-run --weights build/weights.bin \
   --manifest build/weights.json --text Hello --chat --max-new-tokens 8 \

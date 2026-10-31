@@ -316,8 +316,7 @@ Matrix fullAttention(const Matrix &x, const Arena &arena, StringRef prefix,
       Vec scores(kBlock, 0.0f);
       float runningMax = -1.0e30f;
       float runningSum = 0.0f;
-      for (int64_t blockStart = 0; blockStart <= global;
-           blockStart += kBlock) {
+      for (int64_t blockStart = 0; blockStart <= global; blockStart += kBlock) {
         int64_t blockEnd = std::min(blockStart + kBlock, global + 1);
         float tileMax = -1.0e30f;
         for (int64_t p = blockStart; p < blockEnd; ++p) {
@@ -339,8 +338,8 @@ Matrix fullAttention(const Matrix &x, const Arena &arena, StringRef prefix,
           float probability = std::exp(scores[p - blockStart] - newMax);
           runningSum += probability;
           for (int64_t d = 0; d < config.headDim; ++d)
-            context[d] += probability *
-                          cache.values[p][kvHead * config.headDim + d];
+            context[d] +=
+                probability * cache.values[p][kvHead * config.headDim + d];
         }
         runningMax = newMax;
       }
@@ -708,6 +707,10 @@ int main(int argc, char **argv) {
   Arena arena;
   if (Error error = arena.load(weightsPath, manifestPath)) {
     errs() << "llmcp-run: " << toString(std::move(error)) << "\n";
+    return 1;
+  }
+  if (arena.quantization != "none" && aotPath.empty()) {
+    errs() << "llmcp-run: quantized arena requires --aot\n";
     return 1;
   }
   Config config;

@@ -67,6 +67,7 @@ llvm::Error WeightLayout::addTensor(StringRef name,
   entry.dtype = it->second.dtype;
   entry.shape = it->second.shape;
   if (quantization_ == QuantizationMode::Q8_0 &&
+      entry.name != "model.language_model.embed_tokens.weight" &&
       entry.shape.size() == 2 && entry.shape[1] % kQ8_0BlockSize == 0 &&
       (entry.dtype == "BF16" || entry.dtype == "F32")) {
     auto quantizedSize = getQ8_0TensorSize(entry.shape);

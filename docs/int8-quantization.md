@@ -689,15 +689,16 @@ ARM sdot kernel
 - manifest 中的 `quantization`、`block_size`、`source_size`；
 - 单元测试和 `llmcp-pack-real-q8` dry-run。
 
-真实模型打包结果：
+真实模型打包结果（embedding/lm_head 保持 bf16，其余 matmul 权重 Q8_0）：
 
 ```text
 source bytes: 8,411,510,272
-arena bytes:  4,469,519,936
+arena bytes:  5,065,487,936
 tensors:      426
 ```
 
-Arena 约 4.47 GB，权重约 4.2 GiB。
+Arena 约 5.07 GB。如果 embedding 也量化，可降到约 4.47 GB，但需要额外的
+Q8 embedding 查表 lowering；首期保持 tied embedding 为 bf16。
 
 
 ## 15. M2 实现状态
@@ -745,8 +746,14 @@ Q8 的收益主要来自：
 - sdot 吞吐；
 - 大规模 N/K 下更低的带宽压力。
 
-尚未完成：
+已完成真实模型接入：
 
-- `llmcp-run` 直接消费 Q8 arena；
-- `ModelBuilder` 根据 manifest 生成 `weight_format="q8_0"`；
-- 真实模型 Q8 top1/greedy 对齐。
+- `llmcp-compile --quant q8_0`；
+- `WeightLayout` 的 Q8 布局与 `llmcp-pack --quant q8_0` 一致；
+- `ModelBuilder` 对量化 entry 生成 i8 view 和 `weight_format="q8_0"`；
+- `llmcp-run --weights weights-q8.bin --manifest weights-q8.json --aot ...`；
+- Q8 AOT `next 11`，greedy `0 271 760 2614`；
+- Q8 vs bf16 logits：`max_abs 0.509`、`mean_abs 0.087`，top1/top5 一致。
+
+当前 Q8 仍只量化 linear/lm_head 的 matmul 权重（首期 lm_head/embedding 为 bf16），
+attn/DeltaNet 的 state 和 KV cache 仍保持 bf16。

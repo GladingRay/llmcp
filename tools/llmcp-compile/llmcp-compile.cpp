@@ -9,6 +9,7 @@
 #include "llmcp/Dialect/LLMCP/IR/LLMCP.h"
 #include "llmcp/Model/ModelBuilder.h"
 #include "llmcp/Model/ModelConfig.h"
+#include "llmcp/Model/Quantization.h"
 #include "llmcp/Model/Safetensors.h"
 
 #include "llvm/Support/CommandLine.h"
@@ -51,6 +52,9 @@ cl::opt<std::string> optLevel("opt-level", cl::desc("Clang optimization level"),
                               cl::init("2"));
 cl::opt<bool> keepTemps("keep-temps", cl::desc("Keep intermediate files"),
                         cl::init(false));
+cl::opt<std::string> quant("quant",
+                           cl::desc("Weight quantization: none or q8_0"),
+                           cl::init("none"));
 
 int fail(llvm::Error error) {
   llvm::errs() << "llmcp-compile: " << llvm::toString(std::move(error)) << "\n";
@@ -113,9 +117,13 @@ int main(int argc, char **argv) {
   auto tensorsOrErr = readModelTensors(modelPath);
   if (!tensorsOrErr)
     return fail(tensorsOrErr.takeError());
+  auto quantizationOrErr = parseQuantizationMode(quant);
+  if (!quantizationOrErr)
+    return fail(quantizationOrErr.takeError());
 
   MLIRContext context;
-  auto moduleOrErr = ModelBuilder::build(*configOrErr, *tensorsOrErr, &context);
+  auto moduleOrErr = ModelBuilder::build(*configOrErr, *tensorsOrErr, &context,
+                                         *quantizationOrErr);
   if (!moduleOrErr)
     return fail(moduleOrErr.takeError());
   OwningOpRef<ModuleOp> module = std::move(*moduleOrErr);
