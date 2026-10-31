@@ -10,6 +10,7 @@
 #define LLMCP_MODEL_WEIGHTLAYOUT_H
 
 #include "llmcp/Model/ModelConfig.h"
+#include "llmcp/Model/Quantization.h"
 #include "llmcp/Model/Safetensors.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -31,6 +32,8 @@ struct WeightEntry {
   std::string name;
   uint64_t offset = 0;
   uint64_t size = 0;
+  uint64_t sourceSize = 0;
+  bool quantized = false;
   std::string dtype;
   llvm::SmallVector<int64_t, 4> shape;
 };
@@ -44,8 +47,9 @@ public:
   /// example `[linear, linear, linear, full]` repeated for every group. This
   /// keeps the group stride constant so the compiler can emit a loop over
   /// groups instead of unrolling all layers.
-  static llvm::Expected<WeightLayout> build(const ModelConfig &config,
-                                            const TensorMap &tensors);
+  static llvm::Expected<WeightLayout> build(
+      const ModelConfig &config, const TensorMap &tensors,
+      QuantizationMode quantization = QuantizationMode::None);
 
   llvm::ArrayRef<WeightEntry> getEntries() const { return entries_; }
 
@@ -57,6 +61,7 @@ public:
   uint64_t getEmbeddingOffset() const { return embeddingOffset_; }
   uint64_t getFinalNormOffset() const { return finalNormOffset_; }
   int64_t getNumGroups() const { return numGroups_; }
+  QuantizationMode getQuantization() const { return quantization_; }
 
 private:
   explicit WeightLayout() = default;
@@ -77,6 +82,7 @@ private:
   uint64_t embeddingOffset_ = 0;
   uint64_t finalNormOffset_ = 0;
   int64_t numGroups_ = 0;
+  QuantizationMode quantization_ = QuantizationMode::None;
 };
 
 } // namespace llmcp

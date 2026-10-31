@@ -676,3 +676,25 @@ ARM sdot kernel
   <https://github.com/ggml-org/llama.cpp/blob/master/ggml/src/ggml-quants.h>
 - llama.cpp `ggml-quants.c`:
   <https://github.com/ggml-org/llama.cpp/blob/master/ggml/src/ggml-quants.c>
+
+
+## 14. M1 实现状态
+
+已完成：
+
+- `Q8_0Block` 格式；
+- `quantizeTensorQ8_0` / `quantizeRowQ8_0` / `dequantizeQ8_0`；
+- `WeightLayout` 的 `q8_0` 模式；
+- `llmcp-pack --quant q8_0`；
+- manifest 中的 `quantization`、`block_size`、`source_size`；
+- 单元测试和 `llmcp-pack-real-q8` dry-run。
+
+真实模型打包结果：
+
+```text
+source bytes: 8,411,510,272
+arena bytes:  4,469,519,936
+tensors:      426
+```
+
+Arena 约 4.47 GB，权重约 4.2 GiB。

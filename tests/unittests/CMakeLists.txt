@@ -3,7 +3,8 @@ add_executable(llmcp-unittests
   SafetensorsTest.cpp
   WeightLayoutTest.cpp
   ModelBuilderTest.cpp
-  CacheLineAlignedVectorTest.cpp)
+  CacheLineAlignedVectorTest.cpp
+  QuantizationTest.cpp)
 
 target_link_libraries(llmcp-unittests PRIVATE
   MLIRLLMCPModel

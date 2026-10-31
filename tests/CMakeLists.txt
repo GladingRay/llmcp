@@ -50,6 +50,11 @@ if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
       --model /Users/guorui/Work/models/qwen3.5-4b --dry-run)
   set_tests_properties(llmcp-pack-real PROPERTIES TIMEOUT 120)
 
+  add_test(NAME llmcp-pack-real-q8
+    COMMAND $<TARGET_FILE:llmcp-pack>
+      --model /Users/guorui/Work/models/qwen3.5-4b --quant q8_0 --dry-run)
+  set_tests_properties(llmcp-pack-real-q8 PROPERTIES TIMEOUT 120)
+
   add_test(NAME llmcp-tokenizer
     COMMAND $<TARGET_FILE:llmcp-run> --tokenize-only --text Hello
       --tokenizer /Users/guorui/Work/models/qwen3.5-4b/tokenizer.json

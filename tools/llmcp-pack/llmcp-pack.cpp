@@ -1,6 +1,7 @@
 //===- llmcp-pack.cpp - Pack Qwen3.5 weights into the runtime arena ------===//
 
 #include "llmcp/Model/ModelConfig.h"
+#include "llmcp/Model/Quantization.h"
 #include "llmcp/Model/Safetensors.h"
 #include "llmcp/Model/WeightLayout.h"
 #include "llmcp/Model/WeightPacker.h"
@@ -28,6 +29,8 @@ llvm::cl::opt<bool> dryRun("dry-run",
                            llvm::cl::init(false));
 llvm::cl::opt<bool> verbose("verbose", llvm::cl::desc("Print every tensor"),
                             llvm::cl::init(false));
+llvm::cl::opt<std::string> quant("quant", llvm::cl::desc("Quantization: none or q8_0"),
+                                 llvm::cl::init("none"));
 
 int fail(llvm::Error error) {
   llvm::errs() << "llmcp-pack: " << llvm::toString(std::move(error)) << "\n";
@@ -56,7 +59,10 @@ int main(int argc, char **argv) {
     return fail(tensorsOrErr.takeError());
   TensorMap tensors = std::move(*tensorsOrErr);
 
-  auto layoutOrErr = WeightLayout::build(config, tensors);
+  auto quantizationOrErr = parseQuantizationMode(quant);
+  if (!quantizationOrErr)
+    return fail(quantizationOrErr.takeError());
+  auto layoutOrErr = WeightLayout::build(config, tensors, *quantizationOrErr);
   if (!layoutOrErr)
     return fail(layoutOrErr.takeError());
   const WeightLayout &layout = *layoutOrErr;
@@ -74,10 +80,12 @@ int main(int argc, char **argv) {
 
   uint64_t totalTensorBytes = 0;
   for (const WeightEntry &entry : layout.getEntries())
-    totalTensorBytes += entry.size;
+    totalTensorBytes += entry.sourceSize;
   llvm::outs() << (dryRun ? "validated" : "packed") << " "
-               << layout.getEntries().size() << " tensors, " << totalTensorBytes
-               << " tensor bytes, arena " << layout.getTotalBytes() << " bytes";
+               << layout.getEntries().size() << " tensors, "
+               << totalTensorBytes << " source bytes, arena "
+               << layout.getTotalBytes() << " bytes, quant "
+               << stringifyQuantizationMode(layout.getQuantization());
   if (!dryRun)
     llvm::outs() << " -> " << outputPath;
   llvm::outs() << "\n";

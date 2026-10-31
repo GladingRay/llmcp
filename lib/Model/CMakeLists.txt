@@ -4,6 +4,7 @@ add_mlir_library(MLIRLLMCPModel
   WeightLayout.cpp
   ModelBuilder.cpp
   WeightPacker.cpp
+  Quantization.cpp
 
   ADDITIONAL_HEADER_DIRS
     ${PROJECT_SOURCE_DIR}/include/llmcp/Model

@@ -62,12 +62,23 @@ llvm::Error WeightLayout::addTensor(StringRef name,
   WeightEntry entry;
   entry.name = name.str();
   entry.offset = offset;
+  entry.sourceSize = it->second.dataSize;
   entry.size = it->second.dataSize;
   entry.dtype = it->second.dtype;
   entry.shape = it->second.shape;
+  if (quantization_ == QuantizationMode::Q8_0 &&
+      entry.shape.size() == 2 && entry.shape[1] % kQ8_0BlockSize == 0 &&
+      (entry.dtype == "BF16" || entry.dtype == "F32")) {
+    auto quantizedSize = getQ8_0TensorSize(entry.shape);
+    if (!quantizedSize)
+      return quantizedSize.takeError();
+    entry.size = *quantizedSize;
+    entry.dtype = "Q8_0";
+    entry.quantized = true;
+  }
   entries_.push_back(std::move(entry));
   offsets_[name] = offset;
-  cursor = offset + it->second.dataSize;
+  cursor = offset + entry.size;
   return llvm::Error::success();
 }
 
@@ -78,8 +89,9 @@ llvm::Error WeightLayout::addLayerTensor(StringRef prefix, StringRef suffix,
   return addTensor(makeName(prefix, suffix), expectedShape, tensors, cursor);
 }
 
-llvm::Expected<WeightLayout> WeightLayout::build(const ModelConfig &config,
-                                                 const TensorMap &tensors) {
+llvm::Expected<WeightLayout>
+WeightLayout::build(const ModelConfig &config, const TensorMap &tensors,
+                    QuantizationMode quantization) {
   const int64_t numLayers = config.getNumLayers();
   const int64_t groupSize = config.text.fullAttentionInterval;
   if (groupSize <= 0 || numLayers % groupSize != 0)
@@ -97,6 +109,7 @@ llvm::Expected<WeightLayout> WeightLayout::build(const ModelConfig &config,
   }
 
   WeightLayout layout;
+  layout.quantization_ = quantization;
   layout.headerBytes_ = kHeaderBytes;
   layout.numGroups_ = numGroups;
   uint64_t cursor = kHeaderBytes;

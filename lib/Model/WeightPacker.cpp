@@ -126,6 +126,9 @@ llvm::Error writeManifest(llvm::StringRef path, llvm::StringRef modelDir,
   root["group_stride"] = layout.getGroupStride();
   root["num_groups"] = layout.getNumGroups();
   root["alignment"] = 64;
+  root["quantization"] = stringifyQuantizationMode(layout.getQuantization());
+  if (layout.getQuantization() != QuantizationMode::None)
+    root["block_size"] = kQ8_0BlockSize;
 
   llvm::json::Array entries;
   for (const WeightEntry &entry : layout.getEntries()) {
@@ -134,6 +137,7 @@ llvm::Error writeManifest(llvm::StringRef path, llvm::StringRef modelDir,
     object["offset"] = entry.offset;
     object["size"] = entry.size;
     object["dtype"] = entry.dtype;
+    object["source_size"] = entry.sourceSize;
     llvm::json::Array shape;
     for (int64_t dim : entry.shape)
       shape.push_back(dim);
@@ -169,12 +173,12 @@ llvm::Error mlir::llmcp::packWeights(llvm::StringRef modelDir,
         return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                        "missing tensor in checkpoint: " +
                                            entry.name);
-      if (it->second.dataSize != entry.size)
+      if (it->second.dataSize != entry.sourceSize)
         return llvm::createStringError(
             llvm::inconvertibleErrorCode(),
             "size mismatch for " + entry.name + ": checkpoint " +
-                std::to_string(it->second.dataSize) + ", layout " +
-                std::to_string(entry.size));
+                std::to_string(it->second.dataSize) + ", layout source " +
+                std::to_string(entry.sourceSize));
     }
     if (options.verbose)
       llvm::outs() << "validated " << layout.getEntries().size()
@@ -236,8 +240,14 @@ llvm::Error mlir::llmcp::packWeights(llvm::StringRef modelDir,
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                      "tensor extends past shard: " +
                                          entry.name);
-    std::memcpy(output.data() + entry.offset, shard.data() + info.dataOffset,
-                entry.size);
+    if (entry.quantized) {
+      if (llvm::Error error = quantizeTensorQ8_0(
+              info, shard.data() + info.dataOffset, output.data() + entry.offset))
+        return error;
+    } else {
+      std::memcpy(output.data() + entry.offset, shard.data() + info.dataOffset,
+                  entry.size);
+    }
     if (options.verbose)
       llvm::outs() << "  " << entry.offset << " +" << entry.size << " "
                    << entry.name << "\n";
