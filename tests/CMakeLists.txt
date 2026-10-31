@@ -110,4 +110,9 @@ add_test(NAME llmcp-matmul-benchmark
     --m 64 --n 64 --k 64 --iters 1)
 set_tests_properties(llmcp-matmul-benchmark PROPERTIES TIMEOUT 120)
 
+add_test(NAME llmcp-matmul-benchmark-q8
+  COMMAND $<TARGET_FILE:llmcp-matmul-benchmark>
+    --m 64 --n 64 --k 64 --iters 1 --q8 --threads 4)
+set_tests_properties(llmcp-matmul-benchmark-q8 PROPERTIES TIMEOUT 120)
+
 add_subdirectory(unittests)

@@ -50,6 +50,8 @@ cl::opt<int> threads("threads",
 cl::opt<bool> noParallel("no-parallel",
                          cl::desc("Disable OpenMP parallelization"),
                          cl::init(false));
+cl::opt<bool> q8("q8", cl::desc("Benchmark a Q8_0 weight matmul"),
+                 cl::init(false));
 cl::opt<std::string> llmcpOptPath("llmcp-opt", cl::desc("Path to llmcp-opt"),
                                   cl::init(""));
 cl::opt<std::string>
@@ -98,22 +100,30 @@ Error runTool(StringRef program, ArrayRef<std::string> args) {
   return Error::success();
 }
 
-std::string generateMlir(int64_t m, int64_t n, int64_t k) {
+std::string generateMlir(int64_t m, int64_t n, int64_t k, bool useQ8) {
   std::string ir;
   raw_string_ostream os(ir);
   os << "module {\n";
   os << "  func.func @linear_bench(%a: memref<" << m << "x" << k
-     << "xbf16>, %b: memref<" << n << "x" << k << "xbf16>, %c: memref<" << m
-     << "x" << n << "xbf16>) attributes {llvm.emit_c_interface} {\n";
+     << "xbf16>, %b: memref<" << n << "x"
+     << (useQ8 ? (k / 32) * 34 : k) << (useQ8 ? "xi8" : "xbf16")
+     << ">, %c: memref<" << m << "x" << n
+     << "xbf16>) attributes {llvm.emit_c_interface} {\n";
   os << "    %c0 = arith.constant 0 : index\n";
   os << "    %c1 = arith.constant 1 : index\n";
   os << "    %cm = arith.constant " << m << " : index\n";
   os << "    %cn = arith.constant " << n << " : index\n";
   os << "    %at = bufferization.to_tensor %a restrict : memref<" << m << "x"
      << k << "xbf16> to tensor<" << m << "x" << k << "xbf16>\n";
-  os << "    %out = llmcp.linear %at, %b : tensor<" << m << "x" << k
-     << "xbf16>, memref<" << n << "x" << k << "xbf16> -> tensor<" << m << "x"
-     << n << "xbf16>\n";
+  if (useQ8) {
+    os << "    %out = llmcp.linear %at, %b {weight_format = \"q8_0\"} : "
+       << "tensor<" << m << "x" << k << "xbf16>, memref<" << n << "x"
+       << (k / 32) * 34 << "xi8> -> tensor<" << m << "x" << n << "xbf16>\n";
+  } else {
+    os << "    %out = llmcp.linear %at, %b : tensor<" << m << "x" << k
+       << "xbf16>, memref<" << n << "x" << k << "xbf16> -> tensor<" << m << "x"
+       << n << "xbf16>\n";
+  }
   os << "    scf.for %i = %c0 to %cm step %c1 {\n";
   os << "      scf.for %j = %c0 to %cn step %c1 {\n";
   os << "        %v = tensor.extract %out[%i, %j] : tensor<" << m << "x" << n
@@ -164,7 +174,7 @@ int main(int argc, char **argv) {
 
   {
     std::ofstream out(source);
-    out << generateMlir(mDim, nDim, kDim);
+    out << generateMlir(mDim, nDim, kDim, q8);
   }
 
   if (verbose)
@@ -244,16 +254,44 @@ int main(int argc, char **argv) {
     return fail(dlerror());
 
   CacheLineAlignedVector<uint16_t> a(static_cast<size_t>(mDim * kDim), 0x3f80);
-  CacheLineAlignedVector<uint16_t> b(static_cast<size_t>(nDim * kDim), 0x3f80);
   CacheLineAlignedVector<uint16_t> c(static_cast<size_t>(mDim * nDim), 0);
+  CacheLineAlignedVector<uint16_t> bBf16;
+  CacheLineAlignedVector<uint8_t> bQ8;
+  int64_t bColumns = kDim;
+  if (q8) {
+    bColumns = (kDim / 32) * 34;
+    bQ8.assign(static_cast<size_t>(nDim * bColumns), 0);
+    for (int64_t row = 0; row < nDim; ++row) {
+      for (int64_t block = 0; block < kDim / 32; ++block) {
+        uint8_t *out = bQ8.data() + row * bColumns + block * 34;
+        out[0] = 0x08;
+        out[1] = 0x20;
+        std::memset(out + 2, 127, 32);
+      }
+    }
+  } else {
+    bBf16.assign(static_cast<size_t>(nDim * kDim), 0x3f80);
+  }
   MemRef<uint16_t, 2> ra{a.data(), a.data(), 0, {mDim, kDim}, {kDim, 1}};
-  MemRef<uint16_t, 2> rb{b.data(), b.data(), 0, {nDim, kDim}, {kDim, 1}};
   MemRef<uint16_t, 2> rc{c.data(), c.data(), 0, {mDim, nDim}, {nDim, 1}};
+  MemRef<int8_t, 2> rbQ8{
+      reinterpret_cast<int8_t *>(bQ8.data()),
+      reinterpret_cast<int8_t *>(bQ8.data()), 0, {nDim, bColumns},
+      {bColumns, 1}};
+  MemRef<uint16_t, 2> rbBf16{bBf16.data(), bBf16.data(), 0, {nDim, kDim},
+                             {kDim, 1}};
 
-  fn(&ra, &rb, &rc); // warmup / first run
+  if (q8)
+    fn(&ra, &rbQ8, &rc);
+  else
+    fn(&ra, &rbBf16, &rc); // warmup / first run
   auto begin = std::chrono::steady_clock::now();
-  for (int64_t i = 0; i < iterations; ++i)
-    fn(&ra, &rb, &rc);
+  for (int64_t i = 0; i < iterations; ++i) {
+    if (q8)
+      fn(&ra, &rbQ8, &rc);
+    else
+      fn(&ra, &rbBf16, &rc);
+  }
   auto end = std::chrono::steady_clock::now();
   double seconds = std::chrono::duration<double>(end - begin).count();
   double flops = 2.0 * static_cast<double>(mDim) * nDim * kDim * iterations;
@@ -264,6 +302,8 @@ int main(int argc, char **argv) {
   std::cout << "n: " << nDim << "\n";
   std::cout << "k: " << kDim << "\n";
   std::cout << "iters: " << iterations << "\n";
+  if (q8)
+    std::cout << "mode: q8_0\n";
   if (threads > 0)
     std::cout << "threads: " << threads << "\n";
   std::cout << "seconds: " << seconds << "\n";

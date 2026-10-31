@@ -713,3 +713,40 @@ Arena 约 4.47 GB，权重约 4.2 GiB。
 
 当前 Q8 路径是 scalar lowering，尚未接入 ARM `sdot`，也尚未让真实模型
 `llmcp-run` 直接消费 Q8 arena。下一步 M3 做 NEON sdot 和真实模型对齐。
+
+
+## 16. M3 进展
+
+已完成：
+
+- activation 预量化到 `[rows, K] i8` + `[rows, K/32] f32`；
+- 每个 activation block 只量化一次，不再对每个 N 列重复；
+- ARM `llvm.aarch64.neon.sdot`；
+- 每个 32-element block 用 2 条 sdot；
+- int32 点积后 f32 scale 累加；
+- `llmcp-matmul-benchmark --q8`；
+- `llmcp-matmul-benchmark-q8` CTest。
+
+实测（Apple M2，4 线程，全 1 输入）：
+
+```text
+256x256x256:
+  bf16: 约 29.9 GFLOPS
+  q8:   约 32.7 GFLOPS
+
+M=16, N=8192, K=2560:
+  bf16: 约 55.9 GFLOPS
+  q8:   约 189.5 GFLOPS
+```
+
+Q8 的收益主要来自：
+
+- 权重内存流量减半；
+- sdot 吞吐；
+- 大规模 N/K 下更低的带宽压力。
+
+尚未完成：
+
+- `llmcp-run` 直接消费 Q8 arena；
+- `ModelBuilder` 根据 manifest 生成 `weight_format="q8_0"`；
+- 真实模型 Q8 top1/greedy 对齐。
