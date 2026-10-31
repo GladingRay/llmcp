@@ -59,9 +59,9 @@ bool operator!=(const CacheLineAlignedAllocator<T> &,
   return false;
 }
 
-/// std::vector with cache-line aligned storage.
+/// Plain std::vector storage.
 template <typename T>
-using CacheLineAlignedVector = std::vector<T, CacheLineAlignedAllocator<T>>;
+using CacheLineAlignedVector = std::vector<T>;
 
 } // namespace llmcp
 
