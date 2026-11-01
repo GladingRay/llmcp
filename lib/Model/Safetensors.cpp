@@ -1,5 +1,7 @@
 //===- Safetensors.cpp - Read safetensors headers -------------------------===//
 //
+// Reads safetensors headers and validates tensor metadata.
+//
 //===----------------------------------------------------------------------===//
 
 #include "llmcp/Model/Safetensors.h"

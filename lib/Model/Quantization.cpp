@@ -1,4 +1,8 @@
-//===- Quantization.cpp - Q8_0 quantization helpers ---------------------===//
+//===- Quantization.cpp - Q8_0 quantization helpers -----------------------===//
+//
+// Q8_0 quantization, dequantization, and tensor packing helpers.
+//
+//===----------------------------------------------------------------------===//
 
 #include "llmcp/Model/Quantization.h"
 

@@ -1,3 +1,9 @@
+//===- ModelBuilderTest.cpp - Unit tests for ModelBuilder -----------------===//
+//
+// Unit tests for graph construction and operation counts.
+//
+//===----------------------------------------------------------------------===//
+
 #include "TestModel.h"
 
 #include "llmcp/Dialect/LLMCP/IR/LLMCP.h"

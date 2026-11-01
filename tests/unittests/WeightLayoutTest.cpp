@@ -1,3 +1,9 @@
+//===- WeightLayoutTest.cpp - Unit tests for WeightLayout -----------------===//
+//
+// Unit tests for arena alignment, offsets, and tensor validation.
+//
+//===----------------------------------------------------------------------===//
+
 #include "llmcp/Model/WeightLayout.h"
 
 #include "llvm/ADT/ArrayRef.h"

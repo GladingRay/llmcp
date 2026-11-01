@@ -1,8 +1,6 @@
-//===- Safetensors.h - Read safetensors headers ------------------*- C++
-//-*-===//
+//===- Safetensors.h - Read safetensors headers -----------------*- C++ -*-===//
 //
-// The compiler only needs tensor names, shapes, dtypes and byte offsets. Data
-// is accessed later through the packed weight arena, not through this reader.
+// Reads safetensors headers without loading tensor data.
 //
 //===----------------------------------------------------------------------===//
 

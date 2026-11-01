@@ -1,7 +1,6 @@
-//===- llmcp-run.cpp - C++ runner for packed Qwen3.5 weights --------------===//
+//===- llmcp-run.cpp - Run the llmcp model --------------------------------===//
 //
-// Loads the arena produced by llmcp-pack and executes prefill/greedy decode
-// using the same math as the llmcp ops.
+// Runs the model, tokenizer, chat template, and greedy decode.
 //
 //===----------------------------------------------------------------------===//
 

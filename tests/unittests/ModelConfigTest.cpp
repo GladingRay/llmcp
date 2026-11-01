@@ -1,3 +1,9 @@
+//===- ModelConfigTest.cpp - Unit tests for ModelConfig -------------------===//
+//
+// Unit tests for model configuration parsing and validation.
+//
+//===----------------------------------------------------------------------===//
+
 #include "llmcp/Model/ModelConfig.h"
 
 #include "llvm/Support/Error.h"

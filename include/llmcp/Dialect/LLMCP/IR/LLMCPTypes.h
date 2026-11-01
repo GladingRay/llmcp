@@ -1,4 +1,6 @@
-//===- LLMCPTypes.h - LLMCP type declarations --------------------*- C++ -*-==//
+//===- LLMCPTypes.h - LLMCP type declarations -------------------*- C++ -*-===//
+//
+// Declarations of LLMCP custom types.
 //
 //===----------------------------------------------------------------------===//
 

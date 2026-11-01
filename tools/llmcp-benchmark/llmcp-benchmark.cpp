@@ -1,6 +1,6 @@
-//===- llmcp-benchmark.cpp - Benchmark the AOT model ---------------------===//
+//===- llmcp-benchmark.cpp - Benchmark the AOT model ----------------------===//
 //
-// Measures prefill and decode throughput of llmcp_model_aot.
+// Measures prefill and decode throughput of the AOT model.
 //
 //===----------------------------------------------------------------------===//
 

@@ -1,4 +1,6 @@
-//===- AotRuntime.cpp - Shared AOT arena and runtime ---------------------===//
+//===- AotRuntime.cpp - Shared AOT arena and runtime ----------------------===//
+//
+// Shared arena and AOT runtime implementation.
 //
 //===----------------------------------------------------------------------===//
 

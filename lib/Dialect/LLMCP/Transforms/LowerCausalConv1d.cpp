@@ -1,5 +1,7 @@
 //===- LowerCausalConv1d.cpp - Lower llmcp.causal_conv1d ------------------===//
 //
+// Causal depthwise convolution lowering and state updates.
+//
 //===----------------------------------------------------------------------===//
 
 #include "llmcp/Dialect/LLMCP/Transforms/Passes.h"

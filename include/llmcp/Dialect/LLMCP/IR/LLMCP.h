@@ -1,5 +1,6 @@
-//===- LLMCP.h - LLMCP dialect umbrella header --------------------*- C++
-//-*-==//
+//===- LLMCP.h - LLMCP dialect umbrella header ------------------*- C++ -*-===//
+//
+// Umbrella header for the LLMCP dialect.
 //
 //===----------------------------------------------------------------------===//
 

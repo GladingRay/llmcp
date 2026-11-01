@@ -1,5 +1,7 @@
 //===- LowerToLinalg.cpp - Lower LLMCP ops to Linalg ----------------------===//
 //
+// Lowers LLMCP operations to Linalg, SCF, vector, and memref.
+//
 //===----------------------------------------------------------------------===//
 
 #include "llmcp/Dialect/LLMCP/Transforms/Passes.h"

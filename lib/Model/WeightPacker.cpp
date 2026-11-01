@@ -1,4 +1,8 @@
-//===- WeightPacker.cpp - Pack safetensors into the runtime arena --------===//
+//===- WeightPacker.cpp - Pack safetensors into the runtime arena ---------===//
+//
+// Packs model tensors into the arena and writes the JSON manifest.
+//
+//===----------------------------------------------------------------------===//
 
 #include "llmcp/Model/WeightPacker.h"
 

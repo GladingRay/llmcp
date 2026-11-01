@@ -1,6 +1,6 @@
-//===- AotRuntime.h - Shared AOT arena and runtime -----------------------===//
+//===- AotRuntime.h - Shared AOT arena and runtime --------------*- C++ -*-===//
 //
-// Shared by llmcp-run and llmcp-benchmark.
+// Shared arena, weight views, and AOT entry points for the runtime.
 //
 //===----------------------------------------------------------------------===//
 

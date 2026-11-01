@@ -1,3 +1,9 @@
+//===- CacheLineAlignedVectorTest.cpp - Cache-line vector tests -----------===//
+//
+// Unit tests for cache-line aligned vector storage.
+//
+//===----------------------------------------------------------------------===//
+
 #include "llmcp/Support/CacheLineAlignedVector.h"
 
 #include <gtest/gtest.h>

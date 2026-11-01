@@ -1,4 +1,6 @@
-//===- llmcp-opt.cpp - LLMCP optimizer driver -----------------------------===//
+//===- llmcp-opt.cpp - MLIR optimizer driver for LLMCP --------------------===//
+//
+// MLIR optimizer driver with LLMCP passes and dialects.
 //
 //===----------------------------------------------------------------------===//
 

@@ -1,5 +1,7 @@
 //===- LLMCPDialect.cpp - LLMCP dialect implementation --------------------===//
 //
+// Implementation of the LLMCP dialect.
+//
 //===----------------------------------------------------------------------===//
 
 #include "llmcp/Dialect/LLMCP/IR/LLMCPDialect.h"

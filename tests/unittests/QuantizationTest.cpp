@@ -1,3 +1,9 @@
+//===- QuantizationTest.cpp - Unit tests for Q8_0 quantization ------------===//
+//
+// Unit tests for Q8_0 block quantization and tensor sizing.
+//
+//===----------------------------------------------------------------------===//
+
 #include "llmcp/Model/Quantization.h"
 
 #include "llvm/Support/Error.h"

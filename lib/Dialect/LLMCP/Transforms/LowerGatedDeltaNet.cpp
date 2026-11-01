@@ -1,7 +1,6 @@
 //===- LowerGatedDeltaNet.cpp - Lower llmcp.gated_delta_net ---------------===//
 //
-// Naive token-by-token recurrence. The same lowering handles prefill and
-// decode; chunked prefill is a later optimization.
+// Gated DeltaNet recurrence lowering for prefill and decode.
 //
 //===----------------------------------------------------------------------===//
 

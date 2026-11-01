@@ -1,4 +1,6 @@
-//===- LLMCPOps.h - LLMCP operation declarations -----------------*- C++ -*-==//
+//===- LLMCPOps.h - LLMCP operation declarations ----------------*- C++ -*-===//
+//
+// Declarations of LLMCP operation classes.
 //
 //===----------------------------------------------------------------------===//
 

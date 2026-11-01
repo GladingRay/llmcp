@@ -1,4 +1,4 @@
-//===- Quantization.h - Weight quantization formats ---------------------===//
+//===- Quantization.h - Q8_0 quantization formats ---------------*- C++ -*-===//
 //
 // Q8_0 block format and helpers used by llmcp-pack.
 //

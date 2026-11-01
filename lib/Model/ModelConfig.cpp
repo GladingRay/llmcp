@@ -1,5 +1,7 @@
 //===- ModelConfig.cpp - Qwen3.5 model configuration ----------------------===//
 //
+// Parses and validates Qwen3.5 model configuration.
+//
 //===----------------------------------------------------------------------===//
 
 #include "llmcp/Model/ModelConfig.h"

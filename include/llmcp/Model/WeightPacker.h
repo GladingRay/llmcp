@@ -1,9 +1,6 @@
-//===- WeightPacker.h - Pack safetensors into the runtime arena ----------*- C++
-//-*-===//
+//===- WeightPacker.h - Pack safetensors into the runtime arena -*- C++ -*-===//
 //
-// Copies text-model tensors into the deterministic arena described by
-// WeightLayout and writes a JSON manifest. The compiler and runtime use the
-// same layout, so packed offsets are stable.
+// Copies model tensors into the arena and writes the JSON manifest.
 //
 //===----------------------------------------------------------------------===//
 

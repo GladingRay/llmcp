@@ -1,5 +1,6 @@
-//===- WeightLayout.cpp - Deterministic weight arena layout
-//----------------===//
+//===- WeightLayout.cpp - Deterministic weight arena layout ---------------===//
+//
+// Computes deterministic byte offsets for the packed weight arena.
 //
 //===----------------------------------------------------------------------===//
 

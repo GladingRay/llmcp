@@ -1,6 +1,6 @@
-//===- cpu_microbench.cpp - CPU ISA and bandwidth microbenchmark ---------===//
+//===- cpu_microbench.cpp - CPU ISA and bandwidth microbenchmark ----------===//
 //
-// Measures scalar/NEON FMA throughput and memory bandwidth on the local CPU.
+// Measures scalar, NEON, FP16, BF16, and int8 throughput on the local CPU.
 //
 //===----------------------------------------------------------------------===//
 

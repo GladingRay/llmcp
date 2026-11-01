@@ -1,3 +1,9 @@
+//===- SafetensorsTest.cpp - Unit tests for the safetensors reader --------===//
+//
+// Unit tests for safetensors header parsing and dtype validation.
+//
+//===----------------------------------------------------------------------===//
+
 #include "llmcp/Model/Safetensors.h"
 
 #include "llvm/Support/Error.h"

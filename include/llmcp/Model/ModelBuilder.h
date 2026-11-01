@@ -1,5 +1,7 @@
 //===- ModelBuilder.h - Build the llmcp model graph -------------*- C++ -*-===//
 //
+// Builds the complete llmcp prefill graph from a model configuration.
+//
 //===----------------------------------------------------------------------===//
 
 #ifndef LLMCP_MODEL_MODELBUILDER_H

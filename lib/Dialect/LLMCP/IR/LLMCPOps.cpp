@@ -1,5 +1,6 @@
-//===- LLMCPOps.cpp - LLMCP operation implementations
-//----------------------===//
+//===- LLMCPOps.cpp - LLMCP operation implementations ---------------------===//
+//
+// Verifiers and builders for LLMCP operations.
 //
 //===----------------------------------------------------------------------===//
 

@@ -1,8 +1,6 @@
 //===- llmcp-compile.cpp - AOT compile the llmcp graph --------------------===//
 //
-// Lowers the generated llmcp graph through linalg/SCF/LLVM, then emits LLVM IR,
-// an object file, or a shared library. The shared library exports the four
-// llmcp entry points for a separate runtime driver.
+// Lowers the model graph and emits LLVM IR, object, or a shared library.
 //
 //===----------------------------------------------------------------------===//
 

@@ -1,5 +1,7 @@
 //===- Passes.h - LLMCP transformation passes -------------------*- C++ -*-===//
 //
+// Pass factories and registration for LLMCP transformations.
+//
 //===----------------------------------------------------------------------===//
 
 #ifndef LLMCP_DIALECT_LLMCP_TRANSFORMS_PASSES_H

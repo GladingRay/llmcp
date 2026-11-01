@@ -1,7 +1,6 @@
 //===- Parallelize.cpp - Lower marked loops to scf.parallel ---------------===//
 //
-// Loops marked with `llmcp.parallel` are independent outer loops.  Converting
-// them to scf.parallel lets the OpenMP backend distribute them.
+// Converts loops marked llmcp.parallel into scf.parallel for OpenMP.
 //
 //===----------------------------------------------------------------------===//
 

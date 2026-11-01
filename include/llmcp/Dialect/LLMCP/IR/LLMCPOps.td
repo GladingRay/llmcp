@@ -1,8 +1,6 @@
-//===- LLMCPOps.td - LLMCP operation definitions -------------*- tablegen -*-===//
+//===- LLMCPOps.td - LLMCP operation definitions -----------*- tablegen -*-===//
 //
-// High-level operations for the initial llmcp dialect. The op set is kept
-// small on purpose: lowering and scheduling decisions live in passes, not in
-// the IR surface.
+// High-level operations for the llmcp inference dialect.
 //
 //===----------------------------------------------------------------------===//
 

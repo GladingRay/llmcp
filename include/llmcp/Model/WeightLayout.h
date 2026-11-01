@@ -1,8 +1,6 @@
-//===- WeightLayout.h - Deterministic weight arena layout --------*- C++
-//-*-===//
+//===- WeightLayout.h - Deterministic weight arena layout -------*- C++ -*-===//
 //
-// Computes byte offsets for the single packed weight arena consumed by the
-// compiled kernels. The packer and the compiler share this implementation.
+// Computes byte offsets for the single packed weight arena.
 //
 //===----------------------------------------------------------------------===//
 

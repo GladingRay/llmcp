@@ -1,4 +1,4 @@
-//===- CacheLineAlignedVector.h - Cache-line aligned vector --------------===//
+//===- CacheLineAlignedVector.h - Cache-line aligned vector -----*- C++ -*-===//
 //
 // A std::vector whose heap allocation starts on a cache-line boundary.
 //

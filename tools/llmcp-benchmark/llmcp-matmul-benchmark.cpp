@@ -1,7 +1,6 @@
-//===- llmcp-matmul-benchmark.cpp - AOT matmul microbenchmark -------------===//
+//===- llmcp-matmul-benchmark.cpp - Benchmark a single llmcp.linear -------===//
 //
-// Generates one llmcp.linear op, lowers it step by step to a shared library,
-// then times the AOT function and reports GFLOPS.
+// Benchmarks a single llmcp.linear through the AOT pipeline.
 //
 //===----------------------------------------------------------------------===//
 

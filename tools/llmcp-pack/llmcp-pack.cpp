@@ -1,4 +1,8 @@
-//===- llmcp-pack.cpp - Pack Qwen3.5 weights into the runtime arena ------===//
+//===- llmcp-pack.cpp - Pack Qwen3.5 weights into the runtime arena -------===//
+//
+// Packs model weights into the runtime arena with an optional Q8_0 mode.
+//
+//===----------------------------------------------------------------------===//
 
 #include "llmcp/Model/ModelConfig.h"
 #include "llmcp/Model/Quantization.h"

@@ -1,8 +1,6 @@
-//===- LowerAttention.cpp - Lower llmcp.attention
-//--------------------------===//
+//===- LowerAttention.cpp - Lower llmcp.attention -------------------------===//
 //
-// Naive prefill attention with explicit KV-cache materialization. This is a
-// correctness-first lowering; tiling and online softmax come later.
+// FlashAttention-2 style online softmax and KV-cache lowering.
 //
 //===----------------------------------------------------------------------===//
 

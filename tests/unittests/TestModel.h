@@ -1,3 +1,9 @@
+//===- TestModel.h - Shared tiny model fixture for unit tests ---*- C++ -*-===//
+//
+// Shared tiny model configuration and tensor map for unit tests.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef LLMCP_TESTS_UNITTESTS_TESTMODEL_H
 #define LLMCP_TESTS_UNITTESTS_TESTMODEL_H
 

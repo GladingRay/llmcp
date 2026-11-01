@@ -1,4 +1,6 @@
-//===- llmcp-dump.cpp - Dump the complete llmcp compute graph -------------===//
+//===- llmcp-dump.cpp - Dump the llmcp model graph ------------------------===//
+//
+// Builds and prints the complete llmcp model graph.
 //
 //===----------------------------------------------------------------------===//
 
