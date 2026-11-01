@@ -14,7 +14,7 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 
 - 后端：CPU，Apple M2 / arm64 优先；
 - 工具链：MLIR 20（Homebrew `llvm@20`）；
-- 模型：`/Users/guorui/Work/models/qwen3.5-4b`；
+- 模型：默认 `/Users/guorui/Work/models/qwen3.5-4b`，可用 `-DLLMCP_MODEL_DIR=...` 或环境变量 `LLMCP_MODEL_DIR` 覆盖；
 - 主体语言：C++17；Python 仅用于参考实现、测试和脚本。
 
 ## 环境
@@ -121,11 +121,17 @@ cmake -G Ninja -S . -B build \
   -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang \
   -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm@20/bin/clang++ \
   -DMLIR_DIR=/opt/homebrew/opt/llvm@20/lib/cmake/mlir \
-  -DLLVM_DIR=/opt/homebrew/opt/llvm@20/lib/cmake/llvm
+  -DLLVM_DIR=/opt/homebrew/opt/llvm@20/lib/cmake/llvm \
+  -DLLMCP_MODEL_DIR=/Users/guorui/Work/models/qwen3.5-4b
 cmake --build build -j 8
 
-# 2. 全量测试：14 个 CTest 目标
+# 2. 全量测试：默认 14 个 CTest 目标
 ctest --test-dir build --output-on-failure
+
+# 真实模型路径可用 CMake 变量或环境变量覆盖：
+#   cmake -S . -B build -DLLMCP_MODEL_DIR=/path/to/qwen3.5-4b
+#   LLMCP_MODEL_DIR=/path/to/qwen3.5-4b cmake -S . -B build
+# 模型目录不存在时，依赖真实模型的测试会自动跳过。
 
 # 3. 检查真实模型配置与权重布局（只读 header）
 ./build/bin/llmcp-inspect --model /Users/guorui/Work/models/qwen3.5-4b

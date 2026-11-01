@@ -24,10 +24,10 @@ else()
     "lit or FileCheck not found; the llmcp-lit test will not be registered")
 endif()
 
-if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
+if(EXISTS "${LLMCP_MODEL_DIR}/config.json")
   add_test(NAME llmcp-dump-real
     COMMAND $<TARGET_FILE:llmcp-dump>
-      --model /Users/guorui/Work/models/qwen3.5-4b
+      --model "${LLMCP_MODEL_DIR}"
       --verify-module --print-stats
       -o "${CMAKE_BINARY_DIR}/qwen35_graph.mlir")
   set_tests_properties(llmcp-dump-real PROPERTIES TIMEOUT 120)
@@ -47,23 +47,23 @@ if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
 
   add_test(NAME llmcp-pack-real
     COMMAND $<TARGET_FILE:llmcp-pack>
-      --model /Users/guorui/Work/models/qwen3.5-4b --dry-run)
+      --model "${LLMCP_MODEL_DIR}" --dry-run)
   set_tests_properties(llmcp-pack-real PROPERTIES TIMEOUT 120)
 
   add_test(NAME llmcp-pack-real-q8
     COMMAND $<TARGET_FILE:llmcp-pack>
-      --model /Users/guorui/Work/models/qwen3.5-4b --quant q8_0 --dry-run)
+      --model "${LLMCP_MODEL_DIR}" --quant q8_0 --dry-run)
   set_tests_properties(llmcp-pack-real-q8 PROPERTIES TIMEOUT 120)
 
   add_test(NAME llmcp-tokenizer
     COMMAND $<TARGET_FILE:llmcp-run> --tokenize-only --text Hello
-      --tokenizer /Users/guorui/Work/models/qwen3.5-4b/tokenizer.json
+      --tokenizer "${LLMCP_MODEL_DIR}/tokenizer.json"
       --expect-token 9419)
   set_tests_properties(llmcp-tokenizer PROPERTIES TIMEOUT 120)
 
   add_test(NAME llmcp-chat-template
     COMMAND $<TARGET_FILE:llmcp-run> --tokenize-only --chat --text Hello
-      --tokenizer /Users/guorui/Work/models/qwen3.5-4b/tokenizer.json)
+      --tokenizer "${LLMCP_MODEL_DIR}/tokenizer.json")
   set_tests_properties(llmcp-chat-template PROPERTIES
     PASS_REGULAR_EXPRESSION
     "248045,846,198,9419,248046,198,248045,74455,198,248068,198"
@@ -71,15 +71,17 @@ if(EXISTS "/Users/guorui/Work/models/qwen3.5-4b/config.json")
 
   add_test(NAME llmcp-compile-real
     COMMAND $<TARGET_FILE:llmcp-compile>
-      --model /Users/guorui/Work/models/qwen3.5-4b
+      --model "${LLMCP_MODEL_DIR}"
       --emit=llvm-ir --out "${CMAKE_BINARY_DIR}/qwen35_aot_test.ll")
   set_tests_properties(llmcp-compile-real PROPERTIES TIMEOUT 300)
 
   add_test(NAME llmcp-compile-real-q8
     COMMAND $<TARGET_FILE:llmcp-compile>
-      --model /Users/guorui/Work/models/qwen3.5-4b --quant q8_0
+      --model "${LLMCP_MODEL_DIR}" --quant q8_0
       --emit=llvm-ir --out "${CMAKE_BINARY_DIR}/qwen35_aot_q8_test.ll")
   set_tests_properties(llmcp-compile-real-q8 PROPERTIES TIMEOUT 300)
+else()
+  message(STATUS "llmcp real-model tests disabled: ${LLMCP_MODEL_DIR}/config.json not found")
 endif()
 
 find_program(LLMCP_PYTHON

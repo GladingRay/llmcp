@@ -9,6 +9,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(LLMCP_BUILD_TESTS "Build llmcp tests" ON)
 
+# Directory of the real Qwen3.5 model used by integration tests. It can be
+# overridden at configure time (-DLLMCP_MODEL_DIR=...) or through the
+# LLMCP_MODEL_DIR environment variable.
+set(LLMCP_MODEL_DIR "$ENV{LLMCP_MODEL_DIR}" CACHE PATH
+    "Path to the Qwen3.5 model directory used by integration tests")
+if(NOT LLMCP_MODEL_DIR)
+  set(LLMCP_MODEL_DIR "/Users/guorui/Work/models/qwen3.5-4b" CACHE PATH
+      "Path to the Qwen3.5 model directory used by integration tests" FORCE)
+endif()
+
 # The SDK's libz.1.tbd is not understood by the Homebrew clang 20 linker on
 # this machine. Use the Homebrew zlib instead; it is already a dependency of
 # llvm@20.

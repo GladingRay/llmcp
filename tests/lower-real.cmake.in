@@ -1,5 +1,5 @@
 execute_process(
-  COMMAND "@LLMCP_DUMP@" --model /Users/guorui/Work/models/qwen3.5-4b
+  COMMAND "@LLMCP_DUMP@" --model "@LLMCP_MODEL_DIR@"
           --verify-module -o "@LLMCP_GRAPH@"
   RESULT_VARIABLE dump_result)
 if(NOT dump_result EQUAL 0)
