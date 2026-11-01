@@ -1,10 +1,13 @@
 # llmcp：Qwen3.5-4B 的 MLIR CPU 编译器
 
-> 技术路线与架构设计（v0.1）
+> 技术路线与架构设计（v0.2，2026-11-01）
 >
 > 配套文档：[Qwen3.5-4B 模型规格与编译契约](model-spec.md)
 >
-> 代码仓库：`/Users/guorui/Work/llmcp`（当前处于设计阶段，`include/`、`src/`、`tests/` 为空）
+> 代码仓库：`/Users/guorui/Work/llmcp`
+>
+> 实现状态：CPU AOT 路径、真实模型对齐、FlashAttention-2、OpenMP 并行化、
+> Q8_0 量化均已落地；本文档保留原始架构设计，同时用“当前状态”标注实际进度。
 
 ---
 
@@ -27,7 +30,7 @@ config.json + safetensors + tokenizer
   linalg + scf + vector + memref + llvm dialect
         │
         ▼
-  LLVM IR ──► AOT .dylib / .so（默认）或 ORC JIT（开发调试）
+  LLVM IR ──► AOT .dylib / .so（当前路径）
         │
         ▼
   llmcp-runtime：tokenizer、session、采样、线程池、权重 mmap
@@ -287,6 +290,10 @@ y = h + mlp(rms_norm_zero(h))
 
 ### 4.1 目录结构
 
+> 注：下面的目录树是设计阶段的目标结构；`TileAndVectorize.cpp`、`PlanArena.cpp`、
+> `Session.cpp` 等尚未实现。当前实际存在的 pass 以 `lib/Dialect/LLMCP/Transforms/`
+> 和 `tools/llmcp-compile/llmcp-compile.cpp` 为准。
+
 ```text
 llmcp/
 ├── CMakeLists.txt
@@ -324,7 +331,7 @@ llmcp/
 │   └── Support/
 │       ├── Json.h
 │       └── Memory.h
-├── lib/                              # 由现有空 src/ 重命名
+├── lib/
 │   ├── Dialect/LLMCP/IR/
 │   │   ├── CMakeLists.txt            # add_mlir_dialect_library(MLIRLLMCPDialect ...)
 │   │   ├── LLMCPDialect.cpp
@@ -335,10 +342,7 @@ llmcp/
 │   │   ├── LowerCausalConv1d.cpp
 │   │   ├── LowerGatedDeltaNet.cpp
 │   │   ├── LowerAttention.cpp
-│   │   ├── TileAndVectorize.cpp
-│   │   ├── PlanArena.cpp
-│   │   ├── Parallelize.cpp
-│   │   └── VerifyModel.cpp
+│   │   └── Parallelize.cpp
 │   ├── Conversion/LLMCPToLLVM/
 │   │   └── LLVMExport.cpp
 │   ├── Model/
@@ -1350,29 +1354,32 @@ clang++ -O3 -mcpu=apple-m2 -shared -o libqwen35.dylib model.ll llmcp_runtime.o
 
 ### 7.8 Pass pipeline 示例
 
+当前实际命令（2026-11-01）：
+
 ```bash
 llmcp-compile \
   --model /Users/guorui/Work/models/qwen3.5-4b \
-  --weights /Users/guorui/Work/models/qwen3.5-4b/weights.bin \
-  --emit=shared --out=build/libqwen35.dylib \
-  --target=apple-m2 --precision=bf16 \
-  --prefill=dynamic --threads=8 \
-  --mlir-print-ir-after=llmcp-tile-and-vectorize \
-  --verify-each
+  --emit=shared --out=build/libqwen35_aot.dylib
 ```
 
-内部 pass pipeline（C++ `PassManager`）：
+Q8 版本：
 
-```cpp
-pm.addPass(llmcp::createLowerToLinalgPass({/*mode=*/Mode::Both}));
-pm.addPass(createCanonicalizerPass());
-pm.addPass(createCSEPass());
-pm.addPass(llmcp::createFuseElementwisePass());
-pm.addPass(llmcp::createTileAndVectorizePass({/*target=*/Target::AppleM2}));
-pm.addPass(createOneShotBufferizePass());
-pm.addPass(llmcp::createPlanArenaPass());
-pm.addPass(llmcp::createParallelizePass());
-pm.addPass(llmcp::createLowerToLLVMPass());
+```bash
+llmcp-compile \
+  --model /Users/guorui/Work/models/qwen3.5-4b \
+  --quant q8_0 --emit=shared --out=build/libqwen35_aot_q8.dylib
+```
+
+内部工具链：
+
+```text
+llmcp-lower-to-linalg
+  -> llmcp-parallelize
+  -> linalg-fuse-elementwise-ops
+  -> one-shot-bufferize
+  -> convert-linalg-to-parallel-loops
+  -> convert-scf-to-openmp / convert-openmp-to-llvm
+  -> LLVM lowering
 ```
 
 ### 7.9 调试与可观测性
@@ -1798,7 +1805,7 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-10-25）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，长序列 decode 仍漂移；完整图 AOT 代码生成（LLVM IR/object/shared）已完成，AOT 运行时驱动已支持多 token prefill / greedy decode，并修复了 matmul accumulator 未初始化导致的 NaN；4 token 贪心与 HF 一致；LinearOp/LmHeadOp 在 arm64 上已降为 `llvm.aarch64.neon.bfdot`，进一步 tiling/threading 和采样仍待做。
+> 当前进度（2026-11-01）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，4 token 贪心与 HF 一致；完整图 AOT 代码生成（LLVM IR/object/shared）已完成；LinearOp/LmHeadOp 在 arm64 上使用 `bfdot`，full attention 已改为 FlashAttention-2 风格 online softmax；OpenMP 并行化、elementwise 融合、Q8_0 权重 + Q8_1 预量化激活 + `sdot` 的量化路径已接入真实模型 AOT。当前仍未完成通用 tiling、采样（temperature/top-k/top-p）、长序列系统对齐和视觉/MTP。
 
 - [x] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [x] `LLMCPDialect`/`LLMCPOps`（全部 10 个 op）。
@@ -1821,23 +1828,25 @@ M0 权重布局/参考数据
 - [x] `llmcp.causal_conv1d`、`gated_delta_net`（decode）。
 - [x] gated RMSNorm、A_log/dt_bias 处理。
 - [x] 32 层循环；三类状态；KV cache 布局（C++ runner）。
-- [x] 多 token prefill / 贪心生成（前两个 decode token 对齐 HF）。
+- [x] 多 token prefill / 贪心生成（4 token 贪心对齐 HF）。
 - [x] `llmcp.attention` 的 decode KV scan。
 
 **M3**
 
 - [ ] chunked DeltaNet（含三角求解）；与 recurrent 对比。
-- [ ] flash attention prefill；causal mask；online softmax。
-- [ ] 自定义 tile/vectorize pass；GEMV 专用 schedule。
-- [ ] `scf.forall` → 线程池；arena 规划；bucket。
-- [ ] benchmark 脚本与 roofline 报告。
+- [x] flash attention prefill；causal mask；online softmax。
+- [ ] 通用 tile/vectorize pass（当前没有；使用手写 bfdot/sdot 内核）。
+- [x] `scf.forall` / `scf.parallel` -> OpenMP；arena 规划。
+- [x] benchmark 脚本与真实模型性能记录。
 
 **M4**
 
-- [ ] W8/W4 pack；qmatmul lowering；int8 dot（microkernel 或 vector）。
-- [ ] CLI（`llmcp-run`）、C API、chat template、采样。
-- [ ] 量化精度报告；性能对比。
-- [ ] 文档/示例/错误处理。
+- [x] Q8_0 pack；qmatmul lowering；ARM `sdot` int8 dot。
+- [ ] W4 pack / K-quants。
+- [x] CLI（`llmcp-run`）、AOT C ABI、chat template、greedy decode。
+- [ ] temperature / top-k / top-p 采样。
+- [x] Q8 精度报告；性能对比。
+- [x] 主要文档/示例/错误处理。
 
 **M5**
 
@@ -1982,8 +1991,8 @@ Ninja:     1.13.2
 | `lib/Dialect/LLMCP/Transforms/LowerToLinalg.cpp` | 语义降级入口 |
 | `lib/Model/WeightLayout.cpp` | 权重偏移的唯一真源 |
 | `lib/Model/ModelBuilder.cpp` | 生成 prefill/decode IR |
-| `lib/Dialect/LLMCP/Transforms/TileAndVectorize.cpp` | 性能关键 pass |
-| `lib/Runtime/Session.cpp` | 状态/采样/调度 |
+| `lib/Dialect/LLMCP/Transforms/Parallelize.cpp` | `llmcp.parallel` -> OpenMP |
+| `lib/Runtime/AotRuntime.cpp` | arena / AOT 调用 / 状态 |
 | `tests/lit/` | IR 回归 |
 | `python/reference/dump_golden.py` | 数值基准 |
 

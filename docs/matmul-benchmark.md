@@ -148,3 +148,30 @@ attention、DeltaNet、RMSNorm、embedding、输出 copy 等未计入。
 - lm_head 之外的 embedding。
 
 这些算子目前由自定义 lowering 生成循环，不是独立的 named matmul。
+
+
+## 7. Q8_0 matmul（2026-11-01）
+
+`llmcp-matmul-benchmark --q8` 走：
+
+```text
+Q8_0 权重
++ activation 预量化
++ ARM sdot
++ f32 scale 累加
+```
+
+Apple M2，4 线程，全 1 输入：
+
+```text
+256x256x256:
+  bf16: 29.9 GFLOPS
+  q8:   32.7 GFLOPS
+
+M=16, N=8192, K=2560:
+  bf16: 55.9 GFLOPS
+  q8:   189.5 GFLOPS
+```
+
+Q8 在大 N/K 下收益明显，主要来自权重流量减半和 sdot 吞吐。
+当前 bf16 路径仍使用 `bfdot`，Q8 路径使用 `sdot`。

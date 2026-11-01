@@ -712,8 +712,8 @@ Q8 embedding 查表 lowering；首期保持 tied embedding 为 bf16。
 - numeric `linear_q8` / `lm_head_q8`；
 - Q8 reference 使用量化后的输入和权重计算。
 
-当前 Q8 路径是 scalar lowering，尚未接入 ARM `sdot`，也尚未让真实模型
-`llmcp-run` 直接消费 Q8 arena。下一步 M3 做 NEON sdot 和真实模型对齐。
+M2 阶段先用 scalar lowering 验证语义和 numeric；随后在 M3 中已经改成
+ARM `sdot` 并接入真实模型 AOT。当前状态以第 16 节为准。
 
 
 ## 16. M3 进展
@@ -755,5 +755,5 @@ Q8 的收益主要来自：
 - Q8 AOT `next 11`，greedy `0 271 760 2614`；
 - Q8 vs bf16 logits：`max_abs 0.509`、`mean_abs 0.087`，top1/top5 一致。
 
-当前 Q8 仍只量化 linear/lm_head 的 matmul 权重（首期 lm_head/embedding 为 bf16），
+当前 Q8 只量化 linear matmul 权重；embedding/lm_head（tied）保持 bf16，
 attn/DeltaNet 的 state 和 KV cache 仍保持 bf16。

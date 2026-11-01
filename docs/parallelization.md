@@ -1,5 +1,9 @@
 # 算子并行化
 
+> 状态（2026-11-01）：OpenMP 并行、N 维 matmul 并行、RMSNorm 合并、
+> elementwise 融合均已落地；Q8 路径使用 sdot。本文的性能数字来自早期
+> 单机测量，绝对值会受 page cache / 内存压力影响。
+
 ## 1. 方案
 
 当前使用 OpenMP 作为 CPU 并行后端：
@@ -180,3 +184,31 @@ decode:  约 6.4-6.6 s
 ```
 
 融合前同条件约 7.0-7.3 s，约有 5-10% 改善。
+
+
+## 11. Q8 路径
+
+Q8 matmul 也接入同一套并行化 pipeline：
+
+```text
+activation 预量化 row loop -> llmcp.parallel
+Q8 dot 的 N 维 loop     -> llmcp.parallel
+```
+
+Q8 使用：
+
+```text
+llvm.aarch64.neon.sdot
+```
+
+而不是 bf16 的 `bfdot`。
+
+Apple M2，4 线程，全 1 输入：
+
+```text
+M=16, N=8192, K=2560:
+  bf16/bfdot: 约 55.9 GFLOPS
+  q8/sdot:    约 189.5 GFLOPS
+```
+
+完整模型 Q8 结果和精度见 [int8-quantization.md](int8-quantization.md)。

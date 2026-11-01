@@ -1,6 +1,6 @@
 # llmcp
 
-基于 MLIR 的 Qwen3.5-4B 大模型 CPU 推理编译器。
+基于 MLIR 的 Qwen3.5-4B CPU 推理编译器。
 
 ## 目标
 
@@ -12,10 +12,10 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
                                               llmcp-runtime（tokenizer/session/采样）
 ```
 
-- 后端：CPU（Apple M2 / arm64 优先，后续 x86_64）
-- 工具链：MLIR 20（Homebrew `llvm@20`）
-- 模型：`/Users/guorui/Work/models/qwen3.5-4b`
-- 主体语言：C++17；Python 仅用于参考实现和脚本
+- 后端：CPU，Apple M2 / arm64 优先；
+- 工具链：MLIR 20（Homebrew `llvm@20`）；
+- 模型：`/Users/guorui/Work/models/qwen3.5-4b`；
+- 主体语言：C++17；Python 仅用于参考实现、测试和脚本。
 
 ## 环境
 
@@ -26,36 +26,88 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 
 ## 文档
 
-- [技术路线与架构设计](docs/design.md)：分层架构、方言设计、pass pipeline、内核、运行时、里程碑、风险、ADR
-- [模型规格与编译契约](docs/model-spec.md)：Qwen3.5-4B 的精确形状、公式、状态布局、数值语义
-- [INT8 量化方案](docs/int8-quantization.md)：Q8_0/Q8_1、打包、sdot 和真实模型接入
-- [FlashAttention-2](docs/flash-attention.md)：online softmax 和 key tiling
+- [技术路线与架构设计](docs/design.md)：分层架构、方言、pass pipeline、内核、里程碑、风险、ADR
+- [模型规格与编译契约](docs/model-spec.md)：Qwen3.5-4B 的形状、公式、状态布局、数值语义
+- [真实权重数值对齐](docs/real-alignment.md)：单 token、AOT、Q8 对齐结果
+- [FlashAttention-2](docs/flash-attention.md)：full attention 的 online softmax + key tiling
+- [算子并行化](docs/parallelization.md)：OpenMP、RMSNorm 合并、elementwise 融合、benchmark
+- [INT8 量化](docs/int8-quantization.md)：Q8_0/Q8_1、llmcp-pack、sdot、真实模型接入
+- [matmul benchmark](docs/matmul-benchmark.md)：模型 matmul shape 与单算子性能
+- [CacheLineAlignedVector](docs/cache-line-aligned-vector.md)：128 字节对齐的 tensor 存储
+- [历史性能记录](docs/performance.md)：2026-10-26 的原始 benchmark
 
 ## 当前状态
 
-M0 基础设施已落地：
+当前已经可以端到端运行真实 Qwen3.5-4B 文本模型：
 
-- CMake + MLIR 20 构建，`llmcp-opt` 可解析/打印/校验 IR
-- `llmcp` 方言：`linear`/`rms_norm`/`add`/`silu_mul`/`embedding`/`lm_head`/`causal_conv1d`/`gated_delta_net`/`attention`/`gated_rms_norm`，含 TableGen 定义与 C++ verifier
-- `ModelConfig`：解析并校验 `config.json`（层类型、GQA、RoPE、mRoPE、线性注意力头数等）
-- `Safetensors`：只读 header，不加载 tensor 数据
-- `WeightLayout`：文本权重 arena 的确定性偏移、64B 对齐、group stride
-- `llmcp-inspect`：对真实 Qwen3.5-4B 输出 32 层 / 738 tensor / 8.41GB 文本布局
-- `ModelBuilder`：生成完整 prefill 计算图，包含 embedding、32 层、final norm、lm_head，以及 4 个入口函数
-- `llmcp-dump`：把完整计算图 dump 成 `.mlir`，支持 `--verify-module` 和 `--print-stats`
-- `llmcp-lower-to-linalg`：已覆盖全部 10 类算子（含 `attention`），整图 lowering 后不再残留 `llmcp` op；`LinearOp` / `LmHeadOp` 使用 32-lane tile + vector dot 路径（arm64 上直接生成 `bfdot`），attention 支持 `position` / `cache_length`
-- `llmcp-pack`：真实权重打包为 8.41GB arena + JSON manifest
-- `llmcp-compile`：完整 llmcp 图经过 linalg、elementwise 融合、OpenMP 算子并行化、bfdot，再 AOT 降级到 LLVM IR / object / shared library，导出 4 个 `llmcp_*` 入口
-- `llmcp-benchmark`：加载 AOT dylib，统计 prefill/decode 耗时与 token/s
-- `llmcp-matmul-benchmark`：生成单个 `llmcp.linear`，并行 AOT 到 dylib，输出 GFLOPS
-- `CacheLineAlignedVector`：128 字节对齐的 tensor 存储，供 runner/benchmark/runtime 共用
-- INT8 量化：Q8_0 权重打包 + Q8_1 预量化激活 + ARM sdot matmul，设计见 `docs/int8-quantization.md`
-- full attention：FlashAttention-2 风格 online softmax + key tiling
-- `llmcp-microbench`：本机 CPU 标量/NEON/FP16/BF16/I8 峰值 FLOPS 与内存带宽
-- `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode、Qwen chat template、逐 token 流式输出；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
-- 测试：14 个 CTest 目标（lit、真实模型 dump/lower/pack/compile、tokenizer、chat-template、numeric、matmul benchmark、Q8 benchmark、microbench、gtest）全部通过
+```text
+safetensors
+  -> llmcp dialect
+  -> linalg / scf / vector / LLVM
+  -> AOT dylib
+  -> llmcp-run：tokenizer / prefill / greedy decode / 流式输出
+```
 
-当前处于 M1 早期：手写路径已完成单 token 对齐和多 token prefill/greedy decode（长序列仍有漂移）；完整图 AOT 代码生成和多 token AOT prefill/greedy decode 已完成，4 token 贪心结果与 HF 一致；Linear/LmHead 已生成 arm64 `bfdot` matmul，所有算子已接入 OpenMP 并行化；采样仍待做。
+已实现：
+
+- `llmcp` 方言 10 类算子：
+  `linear`、`rms_norm`、`add`、`silu_mul`、`embedding`、`lm_head`、
+  `causal_conv1d`、`gated_delta_net`、`attention`、`gated_rms_norm`；
+- `ModelConfig` / `Safetensors` / `WeightLayout`：
+  真实模型 32 层、738 tensor、文本 arena 8.41GB；
+- `ModelBuilder`：
+  embedding、24 层 Gated DeltaNet、8 层 full attention、MLP、final norm、tied lm_head；
+- `llmcp-dump`：
+  导出完整 prefill 图，支持 `--verify-module` 和 `--print-stats`；
+- `llmcp-lower-to-linalg`：
+  全部 10 类算子 lowering；
+  Linear/LmHead 在 arm64 上使用 `bfdot`；
+  attention 使用 FlashAttention-2 风格 online softmax + key tiling；
+- `llmcp-pack`：
+  bf16 arena + JSON manifest；
+  `--quant q8_0` 生成 Q8_0 arena；
+- `llmcp-compile`：
+  完整图经过 linalg、elementwise 融合、OpenMP 并行化、
+  bf16/bfdot 或 Q8/sdot，AOT 到 LLVM IR / object / shared library；
+  `--quant q8_0` 编译真实 Q8 模型；
+- `llmcp-run`：
+  mmap arena、tokenizers-cpp、chat template、流式输出、
+  多 token prefill + greedy decode、`--aot` 和 Q8 AOT；
+- `llmcp-benchmark` / `llmcp-matmul-benchmark` / `llmcp-microbench`；
+- `CacheLineAlignedVector`：128 字节对齐 tensor 存储。
+
+当前结果：
+
+```text
+单 token bf16 对齐：
+  max_abs  1.875e-01
+  mean_abs 2.476e-02
+  top1     11 / 11
+  top5     5/5
+
+4 token greedy：
+  tokens: 0 271 760 2614
+
+Q8 AOT：
+  next 11
+  tokens: 0 271 760 2614
+  Q8 vs bf16 logits: max_abs 0.509, mean_abs 0.087
+  top1/top5 一致
+
+Q8 权重：
+  bf16 arena 8.41 GB
+  Q8 arena   5.07 GB
+  （embedding/lm_head 仍为 bf16）
+```
+
+当前限制：
+
+- 只支持文本模型，视觉塔和 MTP 尚未纳入；
+- 长序列 AOT decode 还没有系统性对齐；
+- 采样目前只有 greedy，temperature/top-k/top-p 未实现；
+- Q8 只量化 linear matmul，embedding/lm_head、KV cache、DeltaNet state 仍为 bf16/f32；
+- 没有通用 tiling pass，性能仍主要依赖 OpenMP、bfdot/sdot 和循环顺序；
+- 所有性能数字受本机 page cache / 内存压力影响，趋势比绝对值更可靠。
 
 ## 构建与测试
 
@@ -72,27 +124,25 @@ cmake -G Ninja -S . -B build \
   -DLLVM_DIR=/opt/homebrew/opt/llvm@20/lib/cmake/llvm
 cmake --build build -j 8
 
-# 2. 测试
+# 2. 全量测试：14 个 CTest 目标
 ctest --test-dir build --output-on-failure
 
 # 3. 检查真实模型配置与权重布局（只读 header）
 ./build/bin/llmcp-inspect --model /Users/guorui/Work/models/qwen3.5-4b
 
-# 4. 解析/打印 llmcp IR，并测试 lowering
+# 4. IR / lowering
 ./build/bin/llmcp-opt tests/lit/Dialect/LLMCP/ops.mlir
 ./build/bin/llmcp-opt tests/lit/Conversion/lower-linear.mlir --llmcp-lower-to-linalg
 
-# 5. dump 完整计算图
+# 5. dump 完整 prefill 图
 ./build/bin/llmcp-dump --model /Users/guorui/Work/models/qwen3.5-4b \
   --verify-module --print-stats -o build/qwen35_graph.mlir
 
-# 6. 数值测试（linear / rms_norm / add / silu_mul / embedding /
-#    gated_rms_norm / lm_head / causal_conv1d / gated_delta_net / attention，
-#    对 PyTorch 参考）
+# 6. numeric（10 类算子，含 Q8 linear/lm_head）
 ctest --test-dir build -R llmcp-numeric --output-on-failure
 ```
 
-当前 dump 的是 **prefill 图**（32 层展开）。`--print-stats` 输出：
+`--print-stats` 当前输出：
 
 ```text
 functions: 4
@@ -110,40 +160,35 @@ checkpoint bytes: 9319737856
 arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 ```
 
-文本 arena 为 8.41GB；视觉塔和 MTP 尚未纳入文本编译布局。
-
-## 后续（规划中）
+## 常用命令
 
 ```bash
-# 打包权重（已实现）
+# 打包 bf16 权重
 ./build/bin/llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b \
   --out build/weights.bin --manifest build/weights.json
 
-# 只校验，不写 8.4GB 文件
+# 只校验，不写 arena
 ./build/bin/llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b --dry-run
 
-# AOT 编译模型（已实现）
+# 打包 Q8_0 权重
+./build/bin/llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b \
+  --quant q8_0 --out build/weights-q8.bin --manifest build/weights-q8.json
+
+# AOT 编译 bf16 / Q8
 ./build/bin/llmcp-compile --model /Users/guorui/Work/models/qwen3.5-4b \
   --emit=shared --out build/libqwen35_aot.dylib
+./build/bin/llmcp-compile --model /Users/guorui/Work/models/qwen3.5-4b \
+  --quant q8_0 --emit=shared --out build/libqwen35_aot_q8.dylib
 
-# 已有 C++ 多 token prefill / greedy decode 执行器
+# 手写路径：单 token golden / 多 token greedy
 ./build/bin/llmcp-run --weights build/weights.bin \
   --manifest build/weights.json --text Hello --golden build/golden_logits.bin
-
-# 多 token prefill / greedy decode
 ./build/bin/llmcp-run --weights build/weights.bin \
   --manifest build/weights.json --text 'Hello world' --max-new-tokens 2
 
-# AOT 多 token 路径
+# AOT bf16 / Q8
 ./build/bin/llmcp-run --weights build/weights.bin \
-  --manifest build/weights.json --text Hello \
-  --aot build/libqwen35_aot.dylib
-
-# Q8 权重 AOT
-./build/bin/llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b \
-  --quant q8_0 --out build/weights-q8.bin --manifest build/weights-q8.json
-./build/bin/llmcp-compile --model /Users/guorui/Work/models/qwen3.5-4b \
-  --quant q8_0 --emit=shared --out build/libqwen35_aot_q8.dylib
+  --manifest build/weights.json --text Hello --aot build/libqwen35_aot.dylib
 ./build/bin/llmcp-run --weights build/weights-q8.bin \
   --manifest build/weights-q8.json --text Hello \
   --aot build/libqwen35_aot_q8.dylib
@@ -158,13 +203,13 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
   --manifest build/weights.json --aot build/libqwen35_aot.dylib \
   --prefill-tokens 16 --decode-tokens 4
 
-# 单算子 matmul AOT 微基准
+# 单算子 matmul benchmark；--q8 走 Q8/sdot
 ./build/bin/llmcp-matmul-benchmark --m 256 --n 256 --k 256 --iters 10 --threads 4
+./build/bin/llmcp-matmul-benchmark --m 16 --n 8192 --k 2560 --iters 5 --threads 4 --q8
 
-# CPU 指令与带宽微基准
+# CPU 指令与带宽 microbench
 ./build/bin/llmcp-microbench --seconds 1 --buffer-mb 256
 ```
-
 
 ## License
 

@@ -396,9 +396,9 @@ lm_head 0.636B × 2 FLOP      = 1.27 GFLOP
 合计                          ≈ 8.41 GFLOP/token
 ```
 
-- Decode 是带宽/计算混合受限：BF16 权重 9.32GB，M2 理论带宽约 100GB/s，仅权重读取就约 93ms/token；因此 BF16 decode 的理论上限约 10 token/s，实际预计 4–7 token/s。
-- Prefill 是计算受限：512 token ≈ 4.3 TFLOP。按有效 50–100 GFLOPS 估算，需要 40–90 秒；这是 CPU 后端最大的性能瓶颈。
-- 量化要真正提速，不能只做“dequant 后 f32 FMA”，而要用 `sdot/udot`/`i8mm` 做 int8 点积，才能同时降低带宽和提高算力。
+- Decode 是带宽/计算混合受限：BF16 权重约 9.32GB，M2 理论带宽约 100GB/s，仅权重读取就约 93ms/token；这是理论上限估算，实际受 page cache、内存压力和线程调度影响。
+- Prefill 是计算受限：512 token ≈ 4.3 TFLOP；实际耗时取决于 OpenMP 线程数、bfdot/sdot 和内核对齐。
+- 量化要真正提速，不能只做“dequant 后 f32 FMA”，而要用 `sdot/udot`/`i8mm` 做 int8 点积。当前 Q8 路径已使用 ARM `sdot`。
 
 ---
 
@@ -492,16 +492,18 @@ mtp.*
 
 ---
 
-## 13. 待确认问题（M0 阶段逐项验证）
+## 13. 工程验证项与当前状态
 
-1. HF CPU bf16 matmul 的实际累加精度（oneDNN/MKL 路径）是否与我们的 f32 累加一致到容差内。
-2. `torch_chunk_gated_delta_rule` 与 recurrent 在长序列上的数值偏差；决定 prefill 用 chunk 还是分段 recurrent。
-3. `linear_attn` 对 padding token 的 mask 行为；batch=1 无 padding 时是否可忽略。
-4. 全注意力 prefill 的 causal mask 构造是否包含 `-inf` 行（全 mask 行）处理。
-5. RoPE cos/sin 的 dtype 截断对 logits 的影响；是否需要严格 bf16 表。
-6. 视觉塔的 position embedding 插值、2D rope、merger 细节（v1 后）。
-7. MTP 的 fc 输入拼接顺序与 draft 采样接口（v1 后）。
-8. tokenizer 的 NFC 归一化与 pre-tokenizer 正则的完整边界（emoji、组合字符、零宽字符）。
+> 下列问题大部分已在真实权重路径验证；剩余项在后续长序列/多模态工作中继续确认。
+
+1. **[已验证]** HF CPU bf16 matmul 的累加精度与 llmcp f32 累加在单 token/4 token 对齐容差内。
+2. **[未完成]** `torch_chunk_gated_delta_rule` 与 recurrent 的长序列偏差；当前实现使用 recurrent。
+3. **[未系统验证]** `linear_attn` 对 padding token 的 mask；当前 batch=1 无 padding。
+4. **[已验证]** full attention prefill 的 causal mask；FlashAttention-2 路径已接入。
+5. **[已验证]** RoPE cos/sin dtype 截断；真实模型 top-1/top-5 对齐。
+6. **[未开始]** 视觉塔 position embedding、2D RoPE、merger。
+7. **[未开始]** MTP fc 拼接顺序与 draft 采样。
+8. **[基本验证]** tokenizer NFC / pre-tokenizer 边界；已有 tokenizer/chat-template 测试，长尾字符仍需补充。
 
 ---
 

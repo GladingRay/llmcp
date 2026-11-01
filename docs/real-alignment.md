@@ -2,7 +2,15 @@
 
 ## 当前状态
 
-已完成 **单 token、全 32 层、真实 Qwen3.5-4B 权重** 的 C++ 执行器对齐验证；多 token prefill 和 greedy decode 已接入，长序列 decode 仍在收敛。
+当前已完成 **真实 Qwen3.5-4B 权重** 的以下验证：
+
+- 单 token、全 32 层、bf16 手写路径对齐；
+- 多 token prefill / 4 token greedy decode；
+- 完整图 AOT 路径；
+- Q8_0 权重 + Q8_1 预量化激活的 AOT 路径；
+- Q8 与 bf16 的 logits/top-k 对比。
+
+长序列 AOT decode 还没有做系统性对齐。
 
 对齐对象：
 
@@ -108,35 +116,70 @@ AOT 路径严格按正常顺序执行：先加载 tokenizer，再调用 AOT，�
 
 Python 语义参考结果：
 
+当前 C++ 手写路径结果：
+
 ```text
-max_abs: 2.363281
-mean_abs: 0.376517
+max_abs: 1.875000e-01
+mean_abs: 2.476386e-02
 top1: ours=11 hf=11
 top5 overlap: 5/5
-top5 ours: [11, 0, 4858, 13, 1017]
-top5 hf:   [11, 0, 13, 1017, 4858]
+```
+
+AOT 结果：
+
+```text
+aot logits: 248320 next 11
 ```
 
 判定：
 
 - top-1 完全一致；
 - top-5 集合完全一致；
-- `max_abs < 3.0`。
+- 单 token logits 的 max_abs 远小于 1.0。
 
 这证明权重布局、embedding、32 层 token mixer / MLP、最终 norm 和 lm_head 的语义是通的。
 
+## Q8 对齐
+
+Q8_0 权重 + Q8_1 预量化激活的 AOT 路径：
+
+```text
+Q8 AOT:
+  next 11
+  tokens: 0 271 760 2614
+
+Q8 vs bf16 logits:
+  max_abs  0.509457
+  mean_abs 0.087098
+  top1     11 / 11
+  top5     [11, 0, 1017, 13, 4858] 一致
+```
+
+Q8 目前只量化 linear 权重；embedding / lm_head、KV cache、DeltaNet state
+仍保持 bf16/f32。
+
 ## 边界
 
-当前 C++ 执行器有两条路径：默认手写 `runModel`，以及 `--aot` 加载 `libqwen35_aot.dylib` 的 AOT 多 token 路径。AOT 的 NaN 已通过初始化 matmul accumulator 修复；多 token prefill / 4 token 贪心已与 HF 对齐。
+当前执行路径：
+
+```text
+llmcp-run
+  ├── 默认：手写 runModel
+  ├── --aot：bf16 AOT dylib
+  └── --aot + Q8 arena：Q8 AOT dylib
+```
 
 尚未完成：
 
-1. 更长序列的 AOT decode 数值对齐（当前 4 token 贪心与 HF 一致）；
-2. temperature / top-k / top-p 采样；
-3. 性能优化（当前仍是标量、单线程）。
+1. 更长序列的 AOT decode 数值对齐（当前 4 token 贪心一致）；
+2. temperature / top-k / top-p 采样（目前只有 greedy）；
+3. KV cache / DeltaNet state 量化；
+4. Q8 embedding / lm_head；
+5. 通用 tiling/vectorize（当前依赖 bfdot/sdot + OpenMP）。
 
 ## 下一步
 
 1. 加 temperature / top-k / top-p 采样；
-2. 用更长的 prompt / 生成序列验证 AOT 状态与 HF 的一致性；
-3. 做 tiling/vectorize，降低单 token 的几十秒级延迟。
+2. 用更长 prompt / 生成序列验证 AOT 与 HF 的一致性；
+3. 做 KV cache / DeltaNet state 量化；
+4. 继续优化量化 matmul 的 tiling 和内存访问。
