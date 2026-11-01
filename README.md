@@ -28,6 +28,8 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 
 - [技术路线与架构设计](docs/design.md)：分层架构、方言设计、pass pipeline、内核、运行时、里程碑、风险、ADR
 - [模型规格与编译契约](docs/model-spec.md)：Qwen3.5-4B 的精确形状、公式、状态布局、数值语义
+- [INT8 量化方案](docs/int8-quantization.md)：Q8_0/Q8_1、打包、sdot 和真实模型接入
+- [FlashAttention-2](docs/flash-attention.md)：online softmax 和 key tiling
 
 ## 当前状态
 
@@ -48,11 +50,10 @@ M0 基础设施已落地：
 - `llmcp-matmul-benchmark`：生成单个 `llmcp.linear`，并行 AOT 到 dylib，输出 GFLOPS
 - `CacheLineAlignedVector`：128 字节对齐的 tensor 存储，供 runner/benchmark/runtime 共用
 - INT8 量化：Q8_0 权重打包 + Q8_1 预量化激活 + ARM sdot matmul，设计见 `docs/int8-quantization.md`
-- Apple Metal 后端技术方案：见 `docs/metal-backend.md`
 - full attention：FlashAttention-2 风格 online softmax + key tiling
 - `llmcp-microbench`：本机 CPU 标量/NEON/FP16/BF16/I8 峰值 FLOPS 与内存带宽
 - `llmcp-run`：mmap arena、tokenizers-cpp HF tokenizer、cos/sin、多 token prefill + greedy decode、Qwen chat template、逐 token 流式输出；单 token 真实权重 max_abs≈0.19，top-1/top-5 对齐 HF
-- 测试：9 个 CTest 目标（lit、dump、lower、pack、tokenizer、chat-template、compile、numeric、gtest）全部通过
+- 测试：14 个 CTest 目标（lit、真实模型 dump/lower/pack/compile、tokenizer、chat-template、numeric、matmul benchmark、Q8 benchmark、microbench、gtest）全部通过
 
 当前处于 M1 早期：手写路径已完成单 token 对齐和多 token prefill/greedy decode（长序列仍有漂移）；完整图 AOT 代码生成和多 token AOT prefill/greedy decode 已完成，4 token 贪心结果与 HF 一致；Linear/LmHead 已生成 arm64 `bfdot` matmul，所有算子已接入 OpenMP 并行化；采样仍待做。
 
@@ -163,3 +164,8 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 # CPU 指令与带宽微基准
 ./build/bin/llmcp-microbench --seconds 1 --buffer-mb 256
 ```
+
+
+## License
+
+MIT License，见 [LICENSE](LICENSE)。
