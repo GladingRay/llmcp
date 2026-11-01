@@ -21,7 +21,7 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 
 - LLVM/MLIR 20.1.8（Homebrew `llvm@20`）
 - Python：`/Users/guorui/Work/models/venv314`（Python 3.14.8，`torch 2.14.1`，`transformers 5.20.2`）
-- 第三方源码：git submodule 固定版本（`utf8proc v2.11.0`、`googletest v1.18.0`、`tokenizers-cpp`），见 [third_party/README.md](third_party/README.md)
+- 第三方源码：git submodule 固定版本（`googletest v1.18.0`、`tokenizers-cpp`），见 [third_party/README.md](third_party/README.md)
 - 依赖清单、用途与安装命令见 [设计文档 4.3 节](docs/design.md#43-依赖清单与用途)
 
 ## 文档
@@ -113,7 +113,7 @@ Q8 权重：
 
 ```bash
 # 0. 拉取 vendored 第三方源码
-git submodule update --init third_party/utf8proc third_party/googletest third_party/tokenizers-cpp
+git submodule update --init third_party/googletest third_party/tokenizers-cpp
 
 # 1. 构建（C/C++ 都用 Homebrew clang 20）
 cmake -G Ninja -S . -B build \

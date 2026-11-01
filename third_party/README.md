@@ -4,7 +4,6 @@
 
 | 路径 | 版本 | 固定 commit | 许可证 | 用途 |
 |---|---|---|---:|---|
-| `third_party/utf8proc` | v2.11.0 | `d7bf128df773c2a1a7242eb80e51e91a769fc985` | MIT | Unicode NFC 归一化与字符分类；用于 Qwen BPE tokenizer 的预分词 |
 | `third_party/googletest` | v1.18.0 | `063de7e9578f82b369302001269680b4b1553359` | BSD-3-Clause | C++ 单元测试（`gtest` / `gtest_main`） |
 | `third_party/tokenizers-cpp` | main (`418d0b3`) | `418d0b308a8cfc331c66ac17dc29f0dee440a1f2` | Apache-2.0 | HuggingFace `tokenizer.json` 的 C++ 绑定；HF-only 构建只需要 `huggingface_tokenizer.cc` + Rust `tokenizers` |
 
@@ -13,7 +12,7 @@
 ```bash
 # tokenizers-cpp 的 msgpack/sentencepiece 子模块不参与 HF-only 构建，
 # 不要加 --recursive，否则会去拉不可达的旧 commit。
-git submodule update --init third_party/utf8proc third_party/googletest third_party/tokenizers-cpp
+git submodule update --init third_party/googletest third_party/tokenizers-cpp
 ```
 
 `tokenizers-cpp` 的 Rust wrapper 需要 `cargo`；默认从本地 cargo cache 离线构建，可传
@@ -24,7 +23,7 @@ git submodule update --init third_party/utf8proc third_party/googletest third_pa
 ```bash
 git clone <repo-url>
 cd llmcp
-git submodule update --init third_party/utf8proc third_party/googletest third_party/tokenizers-cpp
+git submodule update --init third_party/googletest third_party/tokenizers-cpp
 ```
 
 ## 版本升级流程
@@ -32,12 +31,12 @@ git submodule update --init third_party/utf8proc third_party/googletest third_pa
 不要直接在子模块里 `git pull` 后提交。按下面步骤升级，保证根仓库记录的是明确的 commit：
 
 ```bash
-cd third_party/utf8proc
+cd third_party/googletest
 git fetch --tags
 git checkout vX.Y.Z
 cd ../..
-git add third_party/utf8proc .gitmodules
-git commit -m "Bump utf8proc to vX.Y.Z"
+git add third_party/googletest .gitmodules
+git commit -m "Bump googletest to vX.Y.Z"
 ```
 
 `googletest` 同理。升级后同步更新本文件的版本表和 `docs/design.md` 的依赖清单。
@@ -52,13 +51,11 @@ add_subdirectory(third_party)
 
 `third_party/CMakeLists.txt` 会关闭 vendored 项目的安装和测试目标，避免污染主工程：
 
-- `utf8proc`：提供 `utf8proc` 目标
 - `googletest`：提供 `GTest::gtest`、`GTest::gtest_main`
 
 使用示例：
 
 ```cmake
-target_link_libraries(MLIRLLMCPRuntime PRIVATE utf8proc)
 target_link_libraries(llmcp_unittests PRIVATE GTest::gtest_main)
 ```
 

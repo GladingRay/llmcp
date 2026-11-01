@@ -402,7 +402,6 @@ llmcp/
 ├── third_party/
 │   ├── CMakeLists.txt
 │   ├── README.md
-│   ├── utf8proc/                # submodule, v2.11.0
 │   └── googletest/              # submodule, v1.18.0
 └── AGENTS.md
 ```
@@ -458,7 +457,6 @@ build/include/llmcp/Dialect/LLMCP/IR/
 | CMake | 4.1.1 | `find_package(MLIR)`、构建与测试 | 必需 | 已安装 |
 | Ninja | 1.13.2 | 构建后端 | 必需 | 已安装 |
 | Homebrew clang++ | 20.1.8 | 与 MLIR 同一工具链的 C++17 编译器 | 必需 | 已安装 |
-| utf8proc | 2.11.0 | tokenizer 的 NFC 归一化与 Unicode 分类（`\p{L}`/`\p{M}`/`\p{N}`） | 必需 | 已 vendor（submodule v2.11.0） |
 | GoogleTest | 1.18.0 | op verifier、layout、sampler、tokenizer 的 C++ 单测 | 测试必需 | 已 vendor（submodule v1.18.0） |
 | ccache | 4.14.2 | 编译缓存；MLIR/TableGen 重编译提速 | 可选（推荐） | **未安装** |
 | lit | 23.1.4 | `llmcp-opt` 的 IR 文件测试驱动 | 测试必需 | 已安装（venv314） |
@@ -482,7 +480,7 @@ build/include/llmcp/Dialect/LLMCP/IR/
 
 #### 4.3.3 明确不引入
 
-- **PCRE2 / ICU / RE2**：tokenizer 的预分词正则用 utf8proc + 手写扫描器实现，避免引入重量级正则库。
+- **PCRE2 / ICU / RE2**：tokenizer 直接使用 tokenizers-cpp 的 HuggingFace tokenizer 实现，不再自研预分词正则，也不引入重量级正则库。
 - **nlohmann/json / simdjson / RapidJSON**：用 `llvm/Support/JSON.h` 解析 config、manifest、tokenizer.json。
 - **CLI11 / fmt / spdlog**：用 `llvm::cl`、`llvm::formatv`、`llvm::errs`，保持与 MLIR 工具风格一致。
 - **Eigen / oneDNN / MKL / OpenBLAS**：主路径是 MLIR 生成 kernel；macOS 如需对标，用系统 `Accelerate.framework`（无需安装），不默认链接。
@@ -493,8 +491,8 @@ build/include/llmcp/Dialect/LLMCP/IR/
 #### 4.3.4 安装命令
 
 ```bash
-# 拉取 vendored 源码（utf8proc / googletest）
-git submodule update --init --recursive
+# 拉取 vendored 源码（googletest / tokenizers-cpp）
+git submodule update --init third_party/googletest third_party/tokenizers-cpp
 
 # 只缺（可选的）ccache
 brew install ccache
@@ -519,22 +517,19 @@ V=/Users/guorui/Work/models/venv314
 
 > `lit 23` 已废弃 `lit.formats.ShTest(execute_external=True)`。测试配置统一写 `lit.formats.ShTest(execute_external=False)`，使用 lit 内置 shell；`%FileCheck`、管道和常用命令都可正常工作。已用 `%FileCheck %s --input-file=%s` 做过 smoke test。
 
-`utf8proc` 和 `googletest` 已通过 git submodule 固定到 `third_party/utf8proc/` 与 `third_party/googletest/`，根工程只需：
+`googletest` 已通过 git submodule 固定到 `third_party/googletest/`；tokenizers-cpp 由 `llmcp-run` 的 CMake 单独构建 Rust/HF tokenizer。根工程只需：
 
 ```cmake
 add_subdirectory(third_party)
-target_link_libraries(MLIRLLMCPRuntime PRIVATE utf8proc)
 target_link_libraries(llmcp_unittests PRIVATE GTest::gtest_main)
 ```
 
-`third_party/CMakeLists.txt` 会关闭两个项目的 install/testing 目标，并保留 `utf8proc`、`GTest::gtest`、`GTest::gtest_main` 三个 target。子模块的版本、commit、升级流程见 [third_party/README.md](../third_party/README.md)。
-
-如果临时要用 Homebrew 的 utf8proc 版本，它只提供 `libutf8proc.pc`（在 `/opt/homebrew/opt/utf8proc/lib/pkgconfig`），没有 CMake config；此时才需要 `find_path`/`find_library` 或设置 `PKG_CONFIG_PATH`。正式构建统一用 vendored 版本。
+`third_party/CMakeLists.txt` 会关闭 googletest 的 install/testing 目标，并保留 `GTest::gtest` / `GTest::gtest_main`。子模块的版本、commit、升级流程见 [third_party/README.md](../third_party/README.md)。
 
 #### 4.3.5 许可证提示
 
 - LLVM/MLIR、lit、clang-tools：Apache-2.0 WITH LLVM-exception。
-- utf8proc：MIT；GoogleTest：BSD-3-Clause；vendored 源码保留各自的 LICENSE 文件。
+- GoogleTest：BSD-3-Clause；tokenizers-cpp：Apache-2.0；vendored 源码保留各自的 LICENSE 文件。
 - ccache：GPL-3.0-or-later，仅作为构建期可执行工具，不链接进产物。
 - PyTorch：BSD-3-Clause；Transformers：Apache-2.0；NumPy：BSD-3-Clause；safetensors：Apache-2.0。
 
@@ -565,14 +560,14 @@ OVERVIEW: MLIR CPU execution driver
 - LLVM 20 的 JIT 工具名是 `mlir-runner`（不是旧版 `mlir-cpu-runner`）。
 - `add_mlir_dialect` 依赖 `tablegen()` 函数，根 CMake 必须显式 `include(TableGen)`；否则报 `Unknown CMake command "tablegen"`。
 - 本机 SDK 的 `libz.1.tbd` 在 Homebrew clang 20 下链接会报 `unknown architecture`，因此 CMake 固定使用 `/opt/homebrew/opt/zlib` 的 zlib；`ZLIB::ZLIB` 的 SDK include 也会把 `<math.h>` 排到 libc++ 前面，构建时清掉其 interface include。
-- **C 和 C++ 编译器都要指向 Homebrew clang 20**。如果只指定 `CMAKE_CXX_COMPILER`，CMake 会为 C 语言选择 `/usr/bin/cc`（AppleClang 21）；在当前 macOS 27 SDK 下，AppleClang 21 链接 `libSystem.tbd` 会报 `unknown architecture arm64e.x1-macos`，导致 `project(... LANGUAGES C CXX)` 直接失败。实测以下配置可以正常构建 vendored utf8proc + googletest：
+- **C 和 C++ 编译器都要指向 Homebrew clang 20**。如果只指定 `CMAKE_CXX_COMPILER`，CMake 会为 C 语言选择 `/usr/bin/cc`（AppleClang 21）；在当前 macOS 27 SDK 下，AppleClang 21 链接 `libSystem.tbd` 会报 `unknown architecture arm64e.x1-macos`，导致 `project(... LANGUAGES C CXX)` 直接失败。实测以下配置可以正常构建 vendored googletest：
 
 ```bash
 export CC=/opt/homebrew/opt/llvm@20/bin/clang
 export CXX=/opt/homebrew/opt/llvm@20/bin/clang++
 ```
 
-> 这是本机 SDK/CLT 组合的问题，不是 utf8proc 或 googletest 的问题；固定 Homebrew clang 20 同时也能保证和 MLIR 的 ABI 一致。
+> 这是本机 SDK/CLT 组合的问题，不是 googletest 的问题；固定 Homebrew clang 20 同时也能保证和 MLIR 的 ABI 一致。
 
 ### 4.5 CMake 骨架
 
@@ -1578,7 +1573,7 @@ struct Session {
   (?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}|
    ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+
   ```
-- 用 utf8proc 做 NFC + Unicode 分类；手写扫描器实现上述分支，不依赖 PCRE2。
+- 当前 C++ 运行时直接调用 tokenizers-cpp 的 HuggingFace tokenizer；上面的正则和字节级规则是模型语义说明，不由 llmcp 自行实现。
 - Added tokens（`<|im_start|>` 等）在 BPE 之前做最长匹配；`<think>` 不是 special，但也是 added token，需原子匹配。
 - 增量 detokenize：维护 pending bytes，遇到不完整 UTF-8 序列时等待下一个 token。
 
@@ -1875,7 +1870,7 @@ M0 权重布局/参考数据
 | 编译时间/IR 爆炸 | 中 | 中 | 编译 > 10 min | group loop、bucket 数量控制、pass 并行、避免展开 32 层 |
 | MLIR 版本/工具链差异 | 中 | 低 | pass 不存在/API 变化 | 固定 20.1.8；自研 pass；CI 锁定版本 |
 | Homebrew MLIR 缺 pass | 中 | 低 | `mlir-opt` 无 linalg-vectorize | 已验证；用自研 `llmcp-opt`/Transform dialect |
-| Tokenizer Unicode 边界 | 中 | 中 | 与 HF token 不一致 | utf8proc + 手写扫描器；大量边界用例 |
+| Tokenizer Unicode 边界 | 中 | 中 | 与 HF token 不一致 | tokenizers-cpp + HF tokenizer.json；tokenizer/chat-template 测试 |
 | 视觉/MTP 范围蔓延 | 高 | 中 | 文本 MVP 延期 | 明确 M5 可选；接口预留但不实现 |
 | 性能预期不现实 | 高 | 中 | 目标 vs 实测差距大 | 先 roofline、后 benchmark；分阶段目标；公开实测 |
 | 长上下文 KV 带宽 | 中 | 中 | 32K decode 明显变慢 | 限制默认 context；KV int8；GQA 已减少 KV |
