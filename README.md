@@ -112,12 +112,12 @@ Q8 权重：
 ## 性能
 
 以下数据为 2026-11-02 在本机 Apple M2 上的实测，Release 构建，
-`OMP_NUM_THREADS=8`，AOT dylib，`prefill=16 / decode=8`：
+`OMP_NUM_THREADS=8`，AOT dylib，`prefill=32 / decode=32`：
 
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
-| bf16 + bfdot | 9.79 s | 1.63 | 1.63 s | 4.92 |
-| Q8_0 + sdot | 5.36 s | 2.99 | 1.07 s | 7.51 |
+| bf16 + bfdot | 10.42 s | 3.07 | 6.22 s | 5.15 |
+| Q8_0 + sdot | 5.93 s | 5.39 | 4.46 s | 7.18 |
 
 对应的 arena：
 
@@ -158,12 +158,12 @@ copy            56.9 GB/s
 OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
   --weights build/weights.bin --manifest build/weights.json \
   --aot build/libqwen35_aot.dylib \
-  --prefill-tokens 16 --decode-tokens 8
+  --prefill-tokens 32 --decode-tokens 32
 
 OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
   --weights build/weights-q8.bin --manifest build/weights-q8.json \
   --aot build/libqwen35_aot_q8.dylib \
-  --prefill-tokens 16 --decode-tokens 8
+  --prefill-tokens 32 --decode-tokens 32
 
 ./build/bin/llmcp-matmul-benchmark \
   --m 16 --n 8192 --k 2560 --iters 5 --threads 4 --q8
@@ -175,7 +175,7 @@ OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
 
 - 该机器在反复加载 8 GB 权重后会出现明显 page cache / 内存压力，
   绝对值可能波动；上表用于同一时段的 bf16/Q8 对比；
-- prefill 包含 16 个 prompt token，decode 统计 8 个生成 token；
+- prefill 包含 32 个 prompt token，decode 统计 32 个生成 token；
 - 尚未做 CUDA/Metal 等 GPU 后端对比。
 
 ## 构建与测试
@@ -276,7 +276,7 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 # AOT 性能测试
 ./build/bin/llmcp-benchmark --weights build/weights.bin \
   --manifest build/weights.json --aot build/libqwen35_aot.dylib \
-  --prefill-tokens 16 --decode-tokens 4
+  --prefill-tokens 32 --decode-tokens 32
 
 # 单算子 matmul benchmark；--q8 走 Q8/sdot
 ./build/bin/llmcp-matmul-benchmark --m 256 --n 256 --k 256 --iters 10 --threads 4
