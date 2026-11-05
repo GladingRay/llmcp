@@ -38,7 +38,7 @@ TEST(ModelBuilderTest, BuildsCompleteGraph) {
   EXPECT_EQ(numLayers.getInt(), 4);
 
   auto forward = dyn_cast_or_null<func::FuncOp>(
-      SymbolTable::lookupSymbolIn(module.get(), "llmcp_forward"));
+      SymbolTable::lookupSymbolIn(module.get(), "llmcp_forward_prefill"));
   ASSERT_TRUE(forward);
 
   size_t numLinear = 0;
@@ -83,8 +83,26 @@ TEST(ModelBuilderTest, BuildsCompleteGraph) {
   EXPECT_EQ(attentionIndices[0], 0); // first full-attention state slot
 
   for (const char *name :
-       {"llmcp_embed", "llmcp_forward", "llmcp_lm_head", "llmcp_model"}) {
+       {"llmcp_embed", "llmcp_forward_prefill", "llmcp_forward_decode",
+        "llmcp_lm_head", "llmcp_model", "llmcp_model_prefill",
+        "llmcp_model_decode"}) {
     EXPECT_TRUE(SymbolTable::lookupSymbolIn(module.get(), name));
+  }
+
+  for (const auto &entry :
+       {std::pair<StringRef, StringRef>{"llmcp_model_prefill",
+                                        "llmcp_forward_prefill"},
+        {"llmcp_model_decode", "llmcp_forward_decode"}}) {
+    auto func = dyn_cast_or_null<func::FuncOp>(
+        SymbolTable::lookupSymbolIn(module.get(), entry.first));
+    ASSERT_TRUE(func);
+    bool found = false;
+    func.walk([&](func::CallOp call) {
+      if (call.getCallee() == entry.second)
+        found = true;
+    });
+    EXPECT_TRUE(found) << entry.first.str() << " must call "
+                           << entry.second.str();
   }
 
   auto model = dyn_cast_or_null<func::FuncOp>(

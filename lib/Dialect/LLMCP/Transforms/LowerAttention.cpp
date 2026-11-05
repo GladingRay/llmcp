@@ -9,6 +9,7 @@
 #include "llmcp/Dialect/LLMCP/IR/LLMCP.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -23,6 +24,15 @@ using namespace mlir;
 using namespace mlir::llmcp;
 
 namespace {
+
+/// Returns true when the enclosing function was built for prefill.
+bool isPrefillMode(Operation *op) {
+  auto func = op->getParentOfType<func::FuncOp>();
+  if (!func)
+    return false;
+  auto mode = func->getAttrOfType<StringAttr>("llmcp.execution_mode");
+  return mode && mode.getValue() == "prefill";
+}
 
 scf::ForOp
 createLoop(PatternRewriter &rewriter, Location loc, Value lower, Value upper,
@@ -44,6 +54,7 @@ public:
   LogicalResult matchAndRewrite(AttentionOp op,
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
+    const bool prefill = isPrefillMode(op);
     auto qgType = dyn_cast<RankedTensorType>(op.getQg().getType());
     auto kType = dyn_cast<RankedTensorType>(op.getK().getType());
     auto vType = dyn_cast<RankedTensorType>(op.getV().getType());
@@ -112,10 +123,14 @@ public:
         sequenceSizes);
     constexpr int64_t kBlock = 64;
     Value blockValue = rewriter.create<arith::ConstantIndexOp>(loc, kBlock);
+    Value scratchRows = rewriter.create<arith::MulIOp>(
+        loc, sequence, numHeadsValue);
     Value acc = rewriter.create<memref::AllocOp>(
-        loc, MemRefType::get({numHeads, headDim}, f32));
+        loc, MemRefType::get({ShapedType::kDynamic, headDim}, f32),
+        ValueRange{scratchRows});
     Value scoreTile = rewriter.create<memref::AllocOp>(
-        loc, MemRefType::get({numHeads, kBlock}, f32));
+        loc, MemRefType::get({ShapedType::kDynamic, kBlock}, f32),
+        ValueRange{scratchRows});
     Value normTemp = rewriter.create<memref::AllocOp>(
         loc, MemRefType::get({numHeads, headDim}, f32));
     SmallVector<Value> outputSizes;
@@ -241,8 +256,9 @@ public:
                     });
                 rewriter.setInsertionPointAfter(tail);
               });
-          headLoop->setAttr("llmcp.parallel",
-                            UnitAttr::get(rewriter.getContext()));
+          if (!prefill)
+            headLoop->setAttr("llmcp.parallel",
+                              UnitAttr::get(rewriter.getContext()));
           rewriter.setInsertionPointAfter(headLoop);
         });
     rewriter.setInsertionPointAfter(qNormLoop);
@@ -368,8 +384,9 @@ public:
                     });
                 rewriter.setInsertionPointAfter(writeV);
               });
-          kvHeadLoop->setAttr("llmcp.parallel",
-                              UnitAttr::get(rewriter.getContext()));
+          if (!prefill)
+            kvHeadLoop->setAttr("llmcp.parallel",
+                                UnitAttr::get(rewriter.getContext()));
           rewriter.setInsertionPointAfter(kvHeadLoop);
         });
     rewriter.setInsertionPointAfter(kvNormLoop);
@@ -381,6 +398,11 @@ public:
           auto queryHeadLoop = createLoop(
               rewriter, loc, zero, numHeadsValue, one, ValueRange{},
               [&](OpBuilder &builder, Location loc, Value head, ValueRange) {
+                Value scratchHead = rewriter.create<arith::AddIOp>(
+                    loc,
+                    rewriter.create<arith::MulIOp>(loc, queryPos,
+                                                   numHeadsValue),
+                    head);
                 Value kvHead =
                     rewriter.create<arith::DivUIOp>(loc, head, groupValue);
                 Value queryEnd = rewriter.create<arith::AddIOp>(
@@ -393,8 +415,8 @@ public:
                 auto initAcc = createLoop(
                     rewriter, loc, zero, headDimValue, one, ValueRange{},
                     [&](OpBuilder &builder, Location loc, Value d, ValueRange) {
-                      rewriter.create<memref::StoreOp>(loc, zeroF, acc,
-                                                       ValueRange{head, d});
+                      rewriter.create<memref::StoreOp>(
+                          loc, zeroF, acc, ValueRange{scratchHead, d});
                     });
                 rewriter.setInsertionPointAfter(initAcc);
 
@@ -448,8 +470,9 @@ public:
                                 loc, dotLoop.getResult(0), scaleValue);
                             rewriter.create<memref::StoreOp>(
                                 loc, score, scoreTile,
-                                ValueRange{head, rewriter.create<arith::SubIOp>(
-                                                     loc, keyPos, blockStart)});
+                                ValueRange{scratchHead,
+                                           rewriter.create<arith::SubIOp>(
+                                               loc, keyPos, blockStart)});
                             Value max = rewriter.create<arith::MaxNumFOp>(
                                 loc, args[0], score);
                             rewriter.create<scf::YieldOp>(loc, max);
@@ -468,12 +491,13 @@ public:
                           [&](OpBuilder &builder, Location loc, Value d,
                               ValueRange) {
                             Value value = rewriter.create<memref::LoadOp>(
-                                loc, acc, ValueRange{head, d});
+                                loc, acc, ValueRange{scratchHead, d});
                             Value scaled =
                                 rewriter.create<arith::MulFOp>(loc, value,
                                                                correction);
                             rewriter.create<memref::StoreOp>(
-                                loc, scaled, acc, ValueRange{head, d});
+                                loc, scaled, acc,
+                                ValueRange{scratchHead, d});
                           });
                       rewriter.setInsertionPointAfter(rescaleAcc);
                       Value scaledSum = rewriter.create<arith::MulFOp>(
@@ -486,8 +510,9 @@ public:
                               ValueRange weightArgs) {
                             Value score = rewriter.create<memref::LoadOp>(
                                 loc, scoreTile,
-                                ValueRange{head, rewriter.create<arith::SubIOp>(
-                                                     loc, keyPos, blockStart)});
+                                ValueRange{scratchHead,
+                                           rewriter.create<arith::SubIOp>(
+                                               loc, keyPos, blockStart)});
                             Value probability = rewriter.create<math::ExpOp>(
                                 loc,
                                 rewriter.create<arith::SubFOp>(loc, score,
@@ -511,11 +536,12 @@ public:
                                           loc, probability, vF32);
                                   Value current =
                                       rewriter.create<memref::LoadOp>(
-                                          loc, acc, ValueRange{head, d});
+                                          loc, acc, ValueRange{scratchHead, d});
                                   Value updated = rewriter.create<arith::AddFOp>(
                                       loc, current, product);
                                   rewriter.create<memref::StoreOp>(
-                                      loc, updated, acc, ValueRange{head, d});
+                                      loc, updated, acc,
+                                      ValueRange{scratchHead, d});
                                 });
                             rewriter.setInsertionPointAfter(valueLoop);
                             rewriter.create<scf::YieldOp>(loc, newSum);
@@ -531,7 +557,7 @@ public:
                     rewriter, loc, zero, headDimValue, one, ValueRange{},
                     [&](OpBuilder &builder, Location loc, Value d, ValueRange) {
                       Value accumulated = rewriter.create<memref::LoadOp>(
-                          loc, acc, ValueRange{head, d});
+                          loc, acc, ValueRange{scratchHead, d});
                       Value normalized = rewriter.create<arith::DivFOp>(
                           loc, accumulated, finalSum);
                       Value gateRaw = rewriter.create<tensor::ExtractOp>(
@@ -568,10 +594,14 @@ public:
                     });
                 rewriter.setInsertionPointAfter(outputDimLoop);
               });
-          queryHeadLoop->setAttr("llmcp.parallel",
-                                 UnitAttr::get(rewriter.getContext()));
+          if (!prefill)
+            queryHeadLoop->setAttr("llmcp.parallel",
+                                   UnitAttr::get(rewriter.getContext()));
           rewriter.setInsertionPointAfter(queryHeadLoop);
         });
+    if (prefill)
+      queryLoop->setAttr("llmcp.parallel",
+                         UnitAttr::get(rewriter.getContext()));
     rewriter.setInsertionPointAfter(queryLoop);
 
     Value tensor = rewriter.create<bufferization::ToTensorOp>(

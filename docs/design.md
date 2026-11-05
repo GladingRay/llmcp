@@ -1814,7 +1814,7 @@ M0 权重布局/参考数据
 
 - [x] `llmcp.linear`、`rms_norm`、`attention`、`silu_mul`、`add` 等全部算子的 lowering。
 - [x] full layer + MLP 的 IR builder（32 层整图）。
-- [x] AOT 代码生成（LLVM IR/object/shared）；多 token `llmcp_model_aot` C ABI 驱动已接入。
+- [x] AOT 代码生成（LLVM IR/object/shared）；多 token AOT C ABI 已拆成 `llmcp_model_prefill` / `llmcp_model_decode` 两个入口。
 - [ ] 单层 golden 对比（q/k/v、attention 输出、mlp 输出）。
 - [x] `llmcp-opt` lit 测试。
 

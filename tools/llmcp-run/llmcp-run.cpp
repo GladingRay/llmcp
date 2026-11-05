@@ -59,7 +59,7 @@ cl::opt<long long> maxNewTokens("max-new-tokens",
                                 cl::desc("Greedy decode token count"),
                                 cl::init(0));
 cl::opt<std::string>
-    aotPath("aot", cl::desc("Optional AOT shared library (llmcp_model_aot)"),
+    aotPath("aot", cl::desc("Optional AOT shared library (prefill/decode entry points)"),
             cl::init(""));
 cl::opt<bool> dumpLogits("dump-logits", cl::desc("Write last-token logits"),
                          cl::init(false));

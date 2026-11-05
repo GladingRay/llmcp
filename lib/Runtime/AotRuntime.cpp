@@ -112,9 +112,13 @@ bool AotRuntime::init(const std::string &path, int64_t maxSequence) {
     errs() << "AotRuntime: dlopen: " << dlerror() << "\n";
     return false;
   }
-  fn = reinterpret_cast<Fn>(dlsym(handle, "_mlir_ciface_llmcp_model_aot"));
-  if (!fn) {
-    errs() << "AotRuntime: dlsym: " << dlerror() << "\n";
+  prefillFn = reinterpret_cast<Fn>(
+      dlsym(handle, "_mlir_ciface_llmcp_model_prefill"));
+  decodeFn =
+      reinterpret_cast<Fn>(dlsym(handle, "_mlir_ciface_llmcp_model_decode"));
+  if (!prefillFn || !decodeFn) {
+    errs() << "AotRuntime: missing prefill/decode entry points: " << dlerror()
+           << "\n";
     return false;
   }
   return true;
@@ -168,6 +172,7 @@ bool AotRuntime::forward(const Arena &arena, const std::vector<int64_t> &tokens,
       logits.data(), logits.data(), 0, {0, 248320}, {248320, 1}};
   ro.sizes[0] = sequence;
 
+  Fn fn = sequence > 1 ? prefillFn : decodeFn;
   fn(&rt, &rc, &rs, (void *)startPos, (void *)cacheLength, &ra, &rk, &rd, &rv,
      &ro);
   return true;

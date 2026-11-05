@@ -20,7 +20,7 @@ C[M, N] = A[M, K] * B[N, K]^T
 - `K` 维连续；
 - 所有模型权重都走 `transpose_b = false`，即 `A * B^T`。
 
-完整的 `llmcp_forward` 图中有 **248 个 `llmcp.linear`**，加 **1 个 `llmcp.lm_head`**。
+每个 forward 图（prefill/decode）中有 **248 个 `llmcp.linear`**，加 **1 个 `llmcp.lm_head`**；AOT 模块包含两个 forward 副本。
 
 ## 2. Shape 与出现次数
 

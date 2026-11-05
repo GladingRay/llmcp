@@ -116,8 +116,20 @@ Q8 权重：
 
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
-| bf16 + bfdot | 10.42 s | 3.07 | 6.22 s | 5.15 |
-| Q8_0 + sdot | 5.93 s | 5.39 | 4.46 s | 7.18 |
+| bf16 + bfdot | 8.55 s | 3.74 | 7.08 s | 4.52 |
+| Q8_0 + sdot | 5.71 s | 5.60 | 4.33 s | 7.38 |
+
+prefill 和 decode 使用不同的 AOT 入口：
+
+```text
+llmcp_model_prefill  -> llmcp_forward_prefill
+llmcp_model_decode   -> llmcp_forward_decode
+```
+
+两者共享权重和状态布局，但调度不同：
+
+- prefill：attention 按 query position 并行，head 串行；
+- decode：attention 按 head 并行，query loop 只有 1 次。
 
 对应的 arena：
 
@@ -176,7 +188,8 @@ OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
 - 该机器在反复加载 8 GB 权重后会出现明显 page cache / 内存压力，
   绝对值可能波动；上表用于同一时段的 bf16/Q8 对比；
 - prefill 包含 32 个 prompt token，decode 统计 32 个生成 token；
-- 尚未做 CUDA/Metal 等 GPU 后端对比。
+- 尚未做 CUDA/Metal 等 GPU 后端对比；
+- prefill/decode 的性能差异来自独立入口和不同 attention 调度。
 
 ## 构建与测试
 
@@ -220,10 +233,10 @@ ctest --test-dir build -R llmcp-numeric --output-on-failure
 `--print-stats` 当前输出：
 
 ```text
-functions: 4
-linear: 248, rms_norm: 65, delta: 24, attention: 8, conv: 24,
-gated_norm: 24, embedding: 1, lm_head: 1, silu_mul: 32, add: 64,
-weight_views: 427
+functions: 7
+linear: 496, rms_norm: 130, delta: 48, attention: 16, conv: 48,
+gated_norm: 48, embedding: 1, lm_head: 1, silu_mul: 64, add: 128,
+weight_views: 852
 ```
 
 `llmcp-inspect` 当前输出：

@@ -58,7 +58,7 @@ std::pair<::llmcp::CacheLineAlignedVector<float>,
           ::llmcp::CacheLineAlignedVector<float>>
 makeCosSin(int64_t pos, int64_t rotaryDim, float theta);
 
-/// Runtime state for the AOT `llmcp_model_aot` entry point.
+/// Runtime state for the AOT prefill/decode entry points.
 class AotRuntime {
 public:
   using Fn = void (*)(void *, void *, void *, void *, void *, void *, void *,
@@ -76,7 +76,8 @@ public:
 
 private:
   void *handle = nullptr;
-  Fn fn = nullptr;
+  Fn prefillFn = nullptr;
+  Fn decodeFn = nullptr;
   int64_t capacity = 0;
   ::llmcp::CacheLineAlignedVector<uint16_t> kv;
   ::llmcp::CacheLineAlignedVector<float> delta;

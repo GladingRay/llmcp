@@ -81,8 +81,12 @@ public:
 
     buildEmbed(moduleBuilder, tokensType, arenaType, hiddenType);
     buildLmHead(moduleBuilder, hiddenType, arenaType, logitsType);
-    buildForward(moduleBuilder, hiddenType, cosType, arenaType, kvType,
-                 deltaType, convType, headDim, numHeads, numKvHeads, rotary);
+    buildForward(moduleBuilder, "llmcp_forward_prefill", "prefill", hiddenType,
+                 cosType, arenaType, kvType, deltaType, convType, headDim,
+                 numHeads, numKvHeads, rotary);
+    buildForward(moduleBuilder, "llmcp_forward_decode", "decode", hiddenType,
+                 cosType, arenaType, kvType, deltaType, convType, headDim,
+                 numHeads, numKvHeads, rotary);
     buildModel(moduleBuilder, tokensType, cosType, arenaType, kvType, deltaType,
                convType, hiddenType, logitsType);
     buildAotModel(moduleBuilder, rotary, vocab, arenaType, kvType, deltaType,
@@ -329,20 +333,21 @@ private:
     bodyBuilder.create<func::ReturnOp>(loc, result);
   }
 
-  void buildForward(OpBuilder &moduleBuilder, Type hiddenType, Type cosType,
-                    Type arenaType, Type kvType, Type deltaType, Type convType,
-                    int64_t headDim, int64_t numHeads, int64_t numKvHeads,
-                    int64_t rotary) {
+  void buildForward(OpBuilder &moduleBuilder, StringRef name, StringRef mode,
+                    Type hiddenType, Type cosType, Type arenaType, Type kvType,
+                    Type deltaType, Type convType, int64_t headDim,
+                    int64_t numHeads, int64_t numKvHeads, int64_t rotary) {
     (void)headDim;
     (void)numHeads;
     (void)numKvHeads;
     (void)rotary;
     OpBuilder bodyBuilder(context);
     Type indexType = moduleBuilder.getIndexType();
-    auto func = createFunc(moduleBuilder, "llmcp_forward",
+    auto func = createFunc(moduleBuilder, name,
                            {hiddenType, cosType, cosType, indexType, indexType,
                             arenaType, kvType, deltaType, convType},
                            {hiddenType}, bodyBuilder);
+    func->setAttr("llmcp.execution_mode", moduleBuilder.getStringAttr(mode));
     llvm::StringMap<Value> cache;
     Value cos = func.getArgument(1);
     Value sin = func.getArgument(2);
@@ -402,7 +407,7 @@ private:
         loc, "llmcp_embed", TypeRange{hiddenType}, ValueRange{tokens, arena});
     Value hidden = embed.getResult(0);
     auto forward = bodyBuilder.create<func::CallOp>(
-        loc, "llmcp_forward", TypeRange{hiddenType},
+        loc, "llmcp_forward_prefill", TypeRange{hiddenType},
         ValueRange{hidden, cos, sin, position, cacheLength, arena, kvCache,
                    deltaState, convState});
     Value forwarded = forward.getResult(0);
@@ -412,7 +417,8 @@ private:
     bodyBuilder.create<func::ReturnOp>(loc, lmHead.getResult(0));
   }
 
-  void buildAotModel(OpBuilder &moduleBuilder, int64_t rotary, int64_t vocab,
+  void buildAotEntry(OpBuilder &moduleBuilder, StringRef entryName,
+                     StringRef forwardName, int64_t rotary, int64_t vocab,
                      Type arenaType, Type kvType, Type deltaType, Type convType,
                      Type logitsType) {
     Type indexType = moduleBuilder.getIndexType();
@@ -423,7 +429,7 @@ private:
 
     OpBuilder bodyBuilder(context);
     auto func =
-        createFunc(moduleBuilder, "llmcp_model_aot",
+        createFunc(moduleBuilder, entryName,
                    {tokensType, vectorType, vectorType, indexType, indexType,
                     arenaType, kvType, deltaType, convType, logitsMemType},
                    {}, bodyBuilder, /*isPublic=*/true);
@@ -456,7 +462,7 @@ private:
                                         moduleBuilder.getBF16Type())},
         ValueRange{tokensTensor, arena});
     auto forward = bodyBuilder.create<func::CallOp>(
-        loc, "llmcp_forward",
+        loc, forwardName,
         TypeRange{RankedTensorType::get({kDynamic, config.text.hiddenSize},
                                         moduleBuilder.getBF16Type())},
         ValueRange{embed.getResult(0), cosTensor, sinTensor, position,
@@ -486,6 +492,17 @@ private:
     bodyBuilder.setInsertionPointAfter(columnLoop);
     bodyBuilder.setInsertionPointAfter(rowLoop);
     bodyBuilder.create<func::ReturnOp>(loc);
+  }
+
+  void buildAotModel(OpBuilder &moduleBuilder, int64_t rotary, int64_t vocab,
+                     Type arenaType, Type kvType, Type deltaType, Type convType,
+                     Type logitsType) {
+    buildAotEntry(moduleBuilder, "llmcp_model_prefill",
+                  "llmcp_forward_prefill", rotary, vocab, arenaType, kvType,
+                  deltaType, convType, logitsType);
+    buildAotEntry(moduleBuilder, "llmcp_model_decode",
+                  "llmcp_forward_decode", rotary, vocab, arenaType, kvType,
+                  deltaType, convType, logitsType);
   }
 
   MLIRContext *context;
