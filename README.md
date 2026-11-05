@@ -116,8 +116,8 @@ Q8 权重：
 
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
-| bf16 + bfdot | 7.62 s | 4.20 | 6.58 s | 4.86 |
-| Q8_0 + sdot | 5.64 s | 5.67 | 4.12 s | 7.76 |
+| bf16 + bfdot | 7.50 s | 4.27 | 6.43 s | 4.98 |
+| Q8_0 + sdot | 5.65 s | 5.67 | 4.77 s | 6.71 |
 
 prefill 和 decode 使用不同的 AOT 入口：
 
@@ -126,7 +126,11 @@ llmcp_model_prefill  -> llmcp_forward_prefill
 llmcp_model_decode   -> llmcp_forward_decode
 ```
 
-两者共享权重和状态布局，但调度不同：
+两者共享权重和状态布局，但调度和 lowering 实现不同：
+
+- 独立 lowering 文件：
+  - [LowerPrefillGemm.cpp](lib/Dialect/LLMCP/Transforms/LowerPrefillGemm.cpp)
+  - [LowerDecodeGemm.cpp](lib/Dialect/LLMCP/Transforms/LowerDecodeGemm.cpp)
 
 - prefill：
   - attention 按 query position 并行，head 串行；

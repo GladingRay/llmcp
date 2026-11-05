@@ -223,7 +223,14 @@ llmcp_forward_prefill
 llmcp_forward_decode
 ```
 
-matmul lowering 根据 `llmcp.execution_mode` 选择：
+matmul lowering 根据 `llmcp.execution_mode` 选择，两个方向使用独立的实现：
+
+```text
+lib/Dialect/LLMCP/Transforms/LowerPrefillGemm.cpp
+lib/Dialect/LLMCP/Transforms/LowerDecodeGemm.cpp
+```
+
+选择逻辑：
 
 ```text
 prefill:
