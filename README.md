@@ -128,9 +128,11 @@ llmcp_model_decode   -> llmcp_forward_decode
 
 两者共享权重和状态布局，但调度和 lowering 实现不同：
 
-- 独立 lowering 文件：
+- 独立入口：
   - [LowerPrefillGemm.cpp](lib/Dialect/LLMCP/Transforms/LowerPrefillGemm.cpp)
   - [LowerDecodeGemm.cpp](lib/Dialect/LLMCP/Transforms/LowerDecodeGemm.cpp)
+- 共享 kernel 和 loop scheduler：
+  - [MatmulLoweringCommon.cpp](lib/Dialect/LLMCP/Transforms/MatmulLoweringCommon.cpp)
 
 - prefill：
   - attention 按 query position 并行，head 串行；

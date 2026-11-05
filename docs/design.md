@@ -341,6 +341,7 @@ llmcp/
 │   │   ├── LowerToLinalg.cpp
 │   │   ├── LowerPrefillGemm.cpp
 │   │   ├── LowerDecodeGemm.cpp
+│   │   ├── MatmulLoweringCommon.cpp
 │   │   ├── LowerCausalConv1d.cpp
 │   │   ├── LowerGatedDeltaNet.cpp
 │   │   ├── LowerAttention.cpp
@@ -1986,8 +1987,9 @@ Ninja:     1.13.2
 |---|---|
 | `include/llmcp/Dialect/LLMCP/IR/LLMCPOps.td` | 方言定义 |
 | `lib/Dialect/LLMCP/Transforms/LowerToLinalg.cpp` | 语义降级入口 |
-| `lib/Dialect/LLMCP/Transforms/LowerPrefillGemm.cpp` | prefill GEMM lowering |
-| `lib/Dialect/LLMCP/Transforms/LowerDecodeGemm.cpp` | decode GEMV lowering |
+| `lib/Dialect/LLMCP/Transforms/LowerPrefillGemm.cpp` | prefill GEMM 入口 |
+| `lib/Dialect/LLMCP/Transforms/LowerDecodeGemm.cpp` | decode GEMV 入口 |
+| `lib/Dialect/LLMCP/Transforms/MatmulLoweringCommon.cpp` | 共享 kernel 与 loop scheduler |
 | `lib/Model/WeightLayout.cpp` | 权重偏移的唯一真源 |
 | `lib/Model/ModelBuilder.cpp` | 生成 prefill/decode IR |
 | `lib/Dialect/LLMCP/Transforms/Parallelize.cpp` | `llmcp.parallel` -> OpenMP |

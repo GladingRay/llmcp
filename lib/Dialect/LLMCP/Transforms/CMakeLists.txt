@@ -6,6 +6,7 @@ add_mlir_library(MLIRLLMCPTransforms
   LowerAttention.cpp
   LowerPrefillGemm.cpp
   LowerDecodeGemm.cpp
+  MatmulLoweringCommon.cpp
 
   ADDITIONAL_HEADER_DIRS
     ${PROJECT_SOURCE_DIR}/include/llmcp/Dialect/LLMCP/Transforms
