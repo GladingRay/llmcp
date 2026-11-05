@@ -14,7 +14,9 @@ compile_commands.json
 # Generated model artifacts
 *.bin
 *.safetensors
-tests/golden/
+tests/golden/*
+!tests/golden/run_golden.py
+!tests/golden/hello_world.tokens
 tests/tiny/weights/
 
 # Python

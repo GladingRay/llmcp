@@ -215,7 +215,7 @@ cmake -G Ninja -S . -B build \
   -DLLMCP_MODEL_DIR=/Users/guorui/Work/models/qwen3.5-4b
 cmake --build build -j 8
 
-# 2. 全量测试：默认 14 个 CTest 目标
+# 2. 全量测试：默认 16 个 CTest 目标（golden 需要已生成的 arena/dylib）
 ctest --test-dir build --output-on-failure
 
 # 真实模型路径可用 CMake 变量或环境变量覆盖：
@@ -236,6 +236,10 @@ ctest --test-dir build --output-on-failure
 
 # 6. numeric（10 类算子，含 Q8 linear/lm_head）
 ctest --test-dir build -R llmcp-numeric --output-on-failure
+
+# 7. 输出 token golden test
+#    需要 build/weights*.bin、manifest 和 AOT dylib 已生成
+ctest --test-dir build -R llmcp-golden-tokens --output-on-failure
 ```
 
 `--print-stats` 当前输出：
