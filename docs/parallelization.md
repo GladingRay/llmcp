@@ -212,3 +212,30 @@ M=16, N=8192, K=2560:
 ```
 
 完整模型 Q8 结果和精度见 [int8-quantization.md](int8-quantization.md)。
+
+
+## 12. prefill / decode matmul 分叉
+
+AOT 编译会生成两个 forward：
+
+```text
+llmcp_forward_prefill
+llmcp_forward_decode
+```
+
+matmul lowering 根据 `llmcp.execution_mode` 选择：
+
+```text
+prefill:
+  column loop parallel
+  row loop serial
+  -> GEMM
+
+decode:
+  column loop parallel
+  no row loop
+  -> GEMV
+```
+
+decode 的 M 固定为 1，因此不需要保留单次迭代的 row loop；prefill 保留
+row loop 以复用列方向的权重和输出 tile。

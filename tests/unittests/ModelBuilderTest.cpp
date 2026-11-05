@@ -89,10 +89,9 @@ TEST(ModelBuilderTest, BuildsCompleteGraph) {
     EXPECT_TRUE(SymbolTable::lookupSymbolIn(module.get(), name));
   }
 
-  for (const auto &entry :
-       {std::pair<StringRef, StringRef>{"llmcp_model_prefill",
-                                        "llmcp_forward_prefill"},
-        {"llmcp_model_decode", "llmcp_forward_decode"}}) {
+  for (const auto &entry : {std::pair<StringRef, StringRef>{
+                                "llmcp_model_prefill", "llmcp_forward_prefill"},
+                            {"llmcp_model_decode", "llmcp_forward_decode"}}) {
     auto func = dyn_cast_or_null<func::FuncOp>(
         SymbolTable::lookupSymbolIn(module.get(), entry.first));
     ASSERT_TRUE(func);
@@ -102,7 +101,7 @@ TEST(ModelBuilderTest, BuildsCompleteGraph) {
         found = true;
     });
     EXPECT_TRUE(found) << entry.first.str() << " must call "
-                           << entry.second.str();
+                       << entry.second.str();
   }
 
   auto model = dyn_cast_or_null<func::FuncOp>(

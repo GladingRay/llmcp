@@ -112,8 +112,8 @@ bool AotRuntime::init(const std::string &path, int64_t maxSequence) {
     errs() << "AotRuntime: dlopen: " << dlerror() << "\n";
     return false;
   }
-  prefillFn = reinterpret_cast<Fn>(
-      dlsym(handle, "_mlir_ciface_llmcp_model_prefill"));
+  prefillFn =
+      reinterpret_cast<Fn>(dlsym(handle, "_mlir_ciface_llmcp_model_prefill"));
   decodeFn =
       reinterpret_cast<Fn>(dlsym(handle, "_mlir_ciface_llmcp_model_decode"));
   if (!prefillFn || !decodeFn) {

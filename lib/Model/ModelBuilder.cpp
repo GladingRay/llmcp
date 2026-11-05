@@ -497,12 +497,12 @@ private:
   void buildAotModel(OpBuilder &moduleBuilder, int64_t rotary, int64_t vocab,
                      Type arenaType, Type kvType, Type deltaType, Type convType,
                      Type logitsType) {
-    buildAotEntry(moduleBuilder, "llmcp_model_prefill",
-                  "llmcp_forward_prefill", rotary, vocab, arenaType, kvType,
-                  deltaType, convType, logitsType);
-    buildAotEntry(moduleBuilder, "llmcp_model_decode",
-                  "llmcp_forward_decode", rotary, vocab, arenaType, kvType,
-                  deltaType, convType, logitsType);
+    buildAotEntry(moduleBuilder, "llmcp_model_prefill", "llmcp_forward_prefill",
+                  rotary, vocab, arenaType, kvType, deltaType, convType,
+                  logitsType);
+    buildAotEntry(moduleBuilder, "llmcp_model_decode", "llmcp_forward_decode",
+                  rotary, vocab, arenaType, kvType, deltaType, convType,
+                  logitsType);
   }
 
   MLIRContext *context;

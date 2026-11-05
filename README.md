@@ -116,8 +116,8 @@ Q8 权重：
 
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
-| bf16 + bfdot | 8.55 s | 3.74 | 7.08 s | 4.52 |
-| Q8_0 + sdot | 5.71 s | 5.60 | 4.33 s | 7.38 |
+| bf16 + bfdot | 7.62 s | 4.20 | 6.58 s | 4.86 |
+| Q8_0 + sdot | 5.64 s | 5.67 | 4.12 s | 7.76 |
 
 prefill 和 decode 使用不同的 AOT 入口：
 
@@ -128,8 +128,12 @@ llmcp_model_decode   -> llmcp_forward_decode
 
 两者共享权重和状态布局，但调度不同：
 
-- prefill：attention 按 query position 并行，head 串行；
-- decode：attention 按 head 并行，query loop 只有 1 次。
+- prefill：
+  - attention 按 query position 并行，head 串行；
+  - linear 使用 GEMM：column 并行，row loop 保留。
+- decode：
+  - attention 按 head 并行，query loop 只有 1 次；
+  - linear 使用 GEMV：column 并行，去掉 row loop。
 
 对应的 arena：
 
@@ -189,7 +193,7 @@ OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
   绝对值可能波动；上表用于同一时段的 bf16/Q8 对比；
 - prefill 包含 32 个 prompt token，decode 统计 32 个生成 token；
 - 尚未做 CUDA/Metal 等 GPU 后端对比；
-- prefill/decode 的性能差异来自独立入口和不同 attention 调度。
+- prefill/decode 的性能差异来自独立入口、attention 调度以及 GEMM/GEMV 分叉。
 
 ## 构建与测试
 

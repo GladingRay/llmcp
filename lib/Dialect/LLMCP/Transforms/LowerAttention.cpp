@@ -9,8 +9,8 @@
 #include "llmcp/Dialect/LLMCP/IR/LLMCP.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -123,8 +123,8 @@ public:
         sequenceSizes);
     constexpr int64_t kBlock = 64;
     Value blockValue = rewriter.create<arith::ConstantIndexOp>(loc, kBlock);
-    Value scratchRows = rewriter.create<arith::MulIOp>(
-        loc, sequence, numHeadsValue);
+    Value scratchRows =
+        rewriter.create<arith::MulIOp>(loc, sequence, numHeadsValue);
     Value acc = rewriter.create<memref::AllocOp>(
         loc, MemRefType::get({ShapedType::kDynamic, headDim}, f32),
         ValueRange{scratchRows});
@@ -458,11 +458,10 @@ public:
                                   Value kF32 = rewriter.create<arith::ExtFOp>(
                                       loc, f32, kValue);
                                   Value product =
-                                      rewriter.create<arith::MulFOp>(
-                                          loc, qF32, kF32);
-                                  Value sum =
-                                      rewriter.create<arith::AddFOp>(
-                                          loc, dotArgs[0], product);
+                                      rewriter.create<arith::MulFOp>(loc, qF32,
+                                                                     kF32);
+                                  Value sum = rewriter.create<arith::AddFOp>(
+                                      loc, dotArgs[0], product);
                                   rewriter.create<scf::YieldOp>(loc, sum);
                                 });
                             rewriter.setInsertionPointAfter(dotLoop);
@@ -482,9 +481,8 @@ public:
                       Value newMax = rewriter.create<arith::MaxNumFOp>(
                           loc, runningMax, tileMaxLoop.getResult(0));
                       Value correction = rewriter.create<math::ExpOp>(
-                          loc,
-                          rewriter.create<arith::SubFOp>(loc, runningMax,
-                                                         newMax));
+                          loc, rewriter.create<arith::SubFOp>(loc, runningMax,
+                                                              newMax));
 
                       auto rescaleAcc = createLoop(
                           rewriter, loc, zero, headDimValue, one, ValueRange{},
@@ -492,12 +490,10 @@ public:
                               ValueRange) {
                             Value value = rewriter.create<memref::LoadOp>(
                                 loc, acc, ValueRange{scratchHead, d});
-                            Value scaled =
-                                rewriter.create<arith::MulFOp>(loc, value,
-                                                               correction);
+                            Value scaled = rewriter.create<arith::MulFOp>(
+                                loc, value, correction);
                             rewriter.create<memref::StoreOp>(
-                                loc, scaled, acc,
-                                ValueRange{scratchHead, d});
+                                loc, scaled, acc, ValueRange{scratchHead, d});
                           });
                       rewriter.setInsertionPointAfter(rescaleAcc);
                       Value scaledSum = rewriter.create<arith::MulFOp>(
@@ -514,9 +510,8 @@ public:
                                            rewriter.create<arith::SubIOp>(
                                                loc, keyPos, blockStart)});
                             Value probability = rewriter.create<math::ExpOp>(
-                                loc,
-                                rewriter.create<arith::SubFOp>(loc, score,
-                                                               newMax));
+                                loc, rewriter.create<arith::SubFOp>(loc, score,
+                                                                    newMax));
                             Value newSum = rewriter.create<arith::AddFOp>(
                                 loc, weightArgs[0], probability);
                             auto valueLoop = createLoop(
@@ -537,8 +532,9 @@ public:
                                   Value current =
                                       rewriter.create<memref::LoadOp>(
                                           loc, acc, ValueRange{scratchHead, d});
-                                  Value updated = rewriter.create<arith::AddFOp>(
-                                      loc, current, product);
+                                  Value updated =
+                                      rewriter.create<arith::AddFOp>(
+                                          loc, current, product);
                                   rewriter.create<memref::StoreOp>(
                                       loc, updated, acc,
                                       ValueRange{scratchHead, d});
