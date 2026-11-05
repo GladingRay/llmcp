@@ -159,6 +159,19 @@ Q8:   5.07 GB
 M=16, N=8192, K=2560:
   bf16: 59.5 GFLOPS
   q8:   120.8 GFLOPS
+
+1024 x 1024 x 1024，8 线程，20 次迭代：
+
+```text
+bf16:
+  blocked   182.6 GFLOPS
+  unblocked  84.8 GFLOPS
+  speedup    2.15x
+
+Q8:
+  blocked   334.7 GFLOPS
+  unblocked 218.4 GFLOPS
+  speedup    1.53x
 ```
 
 CPU 指令与内存带宽（`llmcp-microbench`）：

@@ -281,3 +281,23 @@ for column block:              # parallel
 - 一个 column 的 K 片段可以服务 4 行；
 - A tile 和 B tile 控制在 L1/L2 容量内；
 - 尾部不足 4 行时走单独的 scalar row tail。
+
+
+### 1024 x 1024 x 1024 matmul
+
+8 线程、20 次迭代：
+
+```text
+bf16:
+  blocked   182.6 GFLOPS
+  unblocked  84.8 GFLOPS
+  speedup    2.15x
+
+Q8:
+  blocked   334.7 GFLOPS
+  unblocked 218.4 GFLOPS
+  speedup    1.53x
+```
+
+unblocked 数据通过临时关闭 blocked prefill 分派测得；这是同一台机器上的
+A/B 对比，不是不同实现的长期基线。
