@@ -248,3 +248,36 @@ decode:
 
 decode 的 M 固定为 1，因此不需要保留单次迭代的 row loop；prefill 保留
 row loop 以复用列方向的权重和输出 tile。
+
+
+## 13. 长上下文 prefill GEMM 分块
+
+`MatmulLoweringCommon.cpp` 的 prefill 路径增加了两层分块：
+
+```text
+寄存器级：4 行同时计算
+L1/L2：
+  bf16: 32 columns x 64 K elements
+  Q8:   32 columns x 128 K elements
+```
+
+prefill 循环：
+
+```text
+for column block:              # parallel
+  for row group (4 rows):
+    for column in block:
+      accumulators[4]
+      for K block:
+        for K in block:
+          bf16: 4 x bfdot
+          Q8:   4 x sdot
+      store 4 rows
+```
+
+这样：
+
+- 一行 activation 的 K 片段可以被多个 column 复用；
+- 一个 column 的 K 片段可以服务 4 行；
+- A tile 和 B tile 控制在 L1/L2 容量内；
+- 尾部不足 4 行时走单独的 scalar row tail。

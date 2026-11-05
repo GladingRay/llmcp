@@ -116,8 +116,8 @@ Q8 权重：
 
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
-| bf16 + bfdot | 7.50 s | 4.27 | 6.43 s | 4.98 |
-| Q8_0 + sdot | 5.65 s | 5.67 | 4.77 s | 6.71 |
+| bf16 + bfdot | 8.12 s | 3.94 | 6.70 s | 4.77 |
+| Q8_0 + sdot | 5.74 s | 5.58 | 4.56 s | 7.02 |
 
 prefill 和 decode 使用不同的 AOT 入口：
 
@@ -136,7 +136,8 @@ llmcp_model_decode   -> llmcp_forward_decode
 
 - prefill：
   - attention 按 query position 并行，head 串行；
-  - linear 使用 GEMM：column 并行，row loop 保留。
+  - linear 使用 GEMM：column 并行，row loop 保留；
+  - bf16/Q8 使用 4-row 寄存器 tile + cache block。
 - decode：
   - attention 按 head 并行，query loop 只有 1 次；
   - linear 使用 GEMV：column 并行，去掉 row loop。

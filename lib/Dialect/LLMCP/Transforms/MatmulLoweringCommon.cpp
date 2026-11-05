@@ -511,6 +511,462 @@ Value emitBfDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
 
 } // namespace
 
+/// Prefill bf16 GEMM with 4-row register tiles and 32-column / 64-K cache
+/// blocks.
+Value emitPrefillBfDotBlocked(PatternRewriter &rewriter, Location loc,
+                              Value input, Value weight,
+                              RankedTensorType resultType) {
+  auto inputType = cast<RankedTensorType>(input.getType());
+  auto weightType = cast<RankedTensorType>(weight.getType());
+  const int64_t channels = resultType.getDimSize(1);
+  const int64_t reduction = inputType.getDimSize(1);
+  constexpr int64_t kColumnBlock = 32;
+  constexpr int64_t kReductionBlock = 64;
+  constexpr int64_t kRowTile = 4;
+  if (ShapedType::isDynamic(channels) || ShapedType::isDynamic(reduction) ||
+      channels % kColumnBlock != 0 || reduction % 8 != 0 ||
+      inputType.getElementType() != rewriter.getBF16Type() ||
+      weightType.getElementType() != rewriter.getBF16Type())
+    return Value();
+
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value columnBlock =
+      rewriter.create<arith::ConstantIndexOp>(loc, kColumnBlock);
+  Value reductionBlock =
+      rewriter.create<arith::ConstantIndexOp>(loc, kReductionBlock);
+  Value rowTile = rewriter.create<arith::ConstantIndexOp>(loc, kRowTile);
+  Value channelsValue = rewriter.create<arith::ConstantIndexOp>(loc, channels);
+  Value reductionValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, reduction);
+  Value rows = rewriter.create<tensor::DimOp>(loc, input, 0);
+  auto outputType = MemRefType::get({ShapedType::kDynamic, channels},
+                                    resultType.getElementType());
+  Value output =
+      rewriter.create<memref::AllocOp>(loc, outputType, ValueRange{rows});
+
+  auto f32 = rewriter.getF32Type();
+  auto bf16 = rewriter.getBF16Type();
+  auto bf16Vector = VectorType::get({8}, bf16);
+  auto f32Vector = VectorType::get({4}, f32);
+  SmallVector<bool> inBounds = {true};
+  AffineMap rowMap = AffineMap::get(2, 0, {rewriter.getAffineDimExpr(1)},
+                                    rewriter.getContext());
+  Value zeroF =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+  Value zeroVec = rewriter.create<vector::BroadcastOp>(loc, f32Vector, zeroF);
+
+  auto emitDot = [&](Value accumulator, Value row, Value column, Value block) {
+    Value aVec = rewriter.create<vector::TransferReadOp>(
+        loc, bf16Vector, input, ValueRange{row, block}, rowMap, inBounds);
+    Value bVec = rewriter.create<vector::TransferReadOp>(
+        loc, bf16Vector, weight, ValueRange{column, block}, rowMap, inBounds);
+    return rewriter
+        .create<LLVM::CallIntrinsicOp>(
+            loc, f32Vector,
+            StringAttr::get(rewriter.getContext(),
+                            "llvm.aarch64.neon.bfdot"),
+            ValueRange{accumulator, aVec, bVec})
+        .getResult(0);
+  };
+  auto reduce = [&](Value vector) {
+    return rewriter.create<vector::ReductionOp>(
+        loc, vector::CombiningKind::ADD, vector);
+  };
+  auto store = [&](Value value, Value row, Value column) {
+    if (resultType.getElementType().isBF16())
+      value = rewriter.create<arith::TruncFOp>(loc, bf16, value);
+    rewriter.create<memref::StoreOp>(loc, value, output,
+                                     ValueRange{row, column});
+  };
+
+  auto columnBlockLoop = rewriter.create<scf::ForOp>(
+      loc, zero, channelsValue, columnBlock, ValueRange{});
+  columnBlockLoop->setAttr("llmcp.parallel",
+                           UnitAttr::get(rewriter.getContext()));
+  rewriter.setInsertionPointToStart(columnBlockLoop.getBody());
+  Value columnStart = columnBlockLoop.getInductionVar();
+  Value columnEnd = rewriter.create<arith::MinUIOp>(
+      loc,
+      rewriter.create<arith::AddIOp>(loc, columnStart, columnBlock),
+      channelsValue);
+  Value mainRows = rewriter.create<arith::SubIOp>(
+      loc, rows, rewriter.create<arith::RemUIOp>(loc, rows, rowTile));
+
+  auto rowGroupLoop = rewriter.create<scf::ForOp>(
+      loc, zero, mainRows, rowTile, ValueRange{});
+  rewriter.setInsertionPointToStart(rowGroupLoop.getBody());
+  Value rowStart = rowGroupLoop.getInductionVar();
+
+  auto columnLoop = rewriter.create<scf::ForOp>(
+      loc, columnStart, columnEnd, one, ValueRange{});
+  rewriter.setInsertionPointToStart(columnLoop.getBody());
+  Value column = columnLoop.getInductionVar();
+  auto reductionBlockLoop = rewriter.create<scf::ForOp>(
+      loc, zero, reductionValue, reductionBlock,
+      ValueRange{zeroVec, zeroVec, zeroVec, zeroVec});
+  rewriter.setInsertionPointToStart(reductionBlockLoop.getBody());
+  Value reductionStart = reductionBlockLoop.getInductionVar();
+  Value reductionEnd = rewriter.create<arith::MinUIOp>(
+      loc,
+      rewriter.create<arith::AddIOp>(loc, reductionStart, reductionBlock),
+      reductionValue);
+  Value step = rewriter.create<arith::ConstantIndexOp>(loc, 8);
+  auto dotLoop = rewriter.create<scf::ForOp>(
+      loc, reductionStart, reductionEnd, step,
+      ValueRange{reductionBlockLoop.getRegionIterArgs()});
+  rewriter.setInsertionPointToStart(dotLoop.getBody());
+  Value block = dotLoop.getInductionVar();
+  ValueRange accumulators = dotLoop.getRegionIterArgs();
+  SmallVector<Value, 4> next;
+  for (int64_t row = 0; row < kRowTile; ++row) {
+    Value rowIndex = rewriter.create<arith::AddIOp>(
+        loc, rowStart, rewriter.create<arith::ConstantIndexOp>(loc, row));
+    next.push_back(emitDot(accumulators[row], rowIndex, column, block));
+  }
+  rewriter.create<scf::YieldOp>(loc, ValueRange(next));
+  rewriter.setInsertionPointAfter(dotLoop);
+  rewriter.create<scf::YieldOp>(loc,
+                                ValueRange{dotLoop.getResults()});
+  rewriter.setInsertionPointAfter(reductionBlockLoop);
+  for (int64_t row = 0; row < kRowTile; ++row) {
+    Value rowIndex = rewriter.create<arith::AddIOp>(
+        loc, rowStart, rewriter.create<arith::ConstantIndexOp>(loc, row));
+    store(reduce(reductionBlockLoop.getResult(row)), rowIndex, column);
+  }
+  rewriter.setInsertionPointAfter(columnLoop);
+  rewriter.setInsertionPointAfter(rowGroupLoop);
+
+  // Tail rows that do not fill a full register tile.
+  auto tailRowLoop = rewriter.create<scf::ForOp>(
+      loc, mainRows, rows, one, ValueRange{});
+  rewriter.setInsertionPointToStart(tailRowLoop.getBody());
+  Value tailRow = tailRowLoop.getInductionVar();
+  auto tailColumnLoop = rewriter.create<scf::ForOp>(
+      loc, columnStart, columnEnd, one, ValueRange{});
+  rewriter.setInsertionPointToStart(tailColumnLoop.getBody());
+  Value tailColumn = tailColumnLoop.getInductionVar();
+  auto tailReductionBlockLoop = rewriter.create<scf::ForOp>(
+      loc, zero, reductionValue, reductionBlock, ValueRange{zeroVec});
+  rewriter.setInsertionPointToStart(tailReductionBlockLoop.getBody());
+  Value tailReductionStart = tailReductionBlockLoop.getInductionVar();
+  Value tailReductionEnd = rewriter.create<arith::MinUIOp>(
+      loc,
+      rewriter.create<arith::AddIOp>(loc, tailReductionStart, reductionBlock),
+      reductionValue);
+  auto tailDotLoop = rewriter.create<scf::ForOp>(
+      loc, tailReductionStart, tailReductionEnd, step,
+      ValueRange{tailReductionBlockLoop.getRegionIterArg(0)});
+  rewriter.setInsertionPointToStart(tailDotLoop.getBody());
+  Value tailBlock = tailDotLoop.getInductionVar();
+  Value tailNext =
+      emitDot(tailDotLoop.getRegionIterArg(0), tailRow, tailColumn, tailBlock);
+  rewriter.create<scf::YieldOp>(loc, tailNext);
+  rewriter.setInsertionPointAfter(tailDotLoop);
+  rewriter.create<scf::YieldOp>(loc,
+                                ValueRange{tailDotLoop.getResult(0)});
+  rewriter.setInsertionPointAfter(tailReductionBlockLoop);
+  store(reduce(tailReductionBlockLoop.getResult(0)), tailRow, tailColumn);
+  rewriter.setInsertionPointAfter(tailColumnLoop);
+  rewriter.setInsertionPointAfter(tailRowLoop);
+  rewriter.setInsertionPointAfter(columnBlockLoop);
+  return rewriter.create<bufferization::ToTensorOp>(loc, resultType, output,
+                                                    /*restrict=*/true);
+}
+
+/// Prefill Q8 GEMM with 4-row register tiles and 32-column / 128-K cache
+/// blocks.
+Value emitPrefillQ8Blocked(PatternRewriter &rewriter, Location loc, Value input,
+                           Value weight, RankedTensorType resultType) {
+  auto inputType = cast<RankedTensorType>(input.getType());
+  auto weightType = cast<MemRefType>(weight.getType());
+  const int64_t reduction = inputType.getDimSize(1);
+  const int64_t channels = resultType.getDimSize(1);
+  constexpr int64_t kColumnBlock = 32;
+  constexpr int64_t kReductionBlock = 128;
+  constexpr int64_t kRowTile = 4;
+  if (inputType.getRank() != 2 || weightType.getRank() != 2 ||
+      ShapedType::isDynamic(reduction) || ShapedType::isDynamic(channels) ||
+      reduction % 32 != 0 || channels % kColumnBlock != 0 ||
+      !weightType.getElementType().isInteger(8) ||
+      !inputType.getElementType().isBF16())
+    return Value();
+
+  auto f32 = rewriter.getF32Type();
+  auto i8 = rewriter.getIntegerType(8);
+  auto i16 = rewriter.getIntegerType(16);
+  auto i32 = rewriter.getIntegerType(32);
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value blockSize = rewriter.create<arith::ConstantIndexOp>(loc, 32);
+  Value blockCount =
+      rewriter.create<arith::ConstantIndexOp>(loc, reduction / 32);
+  Value channelsValue = rewriter.create<arith::ConstantIndexOp>(loc, channels);
+  Value reductionValue =
+      rewriter.create<arith::ConstantIndexOp>(loc, reduction);
+  Value rows = rewriter.create<tensor::DimOp>(loc, input, 0);
+  auto outputType = MemRefType::get({ShapedType::kDynamic, channels},
+                                    resultType.getElementType());
+  Value output =
+      rewriter.create<memref::AllocOp>(loc, outputType, ValueRange{rows});
+  Value quantized = rewriter.create<memref::AllocOp>(
+      loc, MemRefType::get({ShapedType::kDynamic, reduction}, i8),
+      ValueRange{rows});
+  Value scales = rewriter.create<memref::AllocOp>(
+      loc, MemRefType::get({ShapedType::kDynamic, reduction / 32}, f32),
+      ValueRange{rows});
+
+  auto rowQuantLoop = rewriter.create<scf::ForOp>(
+      loc, zero, rows, one, ValueRange{});
+  rowQuantLoop->setAttr("llmcp.parallel",
+                        UnitAttr::get(rewriter.getContext()));
+  rewriter.setInsertionPointToStart(rowQuantLoop.getBody());
+  Value quantRow = rowQuantLoop.getInductionVar();
+  auto quantBlockLoop = rewriter.create<scf::ForOp>(
+      loc, zero, blockCount, one, ValueRange{});
+  rewriter.setInsertionPointToStart(quantBlockLoop.getBody());
+  Value quantBlock = quantBlockLoop.getInductionVar();
+  Value blockBase =
+      rewriter.create<arith::MulIOp>(loc, quantBlock, blockSize);
+  Value maxInit =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+  auto maxLoop = rewriter.create<scf::ForOp>(
+      loc, zero, blockSize, one, ValueRange{maxInit});
+  rewriter.setInsertionPointToStart(maxLoop.getBody());
+  Value maxIndex = maxLoop.getInductionVar();
+  Value sourceIndex =
+      rewriter.create<arith::AddIOp>(loc, blockBase, maxIndex);
+  Value value = rewriter.create<tensor::ExtractOp>(
+      loc, input, ValueRange{quantRow, sourceIndex});
+  value = rewriter.create<arith::ExtFOp>(loc, f32, value);
+  Value magnitude = rewriter.create<math::AbsFOp>(loc, value);
+  Value maxValue = rewriter.create<arith::MaxNumFOp>(
+      loc, maxLoop.getRegionIterArg(0), magnitude);
+  rewriter.create<scf::YieldOp>(loc, maxValue);
+  rewriter.setInsertionPointAfter(maxLoop);
+
+  Value maxAbs = maxLoop.getResult(0);
+  Value scale = rewriter.create<arith::DivFOp>(
+      loc, maxAbs,
+      rewriter.create<arith::ConstantOp>(loc,
+                                         rewriter.getF32FloatAttr(127.0f)));
+  rewriter.create<memref::StoreOp>(loc, scale, scales,
+                                   ValueRange{quantRow, quantBlock});
+  Value zeroF =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+  Value isZero = rewriter.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OEQ,
+                                                maxAbs, zeroF);
+  auto inverse = rewriter.create<scf::IfOp>(loc, TypeRange{f32}, isZero, true);
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(&inverse.getThenRegion().front());
+    rewriter.create<scf::YieldOp>(loc, zeroF);
+  }
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointToStart(&inverse.getElseRegion().front());
+    Value oneF =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(1.0f));
+    rewriter.create<scf::YieldOp>(
+        loc, ValueRange{rewriter.create<arith::DivFOp>(loc, oneF, scale)});
+  }
+  rewriter.setInsertionPointAfter(inverse.getOperation());
+
+  auto quantizeLoop = rewriter.create<scf::ForOp>(
+      loc, zero, blockSize, one, ValueRange{});
+  rewriter.setInsertionPointToStart(quantizeLoop.getBody());
+  Value quantIndex = quantizeLoop.getInductionVar();
+  Value quantSource =
+      rewriter.create<arith::AddIOp>(loc, blockBase, quantIndex);
+  Value quantValue = rewriter.create<tensor::ExtractOp>(
+      loc, input, ValueRange{quantRow, quantSource});
+  quantValue = rewriter.create<arith::ExtFOp>(loc, f32, quantValue);
+  Value scaled = rewriter.create<arith::MulFOp>(
+      loc, quantValue, inverse.getResult(0));
+  Value rounded = rewriter.create<math::RoundEvenOp>(loc, scaled);
+  Value aInt = rewriter.create<arith::FPToSIOp>(loc, i32, rounded);
+  Value aByte = rewriter.create<arith::TruncIOp>(loc, i8, aInt);
+  rewriter.create<memref::StoreOp>(loc, aByte, quantized,
+                                   ValueRange{quantRow, quantSource});
+  rewriter.setInsertionPointAfter(quantizeLoop);
+  rewriter.setInsertionPointAfter(quantBlockLoop);
+  rewriter.setInsertionPointAfter(rowQuantLoop);
+
+  const int64_t rowTile = kRowTile;
+  Value rowTileValue = rewriter.create<arith::ConstantIndexOp>(loc, rowTile);
+  Value columnBlock =
+      rewriter.create<arith::ConstantIndexOp>(loc, kColumnBlock);
+  Value reductionBlock =
+      rewriter.create<arith::ConstantIndexOp>(loc, kReductionBlock);
+  Value mainRows = rewriter.create<arith::SubIOp>(
+      loc, rows, rewriter.create<arith::RemUIOp>(loc, rows, rowTileValue));
+
+  auto i32x4 = VectorType::get({4}, i32);
+  auto i8x16 = VectorType::get({16}, i8);
+  AffineMap rowMap = AffineMap::get(2, 0, {rewriter.getAffineDimExpr(1)},
+                                    rewriter.getContext());
+  SmallVector<bool> inBounds = {true};
+  Value zeroI32 = rewriter.create<arith::ConstantOp>(
+      loc, DenseElementsAttr::get(i32x4, rewriter.getI32IntegerAttr(0)));
+  Value zeroVecF =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
+
+  auto emitDot = [&](Value accumulator, Value row, Value column,
+                     Value qblock) -> Value {
+    Value qblockIndex = rewriter.create<arith::DivUIOp>(loc, qblock,
+                                                        blockSize);
+    Value scaleOffset = rewriter.create<arith::MulIOp>(
+        loc, qblockIndex, rewriter.create<arith::ConstantIndexOp>(loc, 34));
+    Value lowByte = rewriter.create<memref::LoadOp>(
+        loc, weight, ValueRange{column, scaleOffset});
+    Value highByte = rewriter.create<memref::LoadOp>(
+        loc, weight,
+        ValueRange{column, rewriter.create<arith::AddIOp>(
+                               loc, scaleOffset, one)});
+    Value low = rewriter.create<arith::ExtUIOp>(loc, i16, lowByte);
+    Value high = rewriter.create<arith::ExtUIOp>(loc, i16, highByte);
+    Value shift =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getI16IntegerAttr(8));
+    Value bits = rewriter.create<arith::OrIOp>(
+        loc, low, rewriter.create<arith::ShLIOp>(loc, high, shift));
+    Value half =
+        rewriter.create<arith::BitcastOp>(loc, rewriter.getF16Type(), bits);
+    Value weightScale = rewriter.create<arith::ExtFOp>(loc, f32, half);
+
+    Value qBase = qblock;
+    Value wBase = rewriter.create<arith::AddIOp>(
+        loc, scaleOffset, rewriter.create<arith::ConstantIndexOp>(loc, 2));
+    Value aVec0 = rewriter.create<vector::TransferReadOp>(
+        loc, i8x16, quantized, ValueRange{row, qBase}, rowMap, inBounds);
+    Value aVec1 = rewriter.create<vector::TransferReadOp>(
+        loc, i8x16, quantized,
+        ValueRange{row, rewriter.create<arith::AddIOp>(
+                            loc, qBase,
+                            rewriter.create<arith::ConstantIndexOp>(loc, 16))},
+        rowMap, inBounds);
+    Value wVec0 = rewriter.create<vector::TransferReadOp>(
+        loc, i8x16, weight, ValueRange{column, wBase}, rowMap, inBounds);
+    Value wVec1 = rewriter.create<vector::TransferReadOp>(
+        loc, i8x16, weight,
+        ValueRange{column, rewriter.create<arith::AddIOp>(
+                               loc, wBase,
+                               rewriter.create<arith::ConstantIndexOp>(loc, 16))},
+        rowMap, inBounds);
+    auto sdot0 = rewriter.create<LLVM::CallIntrinsicOp>(
+        loc, i32x4,
+        StringAttr::get(rewriter.getContext(), "llvm.aarch64.neon.sdot"),
+        ValueRange{zeroI32, aVec0, wVec0});
+    auto sdot1 = rewriter.create<LLVM::CallIntrinsicOp>(
+        loc, i32x4,
+        StringAttr::get(rewriter.getContext(), "llvm.aarch64.neon.sdot"),
+        ValueRange{sdot0.getResult(0), aVec1, wVec1});
+    Value dot = rewriter.create<vector::ReductionOp>(
+        loc, vector::CombiningKind::ADD, sdot1.getResult(0));
+    Value activationScale = rewriter.create<memref::LoadOp>(
+        loc, scales, ValueRange{row, qblockIndex});
+    Value dotF = rewriter.create<arith::SIToFPOp>(loc, f32, dot);
+    return rewriter.create<arith::AddFOp>(
+        loc, accumulator,
+        rewriter.create<arith::MulFOp>(
+            loc, dotF,
+            rewriter.create<arith::MulFOp>(loc, activationScale,
+                                           weightScale)));
+  };
+  auto store = [&](Value value, Value row, Value column) {
+    if (resultType.getElementType().isBF16())
+      value =
+          rewriter.create<arith::TruncFOp>(loc, rewriter.getBF16Type(), value);
+    rewriter.create<memref::StoreOp>(loc, value, output,
+                                     ValueRange{row, column});
+  };
+
+  auto columnBlockLoop = rewriter.create<scf::ForOp>(
+      loc, zero, channelsValue, columnBlock, ValueRange{});
+  columnBlockLoop->setAttr("llmcp.parallel",
+                           UnitAttr::get(rewriter.getContext()));
+  rewriter.setInsertionPointToStart(columnBlockLoop.getBody());
+  Value columnStart = columnBlockLoop.getInductionVar();
+  Value columnEnd = rewriter.create<arith::MinUIOp>(
+      loc, rewriter.create<arith::AddIOp>(loc, columnStart, columnBlock),
+      channelsValue);
+
+  auto rowGroupLoop = rewriter.create<scf::ForOp>(
+      loc, zero, mainRows, rowTileValue, ValueRange{});
+  rewriter.setInsertionPointToStart(rowGroupLoop.getBody());
+  Value rowStart = rowGroupLoop.getInductionVar();
+  auto columnLoop = rewriter.create<scf::ForOp>(
+      loc, columnStart, columnEnd, one, ValueRange{});
+  rewriter.setInsertionPointToStart(columnLoop.getBody());
+  Value column = columnLoop.getInductionVar();
+
+  auto reductionBlockLoop = rewriter.create<scf::ForOp>(
+      loc, zero, reductionValue, reductionBlock,
+      ValueRange{zeroVecF, zeroVecF, zeroVecF, zeroVecF});
+  rewriter.setInsertionPointToStart(reductionBlockLoop.getBody());
+  Value reductionStart = reductionBlockLoop.getInductionVar();
+  Value reductionEnd = rewriter.create<arith::MinUIOp>(
+      loc, rewriter.create<arith::AddIOp>(loc, reductionStart, reductionBlock),
+      reductionValue);
+  auto qblockLoop = rewriter.create<scf::ForOp>(
+      loc, reductionStart, reductionEnd, blockSize,
+      ValueRange{reductionBlockLoop.getRegionIterArgs()});
+  rewriter.setInsertionPointToStart(qblockLoop.getBody());
+  Value qblock = qblockLoop.getInductionVar();
+  SmallVector<Value, 4> next;
+  for (int64_t row = 0; row < kRowTile; ++row) {
+    Value rowIndex = rewriter.create<arith::AddIOp>(
+        loc, rowStart, rewriter.create<arith::ConstantIndexOp>(loc, row));
+    next.push_back(emitDot(qblockLoop.getRegionIterArg(row), rowIndex, column,
+                           qblock));
+  }
+  rewriter.create<scf::YieldOp>(loc, ValueRange(next));
+  rewriter.setInsertionPointAfter(qblockLoop);
+  rewriter.create<scf::YieldOp>(loc, ValueRange{qblockLoop.getResults()});
+  rewriter.setInsertionPointAfter(reductionBlockLoop);
+  for (int64_t row = 0; row < kRowTile; ++row) {
+    Value rowIndex = rewriter.create<arith::AddIOp>(
+        loc, rowStart, rewriter.create<arith::ConstantIndexOp>(loc, row));
+    store(reductionBlockLoop.getResult(row), rowIndex, column);
+  }
+  rewriter.setInsertionPointAfter(columnLoop);
+  rewriter.setInsertionPointAfter(rowGroupLoop);
+
+  auto tailRowLoop = rewriter.create<scf::ForOp>(
+      loc, mainRows, rows, one, ValueRange{});
+  rewriter.setInsertionPointToStart(tailRowLoop.getBody());
+  Value tailRow = tailRowLoop.getInductionVar();
+  auto tailColumnLoop = rewriter.create<scf::ForOp>(
+      loc, columnStart, columnEnd, one, ValueRange{});
+  rewriter.setInsertionPointToStart(tailColumnLoop.getBody());
+  Value tailColumn = tailColumnLoop.getInductionVar();
+  auto tailReductionBlockLoop = rewriter.create<scf::ForOp>(
+      loc, zero, reductionValue, reductionBlock, ValueRange{zeroVecF});
+  rewriter.setInsertionPointToStart(tailReductionBlockLoop.getBody());
+  Value tailReductionStart = tailReductionBlockLoop.getInductionVar();
+  Value tailReductionEnd = rewriter.create<arith::MinUIOp>(
+      loc,
+      rewriter.create<arith::AddIOp>(loc, tailReductionStart, reductionBlock),
+      reductionValue);
+  auto tailQblockLoop = rewriter.create<scf::ForOp>(
+      loc, tailReductionStart, tailReductionEnd, blockSize,
+      ValueRange{tailReductionBlockLoop.getRegionIterArg(0)});
+  rewriter.setInsertionPointToStart(tailQblockLoop.getBody());
+  Value tailQblock = tailQblockLoop.getInductionVar();
+  Value tailNext =
+      emitDot(tailQblockLoop.getRegionIterArg(0), tailRow, tailColumn,
+              tailQblock);
+  rewriter.create<scf::YieldOp>(loc, tailNext);
+  rewriter.setInsertionPointAfter(tailQblockLoop);
+  rewriter.create<scf::YieldOp>(loc, ValueRange{tailQblockLoop.getResult(0)});
+  rewriter.setInsertionPointAfter(tailReductionBlockLoop);
+  store(tailReductionBlockLoop.getResult(0), tailRow, tailColumn);
+  rewriter.setInsertionPointAfter(tailColumnLoop);
+  rewriter.setInsertionPointAfter(tailRowLoop);
+  rewriter.setInsertionPointAfter(columnBlockLoop);
+  return rewriter.create<bufferization::ToTensorOp>(loc, resultType, output,
+                                                    /*restrict=*/true);
+}
+
 Value lowerMatmulInternal(PatternRewriter &rewriter, Location loc, Value input,
                           Value weight, RankedTensorType resultType,
                           StringRef weightFormat, bool transposeB,
@@ -518,12 +974,24 @@ Value lowerMatmulInternal(PatternRewriter &rewriter, Location loc, Value input,
   if (weightFormat == "q8_0") {
     if (transposeB)
       return Value();
+    if (!decode) {
+      if (Value blocked = emitPrefillQ8Blocked(rewriter, loc, input, weight,
+                                                resultType))
+        return blocked;
+    }
     return emitQ8Matmul(rewriter, loc, input, weight, resultType, decode);
   }
 
   Value tensorWeight = toTensor(rewriter, loc, weight);
   if (!transposeB) {
 #if defined(__aarch64__)
+    if (!decode && weightFormat != "q8_0" &&
+        resultType.getElementType().isBF16()) {
+      if (Value blocked =
+              emitPrefillBfDotBlocked(rewriter, loc, input, tensorWeight,
+                                      resultType))
+        return blocked;
+    }
     if (Value value = emitBfDotMatmul(rewriter, loc, input, tensorWeight,
                                       resultType, decode))
       return value;
