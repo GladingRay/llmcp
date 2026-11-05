@@ -149,6 +149,14 @@ bf16: 8.41 GB
 Q8:   5.07 GB
 ```
 
+长上下文 Q8（8 线程，`prefill=1024 / decode=1024`）：
+
+```text
+prefill: 62.93 s  (16.27 tok/s)
+decode: 153.48 s  (6.67 tok/s)
+total:  216.42 s
+```
+
 单算子 matmul（4 线程，`llmcp-matmul-benchmark`）：
 
 ```text
