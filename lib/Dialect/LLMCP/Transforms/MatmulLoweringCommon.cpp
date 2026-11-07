@@ -71,8 +71,36 @@ MatmulLoops createMatmulLoops(PatternRewriter &rewriter, Location loc,
   return loops;
 }
 
+Value applyActivation(PatternRewriter &rewriter, Location loc, Value value,
+                      StringRef activation) {
+  if (activation == "none")
+    return value;
+  auto f32 = rewriter.getF32Type();
+  Value one =
+      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(1.0f));
+  if (activation == "silu") {
+    Value sigmoid = rewriter.create<arith::DivFOp>(
+        loc, one,
+        rewriter.create<arith::AddFOp>(
+            loc, one,
+            rewriter.create<math::ExpOp>(
+                loc, rewriter.create<arith::NegFOp>(loc, value))));
+    return rewriter.create<arith::MulFOp>(loc, value, sigmoid);
+  }
+  if (activation == "sigmoid")
+    return rewriter.create<arith::DivFOp>(
+        loc, one,
+        rewriter.create<arith::AddFOp>(
+            loc, one,
+            rewriter.create<math::ExpOp>(
+                loc, rewriter.create<arith::NegFOp>(loc, value))));
+  return rewriter.create<math::Log1pOp>(
+      loc, rewriter.create<math::ExpOp>(loc, value));
+}
+
 Value emitQ8Matmul(PatternRewriter &rewriter, Location loc, Value input,
-                   Value weight, RankedTensorType resultType, bool decode) {
+                   Value weight, RankedTensorType resultType, bool decode,
+                   StringRef activation) {
   auto inputType = cast<RankedTensorType>(input.getType());
   auto weightType = cast<MemRefType>(weight.getType());
   const int64_t reduction = inputType.getDimSize(1);
@@ -285,6 +313,7 @@ Value emitQ8Matmul(PatternRewriter &rewriter, Location loc, Value input,
   rewriter.setInsertionPointAfter(blockLoop);
 
   Value result = blockLoop.getResult(0);
+  result = applyActivation(rewriter, loc, result, activation);
   if (resultType.getElementType().isBF16())
     result =
         rewriter.create<arith::TruncFOp>(loc, rewriter.getBF16Type(), result);
@@ -297,13 +326,14 @@ Value emitQ8Matmul(PatternRewriter &rewriter, Location loc, Value input,
 
 Value emitVectorMatmul(PatternRewriter &rewriter, Location loc, Value input,
                        Value weight, RankedTensorType resultType,
-                       bool transposeB, bool decode) {
+                       bool transposeB, bool decode, StringRef activation) {
   auto inputType = cast<RankedTensorType>(input.getType());
   auto weightType = cast<RankedTensorType>(weight.getType());
   const int64_t channels = resultType.getDimSize(1);
   const int64_t reduction = inputType.getDimSize(1);
   if (ShapedType::isDynamic(channels) || ShapedType::isDynamic(reduction) ||
-      channels % kVectorTile != 0 || weightType.getRank() != 2)
+      channels % kVectorTile != 0 || weightType.getRank() != 2 ||
+      activation != "none")
     return Value();
 
   Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
@@ -374,7 +404,8 @@ Value emitVectorMatmul(PatternRewriter &rewriter, Location loc, Value input,
 }
 
 Value emitVectorDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
-                          Value weight, RankedTensorType resultType, bool decode) {
+                          Value weight, RankedTensorType resultType, bool decode,
+                   StringRef activation) {
   auto inputType = cast<RankedTensorType>(input.getType());
   auto weightType = cast<RankedTensorType>(weight.getType());
   const int64_t channels = resultType.getDimSize(1);
@@ -428,6 +459,7 @@ Value emitVectorDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
   rewriter.setInsertionPointAfter(reductionLoop);
 
   Value result = reductionLoop.getResult(0);
+  result = applyActivation(rewriter, loc, result, activation);
   if (resultType.getElementType().isBF16())
     result =
         rewriter.create<arith::TruncFOp>(loc, rewriter.getBF16Type(), result);
@@ -440,7 +472,8 @@ Value emitVectorDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
 
 #if defined(__aarch64__)
 Value emitBfDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
-                      Value weight, RankedTensorType resultType, bool decode) {
+                      Value weight, RankedTensorType resultType, bool decode,
+                   StringRef activation) {
   auto inputType = cast<RankedTensorType>(input.getType());
   auto weightType = cast<RankedTensorType>(weight.getType());
   const int64_t channels = resultType.getDimSize(1);
@@ -498,7 +531,7 @@ Value emitBfDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
 
   Value sum = rewriter.create<vector::ReductionOp>(
       loc, vector::CombiningKind::ADD, reductionLoop.getResult(0));
-  Value result = sum;
+  Value result = applyActivation(rewriter, loc, sum, activation);
   if (resultType.getElementType().isBF16())
     result = rewriter.create<arith::TruncFOp>(loc, bf16, result);
   rewriter.create<memref::StoreOp>(loc, result, output,
@@ -515,7 +548,8 @@ Value emitBfDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
 /// blocks.
 Value emitPrefillBfDotBlocked(PatternRewriter &rewriter, Location loc,
                               Value input, Value weight,
-                              RankedTensorType resultType) {
+                              RankedTensorType resultType,
+                              StringRef activation) {
   auto inputType = cast<RankedTensorType>(input.getType());
   auto weightType = cast<RankedTensorType>(weight.getType());
   const int64_t channels = resultType.getDimSize(1);
@@ -574,6 +608,7 @@ Value emitPrefillBfDotBlocked(PatternRewriter &rewriter, Location loc,
         loc, vector::CombiningKind::ADD, vector);
   };
   auto store = [&](Value value, Value row, Value column) {
+    value = applyActivation(rewriter, loc, value, activation);
     if (resultType.getElementType().isBF16())
       value = rewriter.create<arith::TruncFOp>(loc, bf16, value);
     rewriter.create<memref::StoreOp>(loc, value, output,
@@ -677,7 +712,8 @@ Value emitPrefillBfDotBlocked(PatternRewriter &rewriter, Location loc,
 /// Prefill Q8 GEMM with 4-row register tiles and 32-column / 128-K cache
 /// blocks.
 Value emitPrefillQ8Blocked(PatternRewriter &rewriter, Location loc, Value input,
-                           Value weight, RankedTensorType resultType) {
+                           Value weight, RankedTensorType resultType,
+                           StringRef activation) {
   auto inputType = cast<RankedTensorType>(input.getType());
   auto weightType = cast<MemRefType>(weight.getType());
   const int64_t reduction = inputType.getDimSize(1);
@@ -873,6 +909,7 @@ Value emitPrefillQ8Blocked(PatternRewriter &rewriter, Location loc, Value input,
                                            weightScale)));
   };
   auto store = [&](Value value, Value row, Value column) {
+    value = applyActivation(rewriter, loc, value, activation);
     if (resultType.getElementType().isBF16())
       value =
           rewriter.create<arith::TruncFOp>(loc, rewriter.getBF16Type(), value);
@@ -969,17 +1006,18 @@ Value emitPrefillQ8Blocked(PatternRewriter &rewriter, Location loc, Value input,
 
 Value lowerMatmulInternal(PatternRewriter &rewriter, Location loc, Value input,
                           Value weight, RankedTensorType resultType,
-                          StringRef weightFormat, bool transposeB,
-                          bool decode) {
+                          StringRef weightFormat, bool transposeB, bool decode,
+                          StringRef activation) {
   if (weightFormat == "q8_0") {
     if (transposeB)
       return Value();
     if (!decode) {
       if (Value blocked = emitPrefillQ8Blocked(rewriter, loc, input, weight,
-                                                resultType))
+                                                resultType, activation))
         return blocked;
     }
-    return emitQ8Matmul(rewriter, loc, input, weight, resultType, decode);
+    return emitQ8Matmul(rewriter, loc, input, weight, resultType, decode,
+                        activation);
   }
 
   Value tensorWeight = toTensor(rewriter, loc, weight);
@@ -989,19 +1027,19 @@ Value lowerMatmulInternal(PatternRewriter &rewriter, Location loc, Value input,
         resultType.getElementType().isBF16()) {
       if (Value blocked =
               emitPrefillBfDotBlocked(rewriter, loc, input, tensorWeight,
-                                      resultType))
+                                      resultType, activation))
         return blocked;
     }
     if (Value value = emitBfDotMatmul(rewriter, loc, input, tensorWeight,
-                                      resultType, decode))
+                                      resultType, decode, activation))
       return value;
 #endif
     if (Value value = emitVectorDotMatmul(rewriter, loc, input, tensorWeight,
-                                          resultType, decode))
+                                          resultType, decode, activation))
       return value;
   }
   return emitVectorMatmul(rewriter, loc, input, tensorWeight, resultType,
-                          transposeB, decode);
+                          transposeB, decode, activation);
 }
 
 } // namespace llmcp

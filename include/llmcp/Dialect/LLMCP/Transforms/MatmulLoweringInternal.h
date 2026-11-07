@@ -17,7 +17,7 @@ namespace llmcp {
 Value lowerMatmulInternal(PatternRewriter &rewriter, Location loc, Value input,
                           Value weight, RankedTensorType resultType,
                           llvm::StringRef weightFormat, bool transposeB,
-                          bool decode);
+                          bool decode, llvm::StringRef activation);
 
 } // namespace llmcp
 } // namespace mlir

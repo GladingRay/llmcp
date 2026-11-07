@@ -17,12 +17,14 @@ namespace llmcp {
 /// Lowers a prefill matmul as a GEMM.
 Value lowerPrefillGemm(PatternRewriter &rewriter, Location loc, Value input,
                        Value weight, RankedTensorType resultType,
-                       llvm::StringRef weightFormat, bool transposeB);
+                       llvm::StringRef weightFormat, bool transposeB,
+                       llvm::StringRef activation);
 
 /// Lowers a decode matmul as a GEMV (M is one).
 Value lowerDecodeGemm(PatternRewriter &rewriter, Location loc, Value input,
                       Value weight, RankedTensorType resultType,
-                      llvm::StringRef weightFormat, bool transposeB);
+                      llvm::StringRef weightFormat, bool transposeB,
+                      llvm::StringRef activation);
 
 } // namespace llmcp
 } // namespace mlir

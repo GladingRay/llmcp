@@ -151,13 +151,12 @@ public:
     Value lowered =
         mode == ExecutionMode::Decode
             ? lowerDecodeGemm(rewriter, loc, input, op.getWeight(), resultType,
-                              op.getWeightFormat(), op.getTransposeB())
+                              op.getWeightFormat(), op.getTransposeB(),
+                              op.getActivation())
             : lowerPrefillGemm(rewriter, loc, input, op.getWeight(), resultType,
-                               op.getWeightFormat(), op.getTransposeB());
+                               op.getWeightFormat(), op.getTransposeB(),
+                               op.getActivation());
     if (lowered) {
-      if (op.getActivation() != "none")
-        lowered = emitLinearActivation(rewriter, loc, lowered,
-                                       op.getActivation());
       rewriter.replaceOp(op, lowered);
       return success();
     }
@@ -581,9 +580,10 @@ public:
     Value lowered =
         mode == ExecutionMode::Decode
             ? lowerDecodeGemm(rewriter, loc, op.getHidden(), op.getTable(),
-                              resultType, op.getWeightFormat(), false)
+                              resultType, op.getWeightFormat(), false, "none")
             : lowerPrefillGemm(rewriter, loc, op.getHidden(), op.getTable(),
-                               resultType, op.getWeightFormat(), false);
+                               resultType, op.getWeightFormat(), false,
+                               "none");
     if (lowered) {
       rewriter.replaceOp(op, lowered);
       return success();
