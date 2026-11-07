@@ -28,7 +28,7 @@ llvm::StringRef stringifyQuantizationMode(QuantizationMode mode);
 /// Number of weights in one Q8_0 block.
 inline constexpr int64_t kQ8_0BlockSize = 32;
 
-/// llama.cpp-compatible Q8_0 block: fp16 scale followed by 32 int8 values.
+/// Logical Q8_0 block. Storage separates the fp16 scale array and qs array.
 struct Q8_0Block {
   uint16_t d;
   int8_t qs[kQ8_0BlockSize];

@@ -54,6 +54,31 @@ TEST(QuantizationTest, RoundTrip) {
   EXPECT_LT(maxError, 0.02f);
 }
 
+TEST(QuantizationTest, SplitTensorLayout) {
+  TensorInfo tensor;
+  tensor.name = "test";
+  tensor.dtype = "BF16";
+  tensor.shape = {1, 64};
+  tensor.dataSize = 64 * sizeof(uint16_t);
+
+  std::vector<uint16_t> source(64, 0x3f80); // bf16 1.0
+  std::vector<uint8_t> destination(64 + (64 / 32) * 2);
+  ASSERT_FALSE(!!quantizeTensorQ8_0(
+      tensor, reinterpret_cast<const uint8_t *>(source.data()),
+      destination.data()));
+
+  // Scales occupy the first 2 * (K/32) bytes.
+  EXPECT_EQ(destination[0], 0x08);
+  EXPECT_EQ(destination[1], 0x20);
+  EXPECT_EQ(destination[2], 0x08);
+  EXPECT_EQ(destination[3], 0x20);
+
+  // Quantized values start after the scale array.
+  constexpr size_t dataOffset = (64 / 32) * 2;
+  for (size_t i = 0; i < 64; ++i)
+    EXPECT_EQ(static_cast<int8_t>(destination[dataOffset + i]), 127);
+}
+
 TEST(QuantizationTest, ZeroBlock) {
   std::vector<float> input(32, 0.0f);
   Q8_0Block block;

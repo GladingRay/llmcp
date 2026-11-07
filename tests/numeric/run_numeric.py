@@ -118,10 +118,14 @@ def q8_0_blocks(matrix):
 
 
 def q8_0_bytes(matrix):
+    """Encode per-row [fp16 scales][int8 values] Q8_0 storage."""
     data = []
-    for packed_scale, _, quantized in q8_0_blocks(matrix):
-        data.extend(packed_scale)
-        data.extend(quantized)
+    for row in matrix:
+        blocks = q8_0_blocks([row])
+        for packed_scale, _, _ in blocks:
+            data.extend(packed_scale)
+        for _, _, quantized in blocks:
+            data.extend(quantized)
     return data
 
 

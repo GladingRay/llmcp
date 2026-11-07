@@ -153,7 +153,7 @@ private:
 
     SmallVector<int64_t, 4> weightShape(entry.shape.begin(), entry.shape.end());
     if (entry.dtype == "Q8_0")
-      weightShape[1] = (entry.shape[1] / 32) * 34;
+      weightShape[1] = entry.shape[1] + (entry.shape[1] / 32) * 2;
     auto memrefType = MemRefType::get(weightShape, elementType);
     auto offset = builder.create<arith::ConstantIndexOp>(loc, entry.offset);
     Value view = builder.create<memref::ViewOp>(loc, memrefType, arena, offset,

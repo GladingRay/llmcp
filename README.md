@@ -118,7 +118,7 @@ Q8 权重：
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
 | bf16 + bfdot | 5.51 s | 5.81 | 6.15 s | 5.20 |
-| Q8_0 + sdot | 1.96 s | 16.35 | 4.77 s | 6.70 |
+| Q8_0 + sdot | 1.83 s | 17.53 | 4.46 s | 7.18 |
 
 prefill 和 decode 使用不同的 AOT 入口：
 

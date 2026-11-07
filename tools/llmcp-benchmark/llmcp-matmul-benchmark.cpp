@@ -105,7 +105,7 @@ std::string generateMlir(int64_t m, int64_t n, int64_t k, bool useQ8) {
   os << "module {\n";
   os << "  func.func @linear_bench(%a: memref<" << m << "x" << k
      << "xbf16>, %b: memref<" << n << "x"
-     << (useQ8 ? (k / 32) * 34 : k) << (useQ8 ? "xi8" : "xbf16")
+     << (useQ8 ? k + (k / 32) * 2 : k) << (useQ8 ? "xi8" : "xbf16")
      << ">, %c: memref<" << m << "x" << n
      << "xbf16>) attributes {llvm.emit_c_interface} {\n";
   os << "    %c0 = arith.constant 0 : index\n";
@@ -117,7 +117,8 @@ std::string generateMlir(int64_t m, int64_t n, int64_t k, bool useQ8) {
   if (useQ8) {
     os << "    %out = llmcp.linear %at, %b {weight_format = \"q8_0\"} : "
        << "tensor<" << m << "x" << k << "xbf16>, memref<" << n << "x"
-       << (k / 32) * 34 << "xi8> -> tensor<" << m << "x" << n << "xbf16>\n";
+       << (k + (k / 32) * 2) << "xi8> -> tensor<" << m << "x" << n
+       << "xbf16>\n";
   } else {
     os << "    %out = llmcp.linear %at, %b : tensor<" << m << "x" << k
        << "xbf16>, memref<" << n << "x" << k << "xbf16> -> tensor<" << m << "x"
@@ -258,14 +259,15 @@ int main(int argc, char **argv) {
   CacheLineAlignedVector<uint8_t> bQ8;
   int64_t bColumns = kDim;
   if (q8) {
-    bColumns = (kDim / 32) * 34;
+    bColumns = kDim + (kDim / 32) * 2;
+    const int64_t dataOffset = (kDim / 32) * 2;
     bQ8.assign(static_cast<size_t>(nDim * bColumns), 0);
     for (int64_t row = 0; row < nDim; ++row) {
+      uint8_t *rowData = bQ8.data() + row * bColumns;
       for (int64_t block = 0; block < kDim / 32; ++block) {
-        uint8_t *out = bQ8.data() + row * bColumns + block * 34;
-        out[0] = 0x08;
-        out[1] = 0x20;
-        std::memset(out + 2, 127, 32);
+        rowData[block * 2] = 0x08;
+        rowData[block * 2 + 1] = 0x20;
+        std::memset(rowData + dataOffset + block * 32, 127, 32);
       }
     }
   } else {

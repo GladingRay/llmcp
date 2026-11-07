@@ -131,8 +131,10 @@ llvm::Error writeManifest(llvm::StringRef path, llvm::StringRef modelDir,
   root["num_groups"] = layout.getNumGroups();
   root["alignment"] = 64;
   root["quantization"] = stringifyQuantizationMode(layout.getQuantization());
-  if (layout.getQuantization() != QuantizationMode::None)
+  if (layout.getQuantization() != QuantizationMode::None) {
     root["block_size"] = kQ8_0BlockSize;
+    root["quant_layout"] = "q8_0_split";
+  }
 
   llvm::json::Array entries;
   for (const WeightEntry &entry : layout.getEntries()) {

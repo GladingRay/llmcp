@@ -33,7 +33,7 @@ llama.cpp 的 Q8 量化是 **block-wise symmetric quantization**。
 
 ### 2.1 Q8_0
 
-每个 block 包含 32 个权重：
+llama.cpp 的逻辑 block 包含 32 个权重：
 
 ```cpp
 struct block_q8_0 {
@@ -42,12 +42,14 @@ struct block_q8_0 {
 };
 ```
 
-大小：
+逻辑大小：
 
 ```text
 2 + 32 = 34 bytes / 32 weights
 = 8.5 bits / weight
 ```
+
+本项目不按 interleaved block 存储，而是把 scale 与 qs 分离；存储格式见第 4 节。
 
 量化：
 
@@ -170,43 +172,50 @@ Norm 类参数很小，量化收益低、精度风险高，不纳入首期。
 
 ### 4.1 Q8_0 存储
 
-使用 llama.cpp 的紧凑存储：
-
-```cpp
-struct alignas(1) Q8_0Block {
-  uint16_t d;        // fp16 bits
-  int8_t qs[32];
-};
-static_assert(sizeof(Q8_0Block) == 34);
-```
-
-B 的形状仍然是：
+每个 row 使用 **scale 与量化权重分离** 的布局：
 
 ```text
-B: [N, K] row-major
+row:
+  [block0 scale: 2 bytes]
+  [block1 scale: 2 bytes]
+  ...
+  [K 个 int8 qs]
 ```
 
-但每个 row 按 K 切成：
+即：
 
 ```text
-K / 32 个 block
-```
-
-一个 B row 的字节数：
-
-```text
-(N 维不变) row_stride = (K / 32) * 34
+row_stride = K + (K / 32) * 2
 ```
 
 例如：
 
 ```text
-N=9216, K=2560:
-  row_stride = 80 * 34 = 2720 bytes
-
-N=248320, K=2560:
-  row_stride = 80 * 34 = 2720 bytes
+K=2560:
+  scale bytes = 80 * 2 = 160
+  qs bytes    = 2560
+  row_stride  = 2720 bytes
 ```
+
+总大小与 interleaved Q8_0 相同：
+
+```text
+K + (K/32)*2 = (K/32)*34
+```
+
+但 scale 连续，q 数据连续，kernel 可以使用对齐 load，不再每个 block 做
+byte load + shift + bitcast。
+
+逻辑上的 `Q8_0Block` 仍用于量化和反量化 API：
+
+```cpp
+struct Q8_0Block {
+  uint16_t d;
+  int8_t qs[32];
+};
+```
+
+它不再直接对应磁盘上的 34 字节交错布局。
 
 ### 4.2 A 的激活布局
 
@@ -246,23 +255,19 @@ qs:     int8[M][K]
 
 ### 4.3 对齐
 
-当前 arena 64 字节对齐。Q8_0 block 是 34 字节，不保证每个 block 对齐。
-
-两种选择：
-
-1. **llama.cpp 兼容布局**：34 字节 block，load 用非对齐指令；
-2. **AOT 运行时布局**：加载后重排为
+当前 arena 64 字节对齐，每个 Q8 row 的 scale 区域连续，q 数据区域连续：
 
 ```text
-scales[N][K/32] : f16/f32
-qs[N][K]        : int8
+row: [scales K/32 * 2 bytes][qs K bytes]
 ```
 
-首期建议：
+因此：
 
-- 磁盘/manifest 保存 llama.cpp 兼容的 34 字节 block；
-- 加载后按 kernel 需要重排为 SoA；
-- 重排只做一次，避免 hot loop 非对齐读取。
+- scale load 是连续 2-byte / 批量访问；
+- q 数据从 `K/32*2` 偏移开始；
+- 不再需要 block 内部的 `+2` 交错偏移。
+
+`llmcp-pack` 的 arena 与 AOT kernel 使用同一布局。
 
 ## 5. Arena 与 manifest
 
@@ -273,6 +278,13 @@ llmcp-pack --model ... --quant q8_0 --out build/weights-q8.bin
 ```
 
 manifest 增加：
+
+```json
+"quantization": "q8_0",
+"block_size": 32,
+"quant_layout": "q8_0_split"
+```
+
 
 ```json
 {
@@ -332,7 +344,7 @@ bf16 原大小：
 verifier 检查：
 
 ```text
-weight byte size == N * (K / 32) * 34
+weight byte width == K + (K / 32) * 2
 ```
 
 `transpose_b = true` 的首期不支持，直接 fallback bf16。
@@ -625,9 +637,9 @@ llmcp-benchmark --quant q8_0 --prefill-tokens 32 --decode-tokens 32
    - Q8_0 使用 fp16 scale，极端值可能损失；
    - 可以先实现 f32 scale 的 Q8_0F 变体做对比。
 
-2. **非对齐 block**
-   - 34 字节 block 不利于 NEON load；
-   - 运行时重排为 SoA。
+2. **scale/qs 分离后的边界**
+   - 每个 row 的 `K/32*2` scale 区域与 `K` q 区域必须严格一致；
+   - `llmcp-pack`/`ModelBuilder`/kernel 使用相同的 `row_stride`。
 
 3. **激活量化开销**
    - prefill 时 M 大，需要复用 Aq；

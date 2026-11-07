@@ -51,9 +51,9 @@ LogicalResult LinearOp::verify() {
       return emitOpError("q8_0 requires K to be a multiple of 32");
     const int64_t expectedBytes = ShapedType::isDynamic(inputK)
                                       ? ShapedType::kDynamic
-                                      : (inputK / 32) * 34;
+                                      : inputK + (inputK / 32) * 2;
     if (!areCompatible(weightType.getDimSize(1), expectedBytes))
-      return emitOpError("q8_0 weight byte width must be (K/32)*34");
+      return emitOpError("q8_0 weight byte width must be K + (K/32)*2");
     if (!areCompatible(weightType.getDimSize(0), outputType.getDimSize(1)))
       return emitOpError("output inner dimension must match weight rows");
     if (!areCompatible(inputType.getDimSize(0), outputType.getDimSize(0)))
@@ -218,9 +218,9 @@ LogicalResult LmHeadOp::verify() {
       return emitOpError("q8_0 requires hidden size to be a multiple of 32");
     const int64_t expectedBytes = ShapedType::isDynamic(hiddenDim)
                                       ? ShapedType::kDynamic
-                                      : (hiddenDim / 32) * 34;
+                                      : hiddenDim + (hiddenDim / 32) * 2;
     if (!areCompatible(table.getDimSize(1), expectedBytes))
-      return emitOpError("q8_0 table byte width must be (K/32)*34");
+      return emitOpError("q8_0 table byte width must be K + (K/32)*2");
     if (!areCompatible(logits.getDimSize(1), table.getDimSize(0)))
       return emitOpError("logits vocabulary dimension must match the table");
     return success();

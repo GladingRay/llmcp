@@ -133,9 +133,20 @@ Error mlir::llmcp::quantizeTensorQ8_0(const TensorInfo &tensor,
     std::vector<float> values(static_cast<size_t>(cols));
     for (int64_t col = 0; col < cols; ++col)
       values[col] = loadFloat(source, row * cols + col, tensor.dtype);
-    auto *out = reinterpret_cast<Q8_0Block *>(
-        destination + static_cast<uint64_t>(row * blocks) * sizeof(Q8_0Block));
-    quantizeRowQ8_0(values, MutableArrayRef<Q8_0Block>(out, blocks));
+    // Per-row split layout: [blocks * fp16 scales][cols * int8 values].
+    const uint64_t rowBytes =
+        static_cast<uint64_t>(blocks) * 2 + static_cast<uint64_t>(cols);
+    uint8_t *rowData = destination + static_cast<uint64_t>(row) * rowBytes;
+    std::vector<Q8_0Block> temporary(static_cast<size_t>(blocks));
+    quantizeRowQ8_0(values,
+                    MutableArrayRef<Q8_0Block>(temporary.data(), blocks));
+    for (int64_t block = 0; block < blocks; ++block) {
+      uint8_t *scale = rowData + static_cast<uint64_t>(block) * 2;
+      std::memcpy(scale, &temporary[block].d, sizeof(uint16_t));
+      std::memcpy(rowData + static_cast<uint64_t>(blocks) * 2 +
+                      static_cast<uint64_t>(block) * kQ8_0BlockSize,
+                  temporary[block].qs, kQ8_0BlockSize);
+    }
   }
   return Error::success();
 }

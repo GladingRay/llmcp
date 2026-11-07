@@ -222,7 +222,9 @@ Value emitQ8Matmul(PatternRewriter &rewriter, Location loc, Value input,
   Value block = blockLoop.getInductionVar();
   Value dotBlockBase = rewriter.create<arith::MulIOp>(loc, block, blockSize);
   Value scaleOffset = rewriter.create<arith::MulIOp>(
-      loc, block, rewriter.create<arith::ConstantIndexOp>(loc, 34));
+      loc, block, rewriter.create<arith::ConstantIndexOp>(loc, 2));
+  Value dataOffset = rewriter.create<arith::MulIOp>(
+      loc, blockCount, rewriter.create<arith::ConstantIndexOp>(loc, 2));
   Value lowByte = rewriter.create<memref::LoadOp>(
       loc, weight, ValueRange{column, scaleOffset});
   Value highOffset = rewriter.create<arith::AddIOp>(loc, scaleOffset, one);
@@ -255,8 +257,7 @@ Value emitQ8Matmul(PatternRewriter &rewriter, Location loc, Value input,
                           loc, dotBlockBase,
                           rewriter.create<arith::ConstantIndexOp>(loc, 16))},
       rowMap, inBounds);
-  Value wBase = rewriter.create<arith::AddIOp>(
-      loc, scaleOffset, rewriter.create<arith::ConstantIndexOp>(loc, 2));
+  Value wBase = rewriter.create<arith::AddIOp>(loc, dataOffset, dotBlockBase);
   Value wVec0 = rewriter.create<vector::TransferReadOp>(
       loc, i8x16, weight, ValueRange{column, wBase}, rowMap, inBounds);
   Value wVec1 = rewriter.create<vector::TransferReadOp>(
@@ -287,9 +288,8 @@ Value emitQ8Matmul(PatternRewriter &rewriter, Location loc, Value input,
                                                 ValueRange{row, dotSource});
   Value aInt = rewriter.create<arith::ExtSIOp>(loc, i32, aByte);
   Value weightIndex = rewriter.create<arith::AddIOp>(
-      loc, scaleOffset,
-      rewriter.create<arith::AddIOp>(
-          loc, rewriter.create<arith::ConstantIndexOp>(loc, 2), dotIndex));
+      loc, dataOffset,
+      rewriter.create<arith::AddIOp>(loc, dotBlockBase, dotIndex));
   Value wByte = rewriter.create<memref::LoadOp>(
       loc, weight, ValueRange{column, weightIndex});
   Value wInt = rewriter.create<arith::ExtSIOp>(loc, i32, wByte);
@@ -855,7 +855,7 @@ Value emitPrefillQ8Blocked(PatternRewriter &rewriter, Location loc, Value input,
     Value qblockIndex = rewriter.create<arith::DivUIOp>(loc, qblock,
                                                         blockSize);
     Value scaleOffset = rewriter.create<arith::MulIOp>(
-        loc, qblockIndex, rewriter.create<arith::ConstantIndexOp>(loc, 34));
+        loc, qblockIndex, rewriter.create<arith::ConstantIndexOp>(loc, 2));
     Value lowByte = rewriter.create<memref::LoadOp>(
         loc, weight, ValueRange{column, scaleOffset});
     Value highByte = rewriter.create<memref::LoadOp>(
@@ -873,8 +873,9 @@ Value emitPrefillQ8Blocked(PatternRewriter &rewriter, Location loc, Value input,
     Value weightScale = rewriter.create<arith::ExtFOp>(loc, f32, half);
 
     Value qBase = qblock;
-    Value wBase = rewriter.create<arith::AddIOp>(
-        loc, scaleOffset, rewriter.create<arith::ConstantIndexOp>(loc, 2));
+    Value dataOffset = rewriter.create<arith::MulIOp>(
+        loc, blockCount, rewriter.create<arith::ConstantIndexOp>(loc, 2));
+    Value wBase = rewriter.create<arith::AddIOp>(loc, dataOffset, qblock);
     Value aVec0 = rewriter.create<vector::TransferReadOp>(
         loc, i8x16, quantized, ValueRange{row, qBase}, rowMap, inBounds);
     Value aVec1 = rewriter.create<vector::TransferReadOp>(
