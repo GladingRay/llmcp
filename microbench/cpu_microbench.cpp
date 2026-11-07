@@ -112,7 +112,7 @@ float neonF32(uint64_t iterations) {
   return vgetq_lane_f32(vaddq_f32(vaddq_f32(c0, c1), vaddq_f32(c2, c3)), 0);
 }
 
-float neonF16(uint64_t iterations) {
+__attribute__((target("fullfp16"))) float neonF16(uint64_t iterations) {
   float16x8_t a = vdupq_n_f16(1.0001f);
   float16x8_t b = vdupq_n_f16(1.0002f);
   float16x8_t c0 = vdupq_n_f16(0), c1 = c0, c2 = c0, c3 = c0;
@@ -134,7 +134,7 @@ float neonF16(uint64_t iterations) {
 }
 
 #if defined(__aarch64__) && defined(LLMCP_ENABLE_BFDOT)
-float neonBF16(uint64_t iterations) {
+__attribute__((target("bf16"))) float neonBF16(uint64_t iterations) {
   bfloat16x8_t a = vdupq_n_bf16(1.0f);
   bfloat16x8_t b = vdupq_n_bf16(1.0f);
   float32x4_t c0 = vdupq_n_f32(0), c1 = c0, c2 = c0, c3 = c0;
@@ -156,7 +156,7 @@ float neonBF16(uint64_t iterations) {
 }
 #endif
 
-int32_t neonI8MMA(uint64_t iterations) {
+__attribute__((target("i8mm"))) int32_t neonI8MMA(uint64_t iterations) {
   int8x16_t a = vdupq_n_s8(1);
   int8x16_t b = vdupq_n_s8(1);
   int32x4_t c0 = vdupq_n_s32(0), c1 = c0, c2 = c0, c3 = c0;
@@ -194,7 +194,7 @@ int32_t neonI8MMA(uint64_t iterations) {
 }
 
 #if defined(__aarch64__) && defined(LLMCP_ENABLE_SDOT)
-int32_t neonInt8(uint64_t iterations) {
+__attribute__((target("dotprod"))) int32_t neonInt8(uint64_t iterations) {
   int8x16_t a = vdupq_n_s8(1);
   int8x16_t b = vdupq_n_s8(1);
   int32x4_t c0 = vdupq_n_s32(0), c1 = c0, c2 = c0, c3 = c0;
