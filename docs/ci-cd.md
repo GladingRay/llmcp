@@ -305,23 +305,15 @@ BF16=0, DotProd=0:
 `microbench` 使用 `-mcpu=native`，避免在旧 CPU 上编译只在新 CPU 上可执行的指令。
 
 
-### 11.3 生成代码的编译选项
+### 11.3 生成代码的编译
 
-`llmcp-compile`、`llmcp-matmul-benchmark`、numeric 测试在编译生成的 LLVM IR 时，
-会根据启用的特性显式使用：
-
-```text
--march=armv8.2-a+dotprod
--march=armv8.6-a+bf16
--march=armv8.6-a+bf16+dotprod
-```
-
-而不是只依赖 `-mcpu=native`，避免编译器无法从 native CPU 推导出 dotprod/bf16
-feature 时出现：
+`llmcp-compile`、`llmcp-matmul-benchmark` 和 numeric 测试在编译生成的 LLVM IR
+时使用：
 
 ```text
-Cannot select: AArch64ISD::SDOT
-Cannot select: intrinsic %llvm.aarch64.neon.bfdot
+-mcpu=native
 ```
 
-'
+如果 configure 阶段的编译器探测发现后端不能 select `sdot` 或 `bfdot`，
+对应的 `LLMCP_ENABLE_SDOT` / `LLMCP_ENABLE_BFDOT` 会被关闭，lowering 不会生成
+该 intrinsic，因此不会进入后端的 Cannot select 路径。

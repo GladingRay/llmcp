@@ -218,15 +218,7 @@ int main(int argc, char **argv) {
       args.push_back("-Wl,-rpath," + runnerLibDir);
     }
 #if defined(__aarch64__)
-#if defined(LLMCP_ENABLE_BFDOT) && defined(LLMCP_ENABLE_SDOT)
-    args.push_back("-march=armv8.6-a+bf16+dotprod");
-#elif defined(LLMCP_ENABLE_BFDOT)
-    args.push_back("-march=armv8.6-a+bf16");
-#elif defined(LLMCP_ENABLE_SDOT)
-    args.push_back("-march=armv8.2-a+dotprod");
-#else
     args.push_back("-mcpu=native");
-#endif
 #endif
     if (llvm::Error error = runTool(*clangOrErr, args))
       return fail(std::move(error));
