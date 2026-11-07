@@ -304,3 +304,39 @@ Q8:
 
 unblocked 数据通过临时关闭 blocked prefill 分派测得；这是同一台机器上的
 A/B 对比，不是不同实现的长期基线。
+
+
+## 14. SMMLA prefill 路径
+
+Q8 prefill 增加独立的 SMMLA 路径：
+
+```text
+lib/Dialect/LLMCP/Transforms/MatmulLoweringCommon.cpp
+  lowerQ8MmaPrefill
+```
+
+分块参数：
+
+```text
+ATile  = 4
+BTile  = 4
+ABlock = 16
+BBlock = 16
+KBlock = 128
+```
+
+说明：
+
+- `ATile/BTile = 4x4`：16 个输出点由 4 条 SMMLA 的 2x2 结果组成；
+- `ABlock/BBlock = 16`：A/B 的 16x128 i8 tile 约 2 KiB，适合 P-core L1D；
+- `KBlock = 128`：复用 Q8 block 和 SMMLA 的 K 方向；
+- 仅当 `M % 4 == 0` 时走 SMMLA，否则走原 sdot 路径；
+- 当前 SMMLA 路径保持正确性，但在 1024³ 单线程上约 86 GFLOPS，
+  低于 sdot 4x4 的约 129 GFLOPS。
+
+SMMLA 的下一步优化重点是：
+
+- 预打包 A/B 为 SMMLA 所需的 16B 布局，避免 `vector.shuffle`；
+- 减少 scale 解码；
+- 调整 ATile/BTile 与 accumulator 数量；
+- 结合 I8MM 的更高吞吐重新评估 tile。
