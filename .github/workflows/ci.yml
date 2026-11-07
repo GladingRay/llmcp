@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  LLVM_PREFIX: /opt/homebrew/opt/llvm@20
+  LLMCP_MODEL_DIR: /tmp/llmcp-ci-no-model
+
+jobs:
+  build-and-test:
+    # The project's optimized paths use bfdot/sdot and must run on Apple Silicon.
+    # If this label is not arm64 for your repository, use a self-hosted runner
+    # with labels [self-hosted, macOS, ARM64].
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Check architecture
+        run: |
+          uname -m
+          test "$(uname -m)" = "arm64"
+
+      - name: Install native dependencies
+        run: |
+          brew install cmake ninja llvm@20 libomp
+          echo "$LLVM_PREFIX/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch numpy lit
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
+            -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
+            -DMLIR_DIR="$LLVM_PREFIX/lib/cmake/mlir" \
+            -DLLVM_DIR="$LLVM_PREFIX/lib/cmake/llvm" \
+            -DLLMCP_BUILD_TESTS=ON \
+            -DLLMCP_CARGO_OFFLINE=OFF \
+            -DLLMCP_MODEL_DIR="$LLMCP_MODEL_DIR"
+
+      - name: Build
+        run: cmake --build build -j 4
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j1
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-logs
+          path: build/Testing
+          if-no-files-found: ignore

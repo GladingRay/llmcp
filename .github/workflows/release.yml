@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  LLVM_PREFIX: /opt/homebrew/opt/llvm@20
+  LLMCP_MODEL_DIR: /tmp/llmcp-ci-no-model
+
+jobs:
+  package:
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Check architecture
+        run: test "$(uname -m)" = "arm64"
+
+      - name: Install native dependencies
+        run: |
+          brew install cmake ninja llvm@20 libomp
+          echo "$LLVM_PREFIX/bin" >> "$GITHUB_PATH"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
+            -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
+            -DMLIR_DIR="$LLVM_PREFIX/lib/cmake/mlir" \
+            -DLLVM_DIR="$LLVM_PREFIX/lib/cmake/llvm" \
+            -DLLMCP_BUILD_TESTS=OFF \
+            -DLLMCP_CARGO_OFFLINE=OFF \
+            -DLLMCP_MODEL_DIR="$LLMCP_MODEL_DIR"
+
+      - name: Build
+        run: cmake --build build -j 4
+
+      - name: Package tools
+        run: |
+          mkdir -p dist
+          cp build/bin/llmcp-* dist/
+          tar -czf "llmcp-macos-arm64-${GITHUB_REF_NAME}.tar.gz" dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: llmcp-macos-arm64-*.tar.gz
