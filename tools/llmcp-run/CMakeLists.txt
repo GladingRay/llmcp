@@ -13,17 +13,28 @@ string(REPLACE "0.21.2" "0.22.2" TOKENIZERS_CARGO "${TOKENIZERS_CARGO}")
 file(WRITE "${TOKENIZERS_RUST_DIR}/Cargo.toml" "${TOKENIZERS_CARGO}")
 
 if(APPLE)
+  # Let xcrun select the SDK installed on the runner instead of pinning a
+  # specific macOS SDK version.
   execute_process(
-    COMMAND xcrun --sdk macosx15.4 --show-sdk-path
+    COMMAND xcrun --sdk macosx --show-sdk-path
     OUTPUT_VARIABLE TOKENIZERS_SDKROOT
     OUTPUT_STRIP_TRAILING_WHITESPACE)
   if(NOT TOKENIZERS_SDKROOT)
-    set(TOKENIZERS_SDKROOT "/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk")
+    execute_process(
+      COMMAND xcrun --show-sdk-path
+      OUTPUT_VARIABLE TOKENIZERS_SDKROOT
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+  endif()
+  if(NOT TOKENIZERS_SDKROOT)
+    message(FATAL_ERROR "xcrun could not locate a macOS SDK")
   endif()
   set(TOKENIZERS_CARGO_ENV
     ${CMAKE_COMMAND} -E env
-    SDKROOT=${TOKENIZERS_SDKROOT}
-    MACOSX_DEPLOYMENT_TARGET=15.0)
+    SDKROOT=${TOKENIZERS_SDKROOT})
+  if(CMAKE_OSX_DEPLOYMENT_TARGET)
+    list(APPEND TOKENIZERS_CARGO_ENV
+      MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
+  endif()
 else()
   set(TOKENIZERS_CARGO_ENV ${CMAKE_COMMAND} -E env)
 endif()
