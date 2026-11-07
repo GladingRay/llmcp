@@ -55,6 +55,13 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Print toolchain info
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-path
+          cargo --version
+          rustc --version
+
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
