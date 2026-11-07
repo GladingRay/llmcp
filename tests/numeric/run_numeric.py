@@ -523,7 +523,22 @@ def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
                   "-lmlir_c_runner_utils", "-L/opt/homebrew/opt/libomp/lib",
                   "-lomp", "-Wl,-rpath,/opt/homebrew/opt/libomp/lib"]
     if platform.machine() in ("arm64", "aarch64"):
-        clang_args.append("-mcpu=native")
+        def sysctl_int(name):
+            try:
+                return int(subprocess.check_output(
+                    ["sysctl", "-n", name], text=True).strip())
+            except (OSError, ValueError, subprocess.CalledProcessError):
+                return 0
+        dotprod = sysctl_int("hw.optional.arm.FEAT_DotProd")
+        bf16 = sysctl_int("hw.optional.arm.FEAT_BF16")
+        if dotprod and bf16:
+            clang_args.append("-march=armv8.6-a+bf16+dotprod")
+        elif bf16:
+            clang_args.append("-march=armv8.6-a+bf16")
+        elif dotprod:
+            clang_args.append("-march=armv8.2-a+dotprod")
+        else:
+            clang_args.append("-mcpu=native")
     run(clang_args)
 
     env = dict(os.environ)

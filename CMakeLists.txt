@@ -8,6 +8,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(LLMCP_BUILD_TESTS "Build llmcp tests" ON)
+include(CheckCXXSourceCompiles)
 option(LLMCP_ENABLE_BFDOT
        "Enable Arm BF16 dot-product intrinsics when the host supports them" ON)
 
@@ -20,7 +21,21 @@ if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
     OUTPUT_VARIABLE LLMCP_BF16_FEATURE
     OUTPUT_STRIP_TRAILING_WHITESPACE
     RESULT_VARIABLE LLMCP_BF16_RESULT)
-  if(NOT LLMCP_BF16_RESULT EQUAL 0 OR NOT LLMCP_BF16_FEATURE STREQUAL "1")
+  set(LLMCP_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+  set(CMAKE_REQUIRED_FLAGS "-mcpu=native")
+  check_cxx_source_compiles([[
+    #include <arm_bf16.h>
+    #include <arm_neon.h>
+    int main() {
+      bfloat16x8_t a = vdupq_n_bf16(1.0f);
+      float32x4_t c = vdupq_n_f32(0.0f);
+      c = vbfdotq_f32(c, a, a);
+      return vgetq_lane_f32(c, 0) != 0;
+    }
+  ]] LLMCP_COMPILER_HAS_BFDOT)
+  set(CMAKE_REQUIRED_FLAGS "${LLMCP_SAVED_REQUIRED_FLAGS}")
+  if(NOT LLMCP_BF16_RESULT EQUAL 0 OR NOT LLMCP_BF16_FEATURE STREQUAL "1"
+     OR NOT LLMCP_COMPILER_HAS_BFDOT)
     set(LLMCP_ENABLE_BFDOT OFF CACHE BOOL
         "Enable Arm BF16 dot-product intrinsics when the host supports them"
         FORCE)
@@ -38,7 +53,20 @@ if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
     OUTPUT_VARIABLE LLMCP_DOTPROD_FEATURE
     OUTPUT_STRIP_TRAILING_WHITESPACE
     RESULT_VARIABLE LLMCP_DOTPROD_RESULT)
-  if(NOT LLMCP_DOTPROD_RESULT EQUAL 0 OR NOT LLMCP_DOTPROD_FEATURE STREQUAL "1")
+  set(LLMCP_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+  set(CMAKE_REQUIRED_FLAGS "-mcpu=native")
+  check_cxx_source_compiles([[
+    #include <arm_neon.h>
+    int main() {
+      int8x16_t a = vdupq_n_s8(1);
+      int32x4_t c = vdupq_n_s32(0);
+      c = vdotq_s32(c, a, a);
+      return vgetq_lane_s32(c, 0) != 0;
+    }
+  ]] LLMCP_COMPILER_HAS_SDOT)
+  set(CMAKE_REQUIRED_FLAGS "${LLMCP_SAVED_REQUIRED_FLAGS}")
+  if(NOT LLMCP_DOTPROD_RESULT EQUAL 0 OR NOT LLMCP_DOTPROD_FEATURE STREQUAL "1"
+     OR NOT LLMCP_COMPILER_HAS_SDOT)
     set(LLMCP_ENABLE_SDOT OFF CACHE BOOL
         "Enable Arm int8 dot-product intrinsics when the host supports them"
         FORCE)

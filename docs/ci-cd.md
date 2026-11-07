@@ -227,10 +227,11 @@ LLVM 会报：
 fatal error: error in backend: Cannot select: intrinsic %llvm.aarch64.neon.bfdot
 ```
 
-configure 时检测：
+configure 时同时检测硬件和编译器后端：
 
 ```cmake
 sysctl -n hw.optional.arm.FEAT_BF16
+check_cxx_source_compiles(... -mcpu=native ...)
 ```
 
 并控制：
@@ -261,7 +262,14 @@ Q8 的加速指令同样需要检测：
 hw.optional.arm.FEAT_DotProd
 ```
 
-configure 时控制：
+configure 时检测：
+
+```cmake
+sysctl -n hw.optional.arm.FEAT_DotProd
+check_cxx_source_compiles(... -mcpu=native ...)
+```
+
+并控制：
 
 ```cmake
 LLMCP_ENABLE_SDOT
@@ -295,3 +303,25 @@ BF16=0, DotProd=0:
 ```
 
 `microbench` 使用 `-mcpu=native`，避免在旧 CPU 上编译只在新 CPU 上可执行的指令。
+
+
+### 11.3 生成代码的编译选项
+
+`llmcp-compile`、`llmcp-matmul-benchmark`、numeric 测试在编译生成的 LLVM IR 时，
+会根据启用的特性显式使用：
+
+```text
+-march=armv8.2-a+dotprod
+-march=armv8.6-a+bf16
+-march=armv8.6-a+bf16+dotprod
+```
+
+而不是只依赖 `-mcpu=native`，避免编译器无法从 native CPU 推导出 dotprod/bf16
+feature 时出现：
+
+```text
+Cannot select: AArch64ISD::SDOT
+Cannot select: intrinsic %llvm.aarch64.neon.bfdot
+```
+
+'

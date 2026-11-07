@@ -238,7 +238,15 @@ int main(int argc, char **argv) {
   clangArgs.push_back("-o");
   clangArgs.push_back(dylib);
 #if defined(__aarch64__)
+#if defined(LLMCP_ENABLE_BFDOT) && defined(LLMCP_ENABLE_SDOT)
+  clangArgs.push_back("-march=armv8.6-a+bf16+dotprod");
+#elif defined(LLMCP_ENABLE_BFDOT)
+  clangArgs.push_back("-march=armv8.6-a+bf16");
+#elif defined(LLMCP_ENABLE_SDOT)
+  clangArgs.push_back("-march=armv8.2-a+dotprod");
+#else
   clangArgs.push_back("-mcpu=native");
+#endif
 #endif
   if (Error error = runTool(*clangOrErr, clangArgs))
     return fail(toString(std::move(error)));
