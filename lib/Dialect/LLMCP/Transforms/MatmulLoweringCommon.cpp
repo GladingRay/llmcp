@@ -470,7 +470,7 @@ Value emitVectorDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
                                                     /*restrict=*/true);
 }
 
-#if defined(__aarch64__)
+#if defined(__aarch64__) && defined(LLMCP_ENABLE_BFDOT)
 Value emitBfDotMatmul(PatternRewriter &rewriter, Location loc, Value input,
                       Value weight, RankedTensorType resultType, bool decode,
                    StringRef activation) {
@@ -1049,7 +1049,7 @@ Value lowerMatmulInternal(PatternRewriter &rewriter, Location loc, Value input,
 
   Value tensorWeight = toTensor(rewriter, loc, weight);
   if (!transposeB) {
-#if defined(__aarch64__)
+#if defined(__aarch64__) && defined(LLMCP_ENABLE_BFDOT)
     if (!decode && weightFormat != "q8_0" &&
         resultType.getElementType().isBF16()) {
       if (Value blocked =

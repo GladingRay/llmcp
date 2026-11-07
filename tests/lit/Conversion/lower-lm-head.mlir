@@ -1,3 +1,4 @@
+// REQUIRES: bfdot
 // RUN: %llmcp-opt %s --llmcp-lower-to-linalg | %FileCheck %s
 
 // CHECK-LABEL: func.func @lm_head

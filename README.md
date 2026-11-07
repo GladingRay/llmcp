@@ -139,6 +139,7 @@ llmcp_model_decode   -> llmcp_forward_decode
   - attention 按 query position 并行，head 串行；
   - linear 使用 GEMM：column 并行，row loop 保留；
   - bf16 使用 4-row 寄存器 tile + cache block；
+  - 非 BF16 Apple Silicon 自动回退到 vector/f32 路径；
   - Q8 使用 4-row × 4-column 寄存器 tile + 128-K cache block；
   - activation epilogue 在 matmul 输出 store 前完成。
 - decode：

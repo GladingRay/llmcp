@@ -133,6 +133,7 @@ float neonF16(uint64_t iterations) {
   return vgetq_lane_f16(vaddq_f16(vaddq_f16(c0, c1), vaddq_f16(c2, c3)), 0);
 }
 
+#if defined(__aarch64__) && defined(LLMCP_ENABLE_BFDOT)
 float neonBF16(uint64_t iterations) {
   bfloat16x8_t a = vdupq_n_bf16(1.0f);
   bfloat16x8_t b = vdupq_n_bf16(1.0f);
@@ -153,6 +154,7 @@ float neonBF16(uint64_t iterations) {
                  "+w"(c6), "+w"(c7));
   return vgetq_lane_f32(vaddq_f32(vaddq_f32(c0, c1), vaddq_f32(c2, c3)), 0);
 }
+#endif
 
 int32_t neonI8MMA(uint64_t iterations) {
   int8x16_t a = vdupq_n_s8(1);
@@ -351,6 +353,7 @@ int main(int argc, char **argv) {
     printRate("neon_f16", ops, elapsed, 2.0 * 8.0, "GFLOPS");
   }
 
+#if defined(__aarch64__) && defined(LLMCP_ENABLE_BFDOT)
   if (sysctlInt("hw.optional.arm.FEAT_BF16")) {
     elapsed = measure(
         "neon_bf16_dot",
@@ -361,6 +364,7 @@ int main(int argc, char **argv) {
         ops);
     printRate("neon_bf16_dot", ops, elapsed, 2.0 * 8.0, "GFLOPS");
   }
+#endif
 
   if (sysctlInt("hw.optional.arm.FEAT_DotProd")) {
     elapsed = measure(

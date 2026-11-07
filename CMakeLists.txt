@@ -8,6 +8,27 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(LLMCP_BUILD_TESTS "Build llmcp tests" ON)
+option(LLMCP_ENABLE_BFDOT
+       "Enable Arm BF16 dot-product intrinsics when the host supports them" ON)
+
+# bfdot is not available on every Apple Silicon generation (for example some
+# M1 runners). Detect it at configure time instead of emitting an intrinsic
+# that the target backend cannot select.
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+  execute_process(
+    COMMAND sysctl -n hw.optional.arm.FEAT_BF16
+    OUTPUT_VARIABLE LLMCP_BF16_FEATURE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE LLMCP_BF16_RESULT)
+  if(NOT LLMCP_BF16_RESULT EQUAL 0 OR NOT LLMCP_BF16_FEATURE STREQUAL "1")
+    set(LLMCP_ENABLE_BFDOT OFF CACHE BOOL
+        "Enable Arm BF16 dot-product intrinsics when the host supports them"
+        FORCE)
+  endif()
+endif()
+if(LLMCP_ENABLE_BFDOT)
+  add_compile_definitions(LLMCP_ENABLE_BFDOT=1)
+endif()
 
 # Directory of the real Qwen3.5 model used by integration tests. It can be
 # overridden at configure time (-DLLMCP_MODEL_DIR=...) or through the
