@@ -193,6 +193,7 @@ FP16=1 DotProd=1 BF16=1 I8MM=1
 
 neon_bf16_dot   55.3 GFLOPS
 neon_i8_dot    286.2 GOPS
+neon_i8_mma    260.2 GOPS
 
 read            36.7 GB/s
 write           63.3 GB/s

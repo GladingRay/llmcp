@@ -154,6 +154,43 @@ float neonBF16(uint64_t iterations) {
   return vgetq_lane_f32(vaddq_f32(vaddq_f32(c0, c1), vaddq_f32(c2, c3)), 0);
 }
 
+int32_t neonI8MMA(uint64_t iterations) {
+  int8x16_t a = vdupq_n_s8(1);
+  int8x16_t b = vdupq_n_s8(1);
+  int32x4_t c0 = vdupq_n_s32(0), c1 = c0, c2 = c0, c3 = c0;
+  int32x4_t c4 = c0, c5 = c0, c6 = c0, c7 = c0;
+  for (uint64_t i = 0; i < iterations; ++i) {
+    asm volatile("smmla %0.4s, %1.16b, %2.16b"
+                 : "+w"(c0)
+                 : "w"(a), "w"(b));
+    asm volatile("smmla %0.4s, %1.16b, %2.16b"
+                 : "+w"(c1)
+                 : "w"(a), "w"(b));
+    asm volatile("smmla %0.4s, %1.16b, %2.16b"
+                 : "+w"(c2)
+                 : "w"(a), "w"(b));
+    asm volatile("smmla %0.4s, %1.16b, %2.16b"
+                 : "+w"(c3)
+                 : "w"(a), "w"(b));
+    asm volatile("smmla %0.4s, %1.16b, %2.16b"
+                 : "+w"(c4)
+                 : "w"(a), "w"(b));
+    asm volatile("smmla %0.4s, %1.16b, %2.16b"
+                 : "+w"(c5)
+                 : "w"(a), "w"(b));
+    asm volatile("smmla %0.4s, %1.16b, %2.16b"
+                 : "+w"(c6)
+                 : "w"(a), "w"(b));
+    asm volatile("smmla %0.4s, %1.16b, %2.16b"
+                 : "+w"(c7)
+                 : "w"(a), "w"(b));
+  }
+  asm volatile(""
+               : "+w"(c0), "+w"(c1), "+w"(c2), "+w"(c3), "+w"(c4), "+w"(c5),
+                 "+w"(c6), "+w"(c7));
+  return vgetq_lane_s32(vaddq_s32(vaddq_s32(c0, c1), vaddq_s32(c2, c3)), 0);
+}
+
 int32_t neonInt8(uint64_t iterations) {
   int8x16_t a = vdupq_n_s8(1);
   int8x16_t b = vdupq_n_s8(1);
@@ -334,6 +371,18 @@ int main(int argc, char **argv) {
         },
         ops);
     printRate("neon_i8_dot", ops, elapsed, 2.0 * 16.0, "GOPS");
+  }
+
+  if (sysctlInt("hw.optional.arm.FEAT_I8MM")) {
+    elapsed = measure(
+        "neon_i8_mma",
+        [&](uint64_t n) {
+          neonI8MMA(n);
+          return n * 8;
+        },
+        ops);
+    // SMMLA performs a 2x8 by 8x2 integer matrix multiply: 32 MACs.
+    printRate("neon_i8_mma", ops, elapsed, 2.0 * 32.0, "GOPS");
   }
 #else
   std::cout << "neon: unsupported on this architecture\n";
