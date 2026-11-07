@@ -203,3 +203,150 @@ Require conversation resolution
 - 不在 CI 中生成 AOT dylib；
 - 没有跨平台 x86_64 CI；x86 路径需要另外的条件测试；
 - 首次运行会安装 Homebrew/PyTorch，耗时较长；后续可加 cache。
+
+
+## 9. 带模型的 CI
+
+带模型的测试不能跑在普通 GitHub-hosted runner 上：
+
+- 4B BF16 权重约 8.4 GB；
+- bf16 arena 约 8.4 GB；
+- Q8 arena 约 5.1 GB；
+- 同时生成 bf16 + Q8 时，加上源码和构建目录很容易超过 30 GB。
+
+建议使用自托管 Apple Silicon runner。
+
+### 9.1 新增 workflow
+
+```text
+.github/workflows/model-ci.yml
+```
+
+触发：
+
+```text
+workflow_dispatch
+schedule（每天）
+```
+
+runner：
+
+```yaml
+runs-on: [self-hosted, macOS, ARM64, llmcp-model]
+```
+
+### 9.2 模型放置
+
+runner 上预先放置：
+
+```text
+/Users/runner/models/qwen3.5-4b/
+  config.json
+  tokenizer.json
+  *.safetensors
+```
+
+或者设置仓库变量：
+
+```text
+LLMCP_MODEL_DIR=/path/to/qwen3.5-4b
+```
+
+workflow 使用：
+
+```yaml
+LLMCP_MODEL_DIR: ${{ vars.LLMCP_MODEL_DIR }}
+```
+
+如果没有设置，就回退到：
+
+```text
+$HOME/models/qwen3.5-4b
+```
+
+### 9.3 执行内容
+
+```text
+configure with LLMCP_MODEL_DIR
+  -> build
+  -> real model tests
+      dump-real
+      lower-real
+      pack-real
+      pack-real-q8
+      tokenizer
+      chat-template
+      compile-real
+      compile-real-q8
+  -> build bf16/Q8 arenas
+  -> build bf16/Q8 AOT dylibs
+  -> reconfigure to register golden tests
+  -> golden-tokens-bf16
+  -> golden-tokens-q8
+```
+
+### 9.4 为什么需要 reconfigure
+
+`tests/CMakeLists.txt` 在 configure 时检查：
+
+```text
+weights.bin
+weights.json
+libqwen35_aot.dylib
+weights-q8.bin
+weights-q8.json
+libqwen35_aot_q8.dylib
+```
+
+只有这些文件存在时才会注册：
+
+```text
+llmcp-golden-tokens-bf16
+llmcp-golden-tokens-q8
+```
+
+因此生成 artifact 后需要再跑一次 CMake configure。
+
+### 9.5 安全注意事项
+
+自托管 runner **不要**对公开仓库的 fork PR 开放。
+
+推荐：
+
+```text
+workflow_dispatch
+schedule
+受保护分支 push
+```
+
+并且：
+
+- 把带模型的 runner 放到独立 runner group；
+- 不要在 PR workflow 中暴露模型或 secrets；
+- 为 model CI 配置 environment protection。
+
+### 9.6 只跑 Q8
+
+如果磁盘有限，可以只生成 Q8：
+
+```bash
+llmcp-pack --quant q8_0 ...
+llmcp-compile --quant q8_0 ...
+```
+
+并只跑：
+
+```text
+llmcp-golden-tokens-q8
+```
+
+### 9.7 磁盘预算
+
+建议至少：
+
+```text
+50 GB 可用磁盘
+16 GB 内存
+```
+
+bf16 + Q8 同时存在时更稳妥的是 60 GB 以上。
