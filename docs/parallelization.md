@@ -255,7 +255,10 @@ row loop 以复用列方向的权重和输出 tile。
 `MatmulLoweringCommon.cpp` 的 prefill 路径增加了两层分块：
 
 ```text
-寄存器级：4 行同时计算
+寄存器级：
+  bf16: 4 rows
+  Q8:   4 rows x 4 columns
+
 L1/L2：
   bf16: 32 columns x 64 K elements
   Q8:   32 columns x 128 K elements
@@ -271,7 +274,7 @@ for column block:              # parallel
       for K block:
         for K in block:
           bf16: 4 x bfdot
-          Q8:   4 x sdot
+          Q8:   4 rows x 4 columns x sdot
       store 4 rows
 ```
 
@@ -294,9 +297,9 @@ bf16:
   speedup    2.15x
 
 Q8:
-  blocked   334.7 GFLOPS
+  blocked   407.4 GFLOPS
   unblocked 218.4 GFLOPS
-  speedup    1.53x
+  speedup    1.86x
 ```
 
 unblocked 数据通过临时关闭 blocked prefill 分派测得；这是同一台机器上的

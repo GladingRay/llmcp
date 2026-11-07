@@ -118,7 +118,7 @@ Q8 权重：
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
 | bf16 + bfdot | 5.51 s | 5.81 | 6.15 s | 5.20 |
-| Q8_0 + sdot | 4.26 s | 7.51 | 4.04 s | 7.91 |
+| Q8_0 + sdot | 1.96 s | 16.35 | 4.77 s | 6.70 |
 
 prefill 和 decode 使用不同的 AOT 入口：
 
@@ -138,7 +138,8 @@ llmcp_model_decode   -> llmcp_forward_decode
 - prefill：
   - attention 按 query position 并行，head 串行；
   - linear 使用 GEMM：column 并行，row loop 保留；
-  - bf16/Q8 使用 4-row 寄存器 tile + cache block；
+  - bf16 使用 4-row 寄存器 tile + cache block；
+  - Q8 使用 4-row × 4-column 寄存器 tile + 128-K cache block；
   - activation epilogue 在 matmul 输出 store 前完成。
 - decode：
   - attention 按 head 并行，query loop 只有 1 次；
@@ -179,9 +180,9 @@ bf16:
   speedup    2.15x
 
 Q8:
-  blocked   334.7 GFLOPS
+  blocked   407.4 GFLOPS
   unblocked 218.4 GFLOPS
-  speedup    1.53x
+  speedup    1.86x
 ```
 
 CPU 指令与内存带宽（`llmcp-microbench`）：
