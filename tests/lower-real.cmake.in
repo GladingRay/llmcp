@@ -7,11 +7,20 @@ if(NOT dump_result EQUAL 0)
 endif()
 
 execute_process(
-  COMMAND "@LLMCP_OPT@" "@LLMCP_GRAPH@" --llmcp-lower-to-linalg
-          -o "@LLMCP_LINALG@"
+  COMMAND "@LLMCP_OPT@" "@LLMCP_GRAPH@"
+          --llmcp-fuse-linear-activations
+          --llmcp-lower-to-linalg -o "@LLMCP_LINALG@"
   RESULT_VARIABLE lower_result)
 if(NOT lower_result EQUAL 0)
   message(FATAL_ERROR "llmcp-lower-to-linalg failed with ${lower_result}")
+endif()
+
+execute_process(
+  COMMAND "@LLMCP_OPT@" "@LLMCP_LINALG@" --llmcp-parallelize
+          -o "@LLMCP_LINALG@"
+  RESULT_VARIABLE parallelize_result)
+if(NOT parallelize_result EQUAL 0)
+  message(FATAL_ERROR "llmcp-parallelize failed with ${parallelize_result}")
 endif()
 
 file(READ "@LLMCP_LINALG@" contents)
@@ -20,6 +29,7 @@ foreach(remaining_op
     "llmcp.rms_norm "
     "llmcp.add "
     "llmcp.silu_mul "
+    "llmcp.mul "
     "llmcp.embedding "
     "llmcp.gated_rms_norm "
     "llmcp.lm_head "
