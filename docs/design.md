@@ -1,6 +1,6 @@
 # llmcp：Qwen3.5-4B 的 MLIR CPU 编译器
 
-> 技术路线与架构设计（v0.2，2026-11-01）
+> 技术路线与架构设计（v0.3，2026-11-07）
 >
 > 配套文档：[Qwen3.5-4B 模型规格与编译契约](model-spec.md)
 >
@@ -8,6 +8,17 @@
 >
 > 实现状态：CPU AOT 路径、真实模型对齐、FlashAttention-2、OpenMP 并行化、
 > Q8_0 量化均已落地；本文档保留原始架构设计，同时用“当前状态”标注实际进度。
+>
+> **当前实现（2026-11-07）**：
+> - `llmcp` 已注册 11 个 op：`linear`、`rms_norm`、`add`、`silu_mul`、`mul`、
+>   `embedding`、`lm_head`、`causal_conv1d`、`gated_delta_net`、`attention`、
+>   `gated_rms_norm`；
+> - prefill/decode 使用独立 AOT 入口；
+> - Q8_0 权重采用每个 row 内 `[scales][qs]` 分离布局；
+> - BF16 `bfdot` 和 Q8 `sdot` 由 CMake 的硬件+编译器探测控制，可回退；
+> - 全量 CTest 16 项通过。
+>
+> 后文中的 `rope`、`qmatmul`、arena planner 等属于设计预留，未全部实现。
 
 ---
 
@@ -923,6 +934,10 @@ func.func @llmcp_model(...) -> tensor<?x248320xf32>
 
 ### 6.3 算子清单
 
+> 当前实际注册的 op 以 `include/llmcp/Dialect/LLMCP/IR/LLMCPOps.td` 为准：
+> 11 个 op，包含 `mul`。下表保留设计阶段的候选算子；`rope`、`qmatmul`
+> 等尚未注册，属于后续设计。
+
 | Op | 语义 | 关键属性 | 降级目标 |
 |---|---|---|---|
 | `llmcp.linear` | `Y = X W^T (+b)`，f32 累加 | `transpose_b`, `quant` | `linalg.matmul` + cast；量化时 `linalg.generic`/custom |
@@ -1060,17 +1075,23 @@ IREE 的 `iree_linalg_ext.attention` 等扩展值得借鉴，但不作为依赖�
 
 ### 7.1 阶段划分
 
+当前 `llmcp-compile` 的实际 pipeline：
+
 ```text
-[1] llmcp-lower-to-linalg      # 全部 10 类算子已降级；attention/delta 当前为 correctness-first 的逐 token / 逐 query 实现
-[2] canonicalize / cse
-[3] llmcp-fuse-elementwise     # silu_mul、residual、norm 邻接融合
-[4] llmcp-tile-and-vectorize   # 自定义 tiling + vectorization
-[5] one-shot-bufferize          # tensor → memref
-[6] llmcp-plan-arena            # alloc → workspace view
-[7] llmcp-parallelize           # scf.forall → runtime thread pool
-[8] llmcp-lower-to-llvm         # 标准 dialect → LLVM dialect
-[9] translate + emit            # LLVM IR → .o/.dylib
+[1] ModelBuilder (or llmcp-dump)  # 生成 prefill/decode 两个 forward
+[2] llmcp-fuse-linear-activations
+[3] llmcp-lower-to-linalg       # 全部 11 类 op 降级
+[4] llmcp-parallelize           # llmcp.parallel -> scf.parallel
+[5] linalg-fuse-elementwise-ops
+[6] one-shot-bufferize
+[7] convert-linalg-to-parallel-loops
+[8] convert-scf-to-openmp / convert-openmp-to-llvm
+[9] convert-vector / arith / math / func / memref -> LLVM
+[10] mlir-translate -> clang -> .o/.dylib
 ```
+
+`llmcp-tile-and-vectorize`、`llmcp-plan-arena` 仍是设计目标，不在当前
+`llmcp-compile` 的必选路径中。
 
 每个阶段都可以单独运行，便于 `lit` 测试和 bisect。
 
@@ -1333,13 +1354,14 @@ scf.forall (%n) in (16) {
 
 ```text
 mlir-translate --mlir-to-llvmir model.mlir -o model.ll
-clang++ -O3 -mcpu=apple-m2 -shared -o libqwen35.dylib model.ll llmcp_runtime.o
+clang++ -O3 -mcpu=native -shared -o libqwen35.dylib model.ll llmcp_runtime.o
 ```
 
 或 in-process：`translateModuleToLLVMIR` + `TargetMachine::addPassesToEmitFile` 直接生成 `.o`。
 
 - `use-bare-ptr-memref-call-conv=1` 把 memref 参数降成裸指针，C ABI 稳定；动态 shape 需要额外传 sizes（`memref<?x...>` 的 descriptor 不适合直接暴露）。
-- 目标 CPU：`-mcpu=apple-m2`；跨平台时用 `--target=generic-arm64`/`x86-64-v3`。
+- 目标 CPU：`-mcpu=native`；BF16/DotProd 不可用时 lowerer 已回退，跨平台时用
+  `--target=generic-arm64`/`x86-64-v3`。
 - 浮点：不要在全局加 `-ffast-math`；在需要融合的 `arith.mulf/addf` 上设 `fastmath<contract>`，或设置 LLVM `AllowFPOpFusion=Fast`。这会影响数值，需要 golden 验证。
 - `math.exp`：首期用 libm（`--convert-math-to-libm`），正确但慢；M3 用多项式近似（自定义 `llmcp.fast_exp`）优化 softmax/SiLU。
 - `memref` 动态 stride 会增加地址计算；decode 全静态，prefill 用 static bucket 可减少开销。
@@ -1353,7 +1375,7 @@ clang++ -O3 -mcpu=apple-m2 -shared -o libqwen35.dylib model.ll llmcp_runtime.o
 
 ### 7.8 Pass pipeline 示例
 
-当前实际命令（2026-11-01）：
+当前实际命令（2026-11-07）：
 
 ```bash
 llmcp-compile \
@@ -1372,7 +1394,8 @@ llmcp-compile \
 内部工具链：
 
 ```text
-llmcp-lower-to-linalg
+llmcp-fuse-linear-activations
+  -> llmcp-lower-to-linalg
   -> llmcp-parallelize
   -> linalg-fuse-elementwise-ops
   -> one-shot-bufferize
@@ -1711,7 +1734,7 @@ W4 (group g):
 | L4 | 生成质量/性能 | CLI + benchmark | 夜间/发版 |
 | L5 | 回归（tiny model） | CTest | 每次提交 |
 
-当前 L1 已落地 [tests/numeric/run_numeric.py](../tests/numeric/run_numeric.py)，覆盖全部 10 类已 lower 的 op：
+当前 L1 已落地 [tests/numeric/run_numeric.py](../tests/numeric/run_numeric.py)，覆盖全部 11 类已 lower 的 op：
 
 ```text
 llmcp-opt --llmcp-lower-to-linalg
@@ -1804,10 +1827,19 @@ M0 权重布局/参考数据
 
 **M0**
 
-> 当前进度（2026-11-01）：CMake/`llmcp-opt`、`llmcp` 方言、`ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、`llmcp-lower-to-linalg`（全部 10 类 op，均有执行级数值测试）、`llmcp-inspect`、lit/gtest 已完成并通过；真实 Qwen3.5 权重单 token 全模型对齐已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；多 token prefill / greedy decode 已打通，4 token 贪心与 HF 一致；完整图 AOT 代码生成（LLVM IR/object/shared）已完成；LinearOp/LmHeadOp 在 arm64 上使用 `bfdot`，full attention 已改为 FlashAttention-2 风格 online softmax；OpenMP 并行化、elementwise 融合、Q8_0 权重 + Q8_1 预量化激活 + `sdot` 的量化路径已接入真实模型 AOT。当前仍未完成通用 tiling、采样（temperature/top-k/top-p）、长序列系统对齐和视觉/MTP。
+> 当前进度（2026-11-07）：CMake/`llmcp-opt`、`llmcp` 方言（11 类 op）、
+> `ModelConfig`/`Safetensors`/`WeightLayout`、`ModelBuilder`/`llmcp-dump`、
+> `llmcp-lower-to-linalg`（全部 11 类 op，均有执行级数值测试）、`llmcp-inspect`、
+> lit/gtest 已完成并通过（全量 CTest 16 项）；真实 Qwen3.5 权重单 token 全模型对齐
+> 已完成（C++ `llmcp-run` + tokenizers-cpp，top-1/top-5 一致）；多 token prefill /
+> greedy decode 已打通，4 token 贪心与 HF 一致；完整图 AOT 代码生成（LLVM IR/
+> object/shared）已完成；LinearOp/LmHeadOp 在支持 BF16 的 arm64 上使用 `bfdot`，
+> 不支持时回退 vector/f32；Q8_0 使用 scale/qs 分离布局，支持 DotProd 时用 `sdot`，
+> 否则 scalar fallback；full attention 使用 FlashAttention-2 风格 online softmax。
+> 当前仍未完成通用 tiling、采样（temperature/top-k/top-p）、长序列系统对齐和视觉/MTP。
 
 - [x] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
-- [x] `LLMCPDialect`/`LLMCPOps`（全部 10 个 op）。
+- [x] `LLMCPDialect`/`LLMCPOps`（全部 11 个 op）。
 - [x] `ModelConfig` 解析与校验；`WeightLayout`（bf16）；`llmcp-pack` 生成 arena + manifest。
 - [x] tokenizer：tokenizers-cpp HF BPE + ByteLevel + added tokens；与 HF 对照。
 - [ ] 确认 `venv314` 的依赖（`pytest 9.1.1`、`lit 23.1.4` 已装）、HF 参考脚本、8 组 prompt、golden 格式。
@@ -1840,7 +1872,7 @@ M0 权重布局/参考数据
 
 **M4**
 
-- [x] Q8_0 pack；qmatmul lowering；ARM `sdot` int8 dot。
+- [x] Q8_0 pack；Q8 linear lowering；ARM `sdot` int8 dot（可回退 scalar）。
 - [ ] W4 pack / K-quants。
 - [x] CLI（`llmcp-run`）、AOT C ABI、chat template、greedy decode。
 - [ ] temperature / top-k / top-p 采样。

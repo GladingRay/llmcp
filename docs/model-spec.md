@@ -398,7 +398,7 @@ lm_head 0.636B × 2 FLOP      = 1.27 GFLOP
 
 - Decode 是带宽/计算混合受限：BF16 权重约 9.32GB，M2 理论带宽约 100GB/s，仅权重读取就约 93ms/token；这是理论上限估算，实际受 page cache、内存压力和线程调度影响。
 - Prefill 是计算受限：512 token ≈ 4.3 TFLOP；实际耗时取决于 OpenMP 线程数、bfdot/sdot 和内核对齐。
-- 量化要真正提速，不能只做“dequant 后 f32 FMA”，而要用 `sdot/udot`/`i8mm` 做 int8 点积。当前 Q8 路径已使用 ARM `sdot`。
+- 量化要真正提速，不能只做“dequant 后 f32 FMA”，而要用 `sdot/udot`/`i8mm` 做 int8 点积。当前 Q8 路径在支持 DotProd 时使用 ARM `sdot`，否则回退 scalar；BF16 路径在支持 BF16 时使用 `bfdot`，否则回退 vector/f32。
 
 ---
 

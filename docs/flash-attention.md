@@ -98,7 +98,7 @@ attention_decode: OK
 全量：
 
 ```text
-100% tests passed, 0 tests failed out of 11
+100% tests passed, 0 tests failed out of 16
 ```
 
 真实模型：

@@ -158,6 +158,9 @@ Q8 vs bf16 logits:
 Q8 目前只量化 linear 权重；embedding / lm_head、KV cache、DeltaNet state
 仍保持 bf16/f32。
 
+Q8_0 的每个 row 使用 `[scales][qs]` 分离布局；BF16 使用 `bfdot`、Q8 使用
+`sdot`，不支持时分别回退 vector/f32 和 scalar。
+
 ## 边界
 
 当前执行路径：
@@ -175,7 +178,7 @@ llmcp-run
 2. temperature / top-k / top-p 采样（目前只有 greedy）；
 3. KV cache / DeltaNet state 量化；
 4. Q8 embedding / lm_head；
-5. 通用 tiling/vectorize（当前依赖 bfdot/sdot + OpenMP）。
+5. 通用 tiling/vectorize（当前依赖 bfdot/sdot 或 fallback + OpenMP）。
 
 ## 下一步
 

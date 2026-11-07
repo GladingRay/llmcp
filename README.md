@@ -35,7 +35,8 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 - [Linear/Activation 融合](docs/linear-activation-fusion.md)：SwiGLU、GatedRMSNorm、DeltaNet 的 activation epilogue
 - [matmul benchmark](docs/matmul-benchmark.md)：模型 matmul shape 与单算子性能
 - [CacheLineAlignedVector](docs/cache-line-aligned-vector.md)：128 字节对齐的 tensor 存储
-- [历史性能记录](docs/performance.md)：2026-10-26 的原始 benchmark
+- [CI/CD](docs/ci-cd.md)：GitHub Actions 构建、测试与 release
+- [历史性能记录](docs/performance.md)：早期 benchmark；最新数据见本文“性能”节
 
 ## 当前状态
 
@@ -51,8 +52,8 @@ safetensors
 
 已实现：
 
-- `llmcp` 方言 10 类算子：
-  `linear`、`rms_norm`、`add`、`silu_mul`、`embedding`、`lm_head`、
+- `llmcp` 方言 11 类算子：
+  `linear`、`rms_norm`、`add`、`silu_mul`、`mul`、`embedding`、`lm_head`、
   `causal_conv1d`、`gated_delta_net`、`attention`、`gated_rms_norm`；
 - `ModelConfig` / `Safetensors` / `WeightLayout`：
   真实模型 32 层、738 tensor、文本 arena 8.41GB；
@@ -61,15 +62,17 @@ safetensors
 - `llmcp-dump`：
   导出完整 prefill 图，支持 `--verify-module` 和 `--print-stats`；
 - `llmcp-lower-to-linalg`：
-  全部 10 类算子 lowering；
-  Linear/LmHead 在 arm64 上使用 `bfdot`；
+  全部 11 类算子 lowering；
+  Linear/LmHead 在支持 BF16 的 arm64 上使用 `bfdot`，否则回退 vector/f32；
+  Q8 在支持 DotProd 的 CPU 上使用 `sdot`，否则回退 scalar；
   attention 使用 FlashAttention-2 风格 online softmax + key tiling；
 - `llmcp-pack`：
   bf16 arena + JSON manifest；
-  `--quant q8_0` 生成 Q8_0 arena；
+  `--quant q8_0` 生成 Q8_0 arena，scale 与 qs 分离存放；
 - `llmcp-compile`：
   完整图经过 linalg、elementwise 融合、OpenMP 并行化、
-  bf16/bfdot 或 Q8/sdot，AOT 到 LLVM IR / object / shared library；
+  bf16/bfdot（不支持时 vector/f32）或 Q8/sdot（不支持时 scalar），
+  AOT 到 LLVM IR / object / shared library；
   `--quant q8_0` 编译真实 Q8 模型；
 - `llmcp-run`：
   mmap arena、tokenizers-cpp、chat template、流式输出、
@@ -98,6 +101,7 @@ Q8 AOT：
 Q8 权重：
   bf16 arena 8.41 GB
   Q8 arena   5.07 GB
+  Q8_0 每个 row 使用 [scales][qs] 分离布局
   （embedding/lm_head 仍为 bf16）
 ```
 
@@ -112,13 +116,14 @@ Q8 权重：
 
 ## 性能
 
-以下数据为 2026-11-02 在本机 Apple M2 上的实测，Release 构建，
-`OMP_NUM_THREADS=8`，AOT dylib，`prefill=32 / decode=32`：
+以下数据为 2026-11-07 在本机 Apple M2 上的实测，Release 构建，
+`OMP_NUM_THREADS=8`，AOT dylib，`prefill=32 / decode=32`；
+绝对值受 page cache / 内存压力影响：
 
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
-| bf16 + bfdot | 5.51 s | 5.81 | 6.15 s | 5.20 |
-| Q8_0 + sdot | 1.83 s | 17.53 | 4.46 s | 7.18 |
+| bf16 + bfdot | 7.56 s | 4.23 | 6.39 s | 5.01 |
+| Q8_0 + sdot | 1.75 s | 18.27 | 4.35 s | 7.35 |
 
 prefill 和 decode 使用不同的 AOT 入口：
 
@@ -141,6 +146,7 @@ llmcp_model_decode   -> llmcp_forward_decode
   - bf16 使用 4-row 寄存器 tile + cache block；
   - 非 BF16 Apple Silicon 自动回退到 vector/f32 路径；
   - 无 DotProd 的 CPU 自动回退到 scalar Q8 路径；
+  - `LLMCP_ENABLE_BFDOT` / `LLMCP_ENABLE_SDOT` 可显式控制；
   - Q8 使用 4-row × 4-column 寄存器 tile + 128-K cache block；
   - activation epilogue 在 matmul 输出 store 前完成。
 - decode：
@@ -157,34 +163,27 @@ Q8:   5.07 GB
 长上下文 Q8（8 线程，`prefill=1024 / decode=1024`）：
 
 ```text
-prefill: 62.93 s  (16.27 tok/s)
-decode: 153.48 s  (6.67 tok/s)
-total:  216.42 s
+prefill: 61.47 s  (16.66 tok/s)
+decode:  202.35 s (5.06 tok/s)
+total:  263.82 s
 ```
 
-单算子 matmul（4 线程，`llmcp-matmul-benchmark`）：
+单算子 matmul（`llmcp-matmul-benchmark`）：
 
 ```text
-256 x 256 x 256:
-  bf16: 26.9 GFLOPS
-  q8:   53.6 GFLOPS
+256 x 256 x 256，4 线程：
+  bf16: 99.4 GFLOPS
+  q8:   179.4 GFLOPS
 
-M=16, N=8192, K=2560:
-  bf16: 59.5 GFLOPS
-  q8:   120.8 GFLOPS
+M=16, N=8192, K=2560，4 线程：
+  bf16: 119.4 GFLOPS
+  q8:   268.7 GFLOPS
 
 1024 x 1024 x 1024，8 线程，20 次迭代：
-
-```text
-bf16:
-  blocked   182.6 GFLOPS
-  unblocked  84.8 GFLOPS
-  speedup    2.15x
-
-Q8:
-  blocked   407.4 GFLOPS
-  unblocked 218.4 GFLOPS
-  speedup    1.86x
+  bf16 blocked:    168.3 GFLOPS
+  bf16 unblocked:   84.8 GFLOPS（早期 A/B）
+  Q8 blocked:      403.4 GFLOPS
+  Q8 unblocked:    218.4 GFLOPS（早期 A/B）
 ```
 
 CPU 指令与内存带宽（`llmcp-microbench`）：
@@ -193,13 +192,13 @@ CPU 指令与内存带宽（`llmcp-microbench`）：
 Apple M2, 8 logical CPUs
 FP16=1 DotProd=1 BF16=1 I8MM=1
 
-neon_bf16_dot   55.3 GFLOPS
-neon_i8_dot    286.2 GOPS
-neon_i8_mma    260.2 GOPS
+neon_bf16_dot   53.1 GFLOPS
+neon_i8_dot    275.3 GOPS
+neon_i8_mma    264.3 GOPS
 
-read            36.7 GB/s
-write           63.3 GB/s
-copy            56.9 GB/s
+read            15.6 GB/s
+write           26.0 GB/s
+copy            46.8 GB/s
 ```
 
 复现命令：
@@ -264,7 +263,7 @@ ctest --test-dir build --output-on-failure
 ./build/bin/llmcp-dump --model /Users/guorui/Work/models/qwen3.5-4b \
   --verify-module --print-stats -o build/qwen35_graph.mlir
 
-# 6. numeric（10 类算子，含 Q8 linear/lm_head）
+# 6. numeric（11 类算子，含 Q8 linear/lm_head）
 ctest --test-dir build -R llmcp-numeric --output-on-failure
 
 # 7. 输出 token golden test

@@ -420,7 +420,8 @@ out = bf16(acc)
 
 ### 7.3 ARM NEON / sdot
 
-M2 支持 `FEAT_DotProd`，使用：
+CMake 在 configure 阶段同时检查 `FEAT_DotProd` 和编译器后端；可用
+`-DLLMCP_ENABLE_SDOT=OFF` 强制走 scalar。M2 支持 `FEAT_DotProd`，使用：
 
 ```asm
 sdot v0.4s, v1.16b, v2.16b
@@ -694,11 +695,12 @@ ARM sdot kernel
 
 已完成：
 
-- `Q8_0Block` 格式；
+- `Q8_0Block` 逻辑格式；
 - `quantizeTensorQ8_0` / `quantizeRowQ8_0` / `dequantizeQ8_0`；
+- tensor 存储时 scale 与 qs 分离；
 - `WeightLayout` 的 `q8_0` 模式；
 - `llmcp-pack --quant q8_0`；
-- manifest 中的 `quantization`、`block_size`、`source_size`；
+- manifest 中的 `quantization`、`block_size`、`quant_layout`、`source_size`；
 - 单元测试和 `llmcp-pack-real-q8` dry-run。
 
 真实模型打包结果（embedding/lm_head 保持 bf16，其余 matmul 权重 Q8_0）：
@@ -734,22 +736,27 @@ ARM `sdot` 并接入真实模型 AOT。当前状态以第 16 节为准。
 
 - activation 预量化到 `[rows, K] i8` + `[rows, K/32] f32`；
 - 每个 activation block 只量化一次，不再对每个 N 列重复；
+- 每个 row 使用 `[scales][qs]` 分离布局；
 - ARM `llvm.aarch64.neon.sdot`；
 - 每个 32-element block 用 2 条 sdot；
 - int32 点积后 f32 scale 累加；
+- Q8 prefill 使用 4-row x 4-column register tile + 128-K cache block；
+- configure 阶段同时检查 `FEAT_DotProd` 和编译器后端；
+- 不支持时关闭 `LLMCP_ENABLE_SDOT`，走 scalar Q8 fallback；
+- numeric 覆盖 `linear_q8` 与 `linear_q8_prefill`；
 - `llmcp-matmul-benchmark --q8`；
 - `llmcp-matmul-benchmark-q8` CTest。
 
-实测（Apple M2，4 线程，全 1 输入）：
+实测（Apple M2，2026-11-07，4 线程，全 1 输入）：
 
 ```text
 256x256x256:
-  bf16: 约 29.9 GFLOPS
-  q8:   约 32.7 GFLOPS
+  bf16: 99.4 GFLOPS
+  q8:   179.4 GFLOPS
 
 M=16, N=8192, K=2560:
-  bf16: 约 55.9 GFLOPS
-  q8:   约 189.5 GFLOPS
+  bf16: 119.4 GFLOPS
+  q8:   268.7 GFLOPS
 ```
 
 Q8 的收益主要来自：

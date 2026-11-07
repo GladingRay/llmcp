@@ -1,7 +1,8 @@
 # Qwen3.5-4B 中的 matmul shape 与 AOT 性能
 
-> 注：下表是未启用 OpenMP 的单线程基线。当前工具默认并行，
-> 可用 `--threads N` / `--no-parallel` 对比。最新结果见
+> 注：本文的逐 shape 表是 2026-10 的未启用 OpenMP 历史基线，保留用于分析
+> shape 分布。当前工具默认并行，并支持 bf16 blocked、Q8 4x4、BF16/SDOT
+> 特性回退；最新性能见 [README](../README.md#性能) 和
 > [parallelization.md](parallelization.md)。
 
 ## 1. 统计口径
@@ -94,7 +95,8 @@ llmcp.linear
   -> 计时
 ```
 
-当前 AOT 代码在 arm64 上使用 `bfdot`。
+AOT 代码在支持 BF16 的 arm64 上使用 `bfdot`；不支持时回退 vector/f32。
+Q8 使用 `sdot`，无 DotProd 时回退 scalar。
 
 测量值：
 

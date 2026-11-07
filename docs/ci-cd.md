@@ -19,14 +19,16 @@ tag:
 
 ### 必须使用 Apple Silicon
 
-项目的主路径依赖：
+项目的主路径优先使用：
 
 ```text
 bfdot
 sdot
--mcpu=apple-m2
+-mcpu=native
 OpenMP
 ```
+
+BF16/DotProd 不可用时自动回退，不要求所有 runner 都支持。
 
 因此 CI 使用：
 
@@ -205,9 +207,9 @@ Require conversation resolution
 - 首次运行会安装 Homebrew/PyTorch，耗时较长；后续可加 cache。
 
 
-## 11. 加速指令开关
+## 9. 加速指令开关
 
-### 11.1 BF16 dot
+### 9.1 BF16 dot
 
 部分 Apple Silicon runner 没有：
 
@@ -254,7 +256,7 @@ BF16 不可用时：
 numeric/unit/matmul 测试继续运行
 ```
 
-### 11.2 Q8 sdot
+### 9.2 Q8 sdot
 
 Q8 的加速指令同样需要检测：
 
@@ -305,7 +307,7 @@ BF16=0, DotProd=0:
 `microbench` 使用 `-mcpu=native`，避免在旧 CPU 上编译只在新 CPU 上可执行的指令。
 
 
-### 11.3 生成代码的编译
+### 9.3 生成代码的编译
 
 `llmcp-compile`、`llmcp-matmul-benchmark` 和 numeric 测试在编译生成的 LLVM IR
 时使用：

@@ -113,10 +113,10 @@ activation 在 matmul 的 f32 输出上直接计算，然后才 trunc/store，�
   ```text
   tokens: 0 271 760 2614
   ```
-- 32 prefill / 32 decode：
+- 32 prefill / 32 decode（2026-11-07，8 线程）：
   ```text
-  bf16: prefill 5.51 s, decode 6.15 s
-  Q8:   prefill 4.26 s, decode 4.04 s
+  bf16: prefill 7.56 s, decode 6.39 s
+  Q8:   prefill 1.75 s, decode 4.35 s
   ```
 - 全量：
   ```text
