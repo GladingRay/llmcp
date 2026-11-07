@@ -5,7 +5,7 @@
 | 路径 | 版本 | 固定 commit | 许可证 | 用途 |
 |---|---|---|---:|---|
 | `third_party/googletest` | v1.18.0 | `063de7e9578f82b369302001269680b4b1553359` | BSD-3-Clause | C++ 单元测试（`gtest` / `gtest_main`） |
-| `third_party/tokenizers-cpp` | main (`418d0b3`) | `418d0b308a8cfc331c66ac17dc29f0dee440a1f2` | Apache-2.0 | HuggingFace `tokenizer.json` 的 C++ 绑定；HF-only 构建只需要 `huggingface_tokenizer.cc` + Rust `tokenizers` |
+| `third_party/tokenizers-cpp` | main (`c586c52`) | `c586c52f93f7b060753bd2388eb96a105cb7374d` | Apache-2.0 | HuggingFace `tokenizer.json` 的 C++ 绑定；HF-only 构建只需要 `huggingface_tokenizer.cc` + Rust `tokenizers` |
 
 ## 初始化
 
