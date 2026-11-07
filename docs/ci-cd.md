@@ -31,7 +31,7 @@ OpenMP
 因此 CI 使用：
 
 ```yaml
-runs-on: macos-14
+runs-on: macos-15
 ```
 
 并检查：
@@ -40,7 +40,8 @@ runs-on: macos-14
 test "$(uname -m)" = arm64
 ```
 
-如果仓库的 `macos-14` 标签不是 arm64，改成自托管 runner：
+GitHub 的 `macos-14` 镜像已于 2026-11-02 退役；当前使用 `macos-15`（arm64 标签）。
+如果 `macos-15` 不是 arm64，改成自托管 runner：
 
 ```yaml
 runs-on: [self-hosted, macOS, ARM64]
@@ -197,7 +198,7 @@ Require conversation resolution
 
 ## 8. 当前工作流的限制
 
-- `macos-14` 是否为 arm64 取决于 GitHub 账号/仓库类型；若不是，使用自托管；
+- `macos-15` 是当前 GitHub 的 arm64 标签；若账号/仓库不支持，使用自托管 runner；
 - 不在 CI 中执行 4B 模型；
 - 不在 CI 中生成 AOT dylib；
 - 没有跨平台 x86_64 CI；x86 路径需要另外的条件测试；

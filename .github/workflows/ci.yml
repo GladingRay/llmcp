@@ -23,7 +23,7 @@ jobs:
     # The project's optimized paths use bfdot/sdot and must run on Apple Silicon.
     # If this label is not arm64 for your repository, use a self-hosted runner
     # with labels [self-hosted, macOS, ARM64].
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
 
     steps:
