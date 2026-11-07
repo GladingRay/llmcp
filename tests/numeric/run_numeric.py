@@ -583,6 +583,18 @@ def main():
     compile_and_run(args, "linear_q8", emit_linear_q8(x.tolist(), w.tolist()),
                     ref, (1e-2, 2e-3))
 
+    # Q8 prefill path (blocked kernel) with four-row register tiles.
+    x = torch.randn(8, 64).to(bf16)
+    w = torch.randn(64, 64).to(bf16)
+    xq = torch.tensor(q8_0_dequant(x.tolist()), dtype=torch.float32).reshape(
+        x.shape)
+    wq = torch.tensor(q8_0_dequant(w.tolist()), dtype=torch.float32).reshape(
+        w.shape)
+    ref = (xq @ wq.T).to(bf16).float().flatten()
+    compile_and_run(args, "linear_q8_prefill",
+                    emit_linear_q8(x.tolist(), w.tolist()), ref,
+                    (1e-2, 2e-3))
+
 #rms_norm
     x = torch.randn(2, 8).to(bf16)
     w = torch.randn(8).to(bf16)

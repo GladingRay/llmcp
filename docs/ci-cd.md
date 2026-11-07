@@ -205,10 +205,17 @@ Require conversation resolution
 - 首次运行会安装 Homebrew/PyTorch，耗时较长；后续可加 cache。
 
 
-## 11. 非 BF16 runner 的处理
+## 11. 加速指令开关
 
-并非所有 Apple Silicon runner 都支持 BF16 dot product。例如部分 GitHub M1 runner
-没有 `hw.optional.arm.FEAT_BF16`，如果仍然生成：
+### 11.1 BF16 dot
+
+部分 Apple Silicon runner 没有：
+
+```text
+hw.optional.arm.FEAT_BF16
+```
+
+如果仍然生成：
 
 ```text
 llvm.aarch64.neon.bfdot
@@ -220,7 +227,7 @@ LLVM 会报：
 fatal error: error in backend: Cannot select: intrinsic %llvm.aarch64.neon.bfdot
 ```
 
-根仓库在 configure 时检测：
+configure 时检测：
 
 ```cmake
 sysctl -n hw.optional.arm.FEAT_BF16
@@ -232,30 +239,59 @@ sysctl -n hw.optional.arm.FEAT_BF16
 LLMCP_ENABLE_BFDOT
 ```
 
-行为：
-
-```text
-BF16=1:
-  生成 bfdot 路径
-  运行 bfdot lit 测试
-
-BF16=0:
-  使用 vector/f32 fallback
-  跳过 bfdot lit 测试
-  numeric/unit/matmul 测试仍然运行
-```
-
 手动关闭：
 
 ```bash
 cmake -S . -B build -G Ninja -DLLMCP_ENABLE_BFDOT=OFF
 ```
 
-手动开启只应在确认 runner 和编译器都支持 BF16 时使用：
+BF16 不可用时：
 
-```bash
-cmake -S . -B build -G Ninja -DLLMCP_ENABLE_BFDOT=ON
+```text
+使用 vector/f32 fallback
+跳过 bfdot lit 测试
+numeric/unit/matmul 测试继续运行
 ```
 
-`microbench` 也改为 `-mcpu=native`，避免在 M1 上编译仅 M2 可执行的 BF16
-指令。
+### 11.2 Q8 sdot
+
+Q8 的加速指令同样需要检测：
+
+```text
+hw.optional.arm.FEAT_DotProd
+```
+
+configure 时控制：
+
+```cmake
+LLMCP_ENABLE_SDOT
+```
+
+手动关闭：
+
+```bash
+cmake -S . -B build -G Ninja -DLLMCP_ENABLE_SDOT=OFF
+```
+
+sdot 不可用时：
+
+```text
+emitQ8Matmul 使用 scalar fallback
+emitPrefillQ8Blocked 使用 scalar fallback
+microbench 不注册 neon_i8_dot
+numeric Q8 测试继续验证正确性
+```
+
+当前 `LLMCP_ENABLE_BFDOT` 与 `LLMCP_ENABLE_SDOT` 相互独立：
+
+```text
+BF16=0, DotProd=1:
+  bf16 走 fallback
+  Q8 继续使用 sdot
+
+BF16=0, DotProd=0:
+  bf16 走 fallback
+  Q8 走 scalar fallback
+```
+
+`microbench` 使用 `-mcpu=native`，避免在旧 CPU 上编译只在新 CPU 上可执行的指令。

@@ -30,6 +30,24 @@ if(LLMCP_ENABLE_BFDOT)
   add_compile_definitions(LLMCP_ENABLE_BFDOT=1)
 endif()
 
+option(LLMCP_ENABLE_SDOT
+       "Enable Arm int8 dot-product intrinsics when the host supports them" ON)
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+  execute_process(
+    COMMAND sysctl -n hw.optional.arm.FEAT_DotProd
+    OUTPUT_VARIABLE LLMCP_DOTPROD_FEATURE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE LLMCP_DOTPROD_RESULT)
+  if(NOT LLMCP_DOTPROD_RESULT EQUAL 0 OR NOT LLMCP_DOTPROD_FEATURE STREQUAL "1")
+    set(LLMCP_ENABLE_SDOT OFF CACHE BOOL
+        "Enable Arm int8 dot-product intrinsics when the host supports them"
+        FORCE)
+  endif()
+endif()
+if(LLMCP_ENABLE_SDOT)
+  add_compile_definitions(LLMCP_ENABLE_SDOT=1)
+endif()
+
 # Directory of the real Qwen3.5 model used by integration tests. It can be
 # overridden at configure time (-DLLMCP_MODEL_DIR=...) or through the
 # LLMCP_MODEL_DIR environment variable.

@@ -193,6 +193,7 @@ int32_t neonI8MMA(uint64_t iterations) {
   return vgetq_lane_s32(vaddq_s32(vaddq_s32(c0, c1), vaddq_s32(c2, c3)), 0);
 }
 
+#if defined(__aarch64__) && defined(LLMCP_ENABLE_SDOT)
 int32_t neonInt8(uint64_t iterations) {
   int8x16_t a = vdupq_n_s8(1);
   int8x16_t b = vdupq_n_s8(1);
@@ -213,6 +214,7 @@ int32_t neonInt8(uint64_t iterations) {
                  "+w"(c6), "+w"(c7));
   return vgetq_lane_s32(vaddq_s32(vaddq_s32(c0, c1), vaddq_s32(c2, c3)), 0);
 }
+#endif
 #endif
 
 double bandwidthRead(int64_t threadCount, int64_t bytes, uint64_t &bytesRead) {
@@ -366,6 +368,7 @@ int main(int argc, char **argv) {
   }
 #endif
 
+#if defined(__aarch64__) && defined(LLMCP_ENABLE_SDOT)
   if (sysctlInt("hw.optional.arm.FEAT_DotProd")) {
     elapsed = measure(
         "neon_i8_dot",
@@ -376,6 +379,7 @@ int main(int argc, char **argv) {
         ops);
     printRate("neon_i8_dot", ops, elapsed, 2.0 * 16.0, "GOPS");
   }
+#endif
 
   if (sysctlInt("hw.optional.arm.FEAT_I8MM")) {
     elapsed = measure(
