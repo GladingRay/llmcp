@@ -226,6 +226,7 @@ int main(int argc, char **argv) {
       "-shared",
       llvmIr,
       "-O2",
+      "-Wno-override-module",
       "-L/opt/homebrew/opt/llvm@20/lib",
       "-lmlir_runner_utils",
       "-lmlir_c_runner_utils",

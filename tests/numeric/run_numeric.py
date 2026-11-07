@@ -518,8 +518,9 @@ def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
     ])
     run([args.mlir_translate, "--mlir-to-llvmir", str(llvm_mlir), "-o",
          str(llvm_ir)])
-    clang_args = [args.clang, str(llvm_ir), "-o", str(exe),
-                  f"-L{args.runner_lib_dir}", "-lmlir_runner_utils",
+    clang_args = [args.clang, str(llvm_ir), "-Wno-override-module",
+                  "-o", str(exe), f"-L{args.runner_lib_dir}",
+                  "-lmlir_runner_utils",
                   "-lmlir_c_runner_utils", "-L/opt/homebrew/opt/libomp/lib",
                   "-lomp", "-Wl,-rpath,/opt/homebrew/opt/libomp/lib"]
     if platform.machine() in ("arm64", "aarch64"):
