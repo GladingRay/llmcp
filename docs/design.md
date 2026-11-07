@@ -342,6 +342,7 @@ llmcp/
 │   │   ├── LowerPrefillGemm.cpp
 │   │   ├── LowerDecodeGemm.cpp
 │   │   ├── MatmulLoweringCommon.cpp
+│   │   ├── FuseLinearActivations.cpp
 │   │   ├── LowerCausalConv1d.cpp
 │   │   ├── LowerGatedDeltaNet.cpp
 │   │   ├── LowerAttention.cpp

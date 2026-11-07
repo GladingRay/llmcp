@@ -24,6 +24,7 @@
 int main(int argc, char **argv) {
   mlir::llmcp::registerLowerToLinalgPass();
   mlir::llmcp::registerParallelizePass();
+  mlir::llmcp::registerFuseLinearActivationsPass();
 
   mlir::DialectRegistry registry;
   registry.insert<mlir::llmcp::LLMCPDialect, mlir::arith::ArithDialect,

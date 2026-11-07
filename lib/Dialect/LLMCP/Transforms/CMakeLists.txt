@@ -1,6 +1,7 @@
 add_mlir_library(MLIRLLMCPTransforms
   LowerToLinalg.cpp
   Parallelize.cpp
+  FuseLinearActivations.cpp
   LowerCausalConv1d.cpp
   LowerGatedDeltaNet.cpp
   LowerAttention.cpp

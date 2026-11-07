@@ -196,12 +196,15 @@ public:
 
                 // beta = sigmoid(b), g = -exp(A_log) * softplus(a + dt_bias).
                 Value bValue = loadBf16(op.getB(), time, head);
-                Value beta = rewriter.create<arith::DivFOp>(
-                    loc, oneF,
-                    rewriter.create<arith::AddFOp>(
-                        loc, oneF,
-                        rewriter.create<math::ExpOp>(
-                            loc, rewriter.create<arith::NegFOp>(loc, bValue))));
+                Value beta = bValue;
+                if (!op.getBActivated())
+                  beta = rewriter.create<arith::DivFOp>(
+                      loc, oneF,
+                      rewriter.create<arith::AddFOp>(
+                          loc, oneF,
+                          rewriter.create<math::ExpOp>(
+                              loc,
+                              rewriter.create<arith::NegFOp>(loc, bValue))));
                 Value aValue = loadBf16(op.getA(), time, head);
                 Value dtValue = rewriter.create<memref::LoadOp>(
                     loc, op.getDtBias(), ValueRange{head});

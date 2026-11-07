@@ -92,6 +92,52 @@ Value castToF32(PatternRewriter &rewriter, Location loc, Value input) {
   return cast.getResult(0);
 }
 
+Value emitLinearActivation(PatternRewriter &rewriter, Location loc,
+                             Value input, StringRef activation) {
+  auto resultType = cast<RankedTensorType>(input.getType());
+  auto f32Type = rewriter.getF32Type();
+  Value output = createEmpty(rewriter, loc, resultType, input);
+  SmallVector<AffineMap> maps = {rewriter.getMultiDimIdentityMap(2),
+                                 rewriter.getMultiDimIdentityMap(2)};
+  SmallVector<utils::IteratorType> iterators(2,
+                                             utils::IteratorType::parallel);
+  return rewriter
+      .create<linalg::GenericOp>(
+          loc, resultType, ValueRange{input}, ValueRange{output}, maps,
+          iterators,
+          [&](OpBuilder &builder, Location loc, ValueRange args) {
+            Value value = args[0];
+            if (value.getType().isBF16())
+              value = builder.create<arith::ExtFOp>(loc, f32Type, value);
+            Value one = builder.create<arith::ConstantOp>(
+                loc, builder.getF32FloatAttr(1.0f));
+            Value result;
+            if (activation == "silu") {
+              Value sigmoid = builder.create<arith::DivFOp>(
+                  loc, one,
+                  builder.create<arith::AddFOp>(
+                      loc, one,
+                      builder.create<math::ExpOp>(
+                          loc, builder.create<arith::NegFOp>(loc, value))));
+              result = builder.create<arith::MulFOp>(loc, value, sigmoid);
+            } else if (activation == "sigmoid") {
+              result = builder.create<arith::DivFOp>(
+                  loc, one,
+                  builder.create<arith::AddFOp>(
+                      loc, one,
+                      builder.create<math::ExpOp>(
+                          loc, builder.create<arith::NegFOp>(loc, value))));
+            } else {
+              result = builder.create<math::Log1pOp>(
+                  loc, builder.create<math::ExpOp>(loc, value));
+            }
+            Value truncated = builder.create<arith::TruncFOp>(
+                loc, resultType.getElementType(), result);
+            builder.create<linalg::YieldOp>(loc, truncated);
+          })
+      .getResult(0);
+}
+
 class LinearOpLowering : public OpRewritePattern<LinearOp> {
 public:
   using OpRewritePattern::OpRewritePattern;
@@ -109,6 +155,9 @@ public:
             : lowerPrefillGemm(rewriter, loc, input, op.getWeight(), resultType,
                                op.getWeightFormat(), op.getTransposeB());
     if (lowered) {
+      if (op.getActivation() != "none")
+        lowered = emitLinearActivation(rewriter, loc, lowered,
+                                       op.getActivation());
       rewriter.replaceOp(op, lowered);
       return success();
     }
@@ -150,7 +199,10 @@ public:
               loc, resultType.getElementType(), args[0]);
           builder.create<linalg::YieldOp>(loc, value);
         });
-    rewriter.replaceOp(op, cast.getResult(0));
+    Value result = cast.getResult(0);
+    if (op.getActivation() != "none")
+      result = emitLinearActivation(rewriter, loc, result, op.getActivation());
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
@@ -265,6 +317,30 @@ public:
         ValueRange{output}, maps, iterators,
         [&](OpBuilder &builder, Location loc, ValueRange args) {
           Value value = builder.create<arith::AddFOp>(loc, args[0], args[1]);
+          builder.create<linalg::YieldOp>(loc, value);
+        });
+    rewriter.replaceOp(op, generic.getResult(0));
+    return success();
+  }
+};
+
+class MulOpLowering : public OpRewritePattern<MulOp> {
+public:
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MulOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto resultType = cast<RankedTensorType>(op.getResult().getType());
+    Value output = createEmpty(rewriter, loc, resultType, op.getLhs());
+    SmallVector<AffineMap> maps(3, rewriter.getMultiDimIdentityMap(2));
+    SmallVector<utils::IteratorType> iterators(2,
+                                               utils::IteratorType::parallel);
+    auto generic = rewriter.create<linalg::GenericOp>(
+        loc, resultType, ValueRange{op.getLhs(), op.getRhs()},
+        ValueRange{output}, maps, iterators,
+        [&](OpBuilder &builder, Location loc, ValueRange args) {
+          Value value = builder.create<arith::MulFOp>(loc, args[0], args[1]);
           builder.create<linalg::YieldOp>(loc, value);
         });
     rewriter.replaceOp(op, generic.getResult(0));
@@ -470,8 +546,12 @@ public:
           Value one = builder.create<arith::ConstantOp>(
               loc, builder.getF32FloatAttr(1.0f));
           Value denominator = builder.create<arith::AddFOp>(loc, one, exponent);
-          Value sigmoid = builder.create<arith::DivFOp>(loc, one, denominator);
-          Value silu = builder.create<arith::MulFOp>(loc, gate, sigmoid);
+          Value silu = gate;
+          if (!op.getGateActivated()) {
+            Value sigmoid =
+                builder.create<arith::DivFOp>(loc, one, denominator);
+            silu = builder.create<arith::MulFOp>(loc, gate, sigmoid);
+          }
           Value normalized = builder.create<arith::MulFOp>(loc, args[0], silu);
           Value value = builder.create<arith::MulFOp>(loc, normalized, args[2]);
           Value scaledValue =
@@ -550,7 +630,7 @@ struct LowerToLinalgPass
     populateGatedDeltaNetLoweringPatterns(patterns);
     populateAttentionLoweringPatterns(patterns);
     patterns.add<LinearOpLowering, RmsNormOpLowering, AddOpLowering,
-                 SiluMulOpLowering, EmbeddingOpLowering, GatedRmsNormOpLowering,
+                 MulOpLowering, SiluMulOpLowering, EmbeddingOpLowering, GatedRmsNormOpLowering,
                  LmHeadOpLowering>(context);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();

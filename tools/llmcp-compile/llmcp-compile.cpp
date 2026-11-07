@@ -157,7 +157,9 @@ int main(int argc, char **argv) {
     return fail(clangOrErr.takeError());
 
   if (llvm::Error error = runTool(
-          *llmcpOptOrErr, {graph, "--llmcp-lower-to-linalg", "-o", linalg}))
+          *llmcpOptOrErr,
+          {graph, "--llmcp-fuse-linear-activations",
+           "--llmcp-lower-to-linalg", "-o", linalg}))
     return fail(std::move(error));
   if (llvm::Error error = runTool(
           *llmcpOptOrErr, {linalg, "--llmcp-parallelize", "-o", linalg}))

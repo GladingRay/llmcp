@@ -64,6 +64,10 @@ LogicalResult LinearOp::verify() {
   }
   if (format != "bf16")
     return emitOpError("unsupported weight_format: " + format);
+  StringRef activation = getActivation();
+  if (activation != "none" && activation != "silu" &&
+      activation != "sigmoid" && activation != "softplus")
+    return emitOpError("unsupported activation: " + activation);
   const int64_t inputK = inputType.getDimSize(1);
   const int64_t weightK =
       transposeB ? weightType.getDimSize(0) : weightType.getDimSize(1);
@@ -132,6 +136,20 @@ bool haveCompatibleShape(ShapedType lhs, ShapedType rhs) {
 }
 
 } // namespace
+
+LogicalResult MulOp::verify() {
+  auto lhs = dyn_cast<ShapedType>(getLhs().getType());
+  auto rhs = dyn_cast<ShapedType>(getRhs().getType());
+  auto result = dyn_cast<ShapedType>(getResult().getType());
+  if (!lhs || !rhs || !result)
+    return emitOpError("operands and result must be ranked tensors");
+  if (!haveCompatibleShape(lhs, rhs) || !haveCompatibleShape(lhs, result))
+    return emitOpError("operands and result must have the same shape");
+  if (lhs.getElementType() != rhs.getElementType() ||
+      lhs.getElementType() != result.getElementType())
+    return emitOpError("operands and result must have the same element type");
+  return success();
+}
 
 LogicalResult AddOp::verify() {
   auto lhs = dyn_cast<ShapedType>(getLhs().getType());

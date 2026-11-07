@@ -32,6 +32,7 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 - [FlashAttention-2](docs/flash-attention.md)：full attention 的 online softmax + key tiling
 - [算子并行化](docs/parallelization.md)：OpenMP、RMSNorm 合并、elementwise 融合、benchmark
 - [INT8 量化](docs/int8-quantization.md)：Q8_0/Q8_1、llmcp-pack、sdot、真实模型接入
+- [Linear/Activation 融合](docs/linear-activation-fusion.md)：SwiGLU、GatedRMSNorm、DeltaNet 的 activation epilogue
 - [matmul benchmark](docs/matmul-benchmark.md)：模型 matmul shape 与单算子性能
 - [CacheLineAlignedVector](docs/cache-line-aligned-vector.md)：128 字节对齐的 tensor 存储
 - [历史性能记录](docs/performance.md)：2026-10-26 的原始 benchmark

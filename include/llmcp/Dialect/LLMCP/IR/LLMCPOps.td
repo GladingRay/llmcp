@@ -30,7 +30,8 @@ def LLMCP_LinearOp : LLMCP_Op<"linear", [Pure]> {
   let arguments = (ins AnyTensor:$input,
                        AnyMemRef:$weight,
                        DefaultValuedAttr<BoolAttr, "false">:$transpose_b,
-                       DefaultValuedAttr<StrAttr, "\"bf16\"">:$weight_format);
+                       DefaultValuedAttr<StrAttr, "\"bf16\"">:$weight_format,
+                       DefaultValuedAttr<StrAttr, "\"none\"">:$activation);
   let results = (outs AnyTensor:$output);
 
   let assemblyFormat = [{
@@ -82,6 +83,14 @@ def LLMCP_SiluMulOp : LLMCP_Op<"silu_mul", [Pure]> {
   let hasVerifier = 1;
 }
 
+def LLMCP_MulOp : LLMCP_Op<"mul", [Pure]> {
+  let summary = "Elementwise multiplication of two tensors";
+  let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs);
+  let results = (outs AnyTensor:$result);
+  let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
+  let hasVerifier = 1;
+}
+
 def LLMCP_EmbeddingOp : LLMCP_Op<"embedding", [Pure]> {
   let summary = "Token embedding lookup";
   let arguments = (ins AnyTensor:$tokens, AnyMemRef:$table);
@@ -125,7 +134,8 @@ def LLMCP_GatedDeltaNetOp : LLMCP_Op<"gated_delta_net"> {
                        I64Attr:$num_v_heads,
                        I64Attr:$head_k_dim,
                        I64Attr:$head_v_dim,
-                       StrAttr:$mode);
+                       StrAttr:$mode,
+                       DefaultValuedAttr<BoolAttr, "false">:$b_activated);
   let results = (outs AnyTensor:$output);
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
@@ -160,7 +170,8 @@ def LLMCP_GatedRmsNormOp : LLMCP_Op<"gated_rms_norm", [Pure]> {
                        AnyTensor:$gate,
                        AnyMemRef:$weight,
                        I64Attr:$group_size,
-                       F64Attr:$eps);
+                       F64Attr:$eps,
+                       DefaultValuedAttr<BoolAttr, "false">:$gate_activated);
   let results = (outs AnyTensor:$result);
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
