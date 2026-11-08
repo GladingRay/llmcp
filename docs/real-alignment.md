@@ -110,8 +110,9 @@ AOT 路径严格按正常顺序执行：先加载 tokenizer，再调用 AOT，�
 # tokens: 0 271 760 2614
 ```
 
-`output:` 后面是逐 token decode 并立即 flush 的明文；每生成一个 token，
-就调用 tokenizer decode 一次，不等待全部生成结束。这与 HF greedy 的
+`output:` 后面是增量解码的明文：每生成一个 token，就解码尚未输出的 token；
+完整 UTF-8 文本立即 flush，跨 token 字符则暂存到完整后输出，生成结束时刷新
+剩余内容。详见 [Unicode 流式输出](streaming-unicode.md)。生成 token 与 HF greedy 的
 `[0, 271, 760, 2614]` 一致。
 
 Python 语义参考结果：

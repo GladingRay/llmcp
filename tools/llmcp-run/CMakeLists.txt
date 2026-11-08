@@ -58,9 +58,14 @@ if(APPLE)
   target_link_libraries(tokenizers_hf PUBLIC "-framework Security")
 endif()
 
+add_library(llmcp-streaming-decoder STATIC StreamingDecoder.cpp)
+target_include_directories(llmcp-streaming-decoder PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(llmcp-streaming-decoder PUBLIC tokenizers_hf)
+
 add_executable(llmcp-run llmcp-run.cpp)
 target_link_libraries(llmcp-run PRIVATE
-  tokenizers_hf
+  llmcp-streaming-decoder
   MLIRLLMCPRuntime
   MLIRSupport
   LLVMSupport

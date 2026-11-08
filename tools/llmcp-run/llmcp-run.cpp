@@ -4,6 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "StreamingDecoder.h"
+
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
@@ -668,6 +670,7 @@ int main(int argc, char **argv) {
     if (!aot.forward(aotArena, tokens, 0, tokens.size(), logits))
       return 1;
     std::vector<int64_t> generated;
+    ByteLevelStreamingDecoder decoder(*tokenizer);
     if (maxNewTokens > 0) {
       outs() << "output: ";
       outs().flush();
@@ -677,14 +680,15 @@ int main(int argc, char **argv) {
       if (next == eosToken)
         break;
       generated.push_back(next);
-      std::vector<int32_t> oneI32{static_cast<int32_t>(next)};
-      outs() << tokenizer->Decode(oneI32);
+      outs() << decoder.append(static_cast<int32_t>(next));
       outs().flush();
       std::vector<int64_t> one{next};
       int64_t pos = static_cast<int64_t>(tokens.size() + generated.size() - 1);
       if (!aot.forward(aotArena, one, pos, pos + 1, logits))
         return 1;
     }
+    outs() << decoder.finish();
+    outs().flush();
     if (!generated.empty()) {
       outs() << "\n";
       outs() << "tokens:";
@@ -716,6 +720,7 @@ int main(int argc, char **argv) {
 
   Vec logits = runModel(arena, tokens, 0, runtime, config, /*decode=*/false);
   std::vector<int64_t> generated;
+  ByteLevelStreamingDecoder decoder(*tokenizer);
   if (maxNewTokens > 0) {
     outs() << "output: ";
     outs().flush();
@@ -725,8 +730,7 @@ int main(int argc, char **argv) {
     if (next == eosToken)
       break;
     generated.push_back(next);
-    std::vector<int32_t> oneI32{static_cast<int32_t>(next)};
-    outs() << tokenizer->Decode(oneI32);
+    outs() << decoder.append(static_cast<int32_t>(next));
     outs().flush();
     std::vector<int64_t> one{next};
     logits = runModel(
@@ -734,6 +738,8 @@ int main(int argc, char **argv) {
         runtime, config, /*decode=*/true);
   }
 
+  outs() << decoder.finish();
+  outs().flush();
   if (!generated.empty()) {
     outs() << "\n";
     outs() << "tokens:";
