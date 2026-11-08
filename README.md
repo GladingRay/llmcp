@@ -135,6 +135,13 @@ llmcp_model_decode   -> llmcp_forward_decode
 
 两者共享权重和状态布局，但调度和 lowering 实现不同：
 
+生成用的 prefill/decode 入口只对最后一行 hidden state 执行 lm_head，
+输出固定为 `[1, vocab_size]`。1024 token、248320 词表时，输出 logits
+从约 970 MiB 降为约 0.95 MiB；词表投影的行数从 1024 降为 1。
+张量返回入口 `llmcp_model` 仍提供所有位置的 logits，供逐位置数值检查使用。
+此输出契约使用 AOT ABI v2，运行时通过 `llmcp_model_abi_version` 校验；
+旧动态库需要重新执行 `llmcp-compile --emit=shared` 编译。
+
 - 独立入口：
   - [LowerPrefillGemm.cpp](lib/Dialect/LLMCP/Transforms/LowerPrefillGemm.cpp)
   - [LowerDecodeGemm.cpp](lib/Dialect/LLMCP/Transforms/LowerDecodeGemm.cpp)
@@ -275,7 +282,7 @@ ctest --test-dir build -R llmcp-golden-tokens --output-on-failure
 `--print-stats` 当前输出：
 
 ```text
-functions: 7
+functions: 8
 linear: 496, rms_norm: 130, delta: 48, attention: 16, conv: 48,
 gated_norm: 48, embedding: 1, lm_head: 1, silu_mul: 64, add: 128,
 weight_views: 852

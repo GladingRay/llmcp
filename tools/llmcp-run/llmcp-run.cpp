@@ -580,7 +580,7 @@ Vec runModel(const Arena &arena, const std::vector<int64_t> &tokens,
   }
   hidden = rmsNorm(hidden, arena.get("model.language_model.norm.weight"),
                    config.eps);
-  Matrix logits = matmul(embedding, hidden);
+  Matrix logits = matmul(embedding, Matrix{hidden.back()});
   if (debug)
     outs() << "final hidden max " << maxAbs(hidden) << " logits max "
            << maxAbs(logits.back()) << "\n";
@@ -664,10 +664,9 @@ int main(int argc, char **argv) {
     if (!aot.init(aotPath,
                   static_cast<int64_t>(tokens.size()) + maxNewTokens + 16))
       return 1;
-    Vec allLogits;
-    if (!aot.forward(aotArena, tokens, 0, tokens.size(), allLogits))
+    Vec logits;
+    if (!aot.forward(aotArena, tokens, 0, tokens.size(), logits))
       return 1;
-    Vec logits(allLogits.end() - 248320, allLogits.end());
     std::vector<int64_t> generated;
     if (maxNewTokens > 0) {
       outs() << "output: ";
@@ -683,9 +682,8 @@ int main(int argc, char **argv) {
       outs().flush();
       std::vector<int64_t> one{next};
       int64_t pos = static_cast<int64_t>(tokens.size() + generated.size() - 1);
-      if (!aot.forward(aotArena, one, pos, pos + 1, allLogits))
+      if (!aot.forward(aotArena, one, pos, pos + 1, logits))
         return 1;
-      logits.assign(allLogits.end() - 248320, allLogits.end());
     }
     if (!generated.empty()) {
       outs() << "\n";

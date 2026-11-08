@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llmcp/Model/ModelBuilder.h"
+#include "llmcp/Support/AotAbi.h"
 
 #include "llmcp/Dialect/LLMCP/IR/LLMCP.h"
 
@@ -467,36 +468,53 @@ private:
                                         moduleBuilder.getBF16Type())},
         ValueRange{embed.getResult(0), cosTensor, sinTensor, position,
                    cacheLength, arena, kvCache, deltaState, convState});
+
+    // Generation needs the final position only. Slice before the vocabulary
+    // projection so prefill never materializes sequence-by-vocabulary logits.
+    Value zero = bodyBuilder.create<arith::ConstantIndexOp>(loc, 0);
+    Value one = bodyBuilder.create<arith::ConstantIndexOp>(loc, 1);
+    Value hidden = forward.getResult(0);
+    Value sequence = bodyBuilder.create<tensor::DimOp>(loc, hidden, 0);
+    Value last = bodyBuilder.create<arith::SubIOp>(loc, sequence, one);
+    auto hiddenType = cast<RankedTensorType>(hidden.getType());
+    auto lastHiddenType = RankedTensorType::get(
+        {1, config.text.hiddenSize}, hiddenType.getElementType());
+    Value lastHidden = bodyBuilder.create<tensor::ExtractSliceOp>(
+        loc, lastHiddenType, hidden,
+        SmallVector<OpFoldResult>{last, bodyBuilder.getIndexAttr(0)},
+        SmallVector<OpFoldResult>{bodyBuilder.getIndexAttr(1),
+                                 bodyBuilder.getIndexAttr(config.text.hiddenSize)},
+        SmallVector<OpFoldResult>{bodyBuilder.getIndexAttr(1),
+                                 bodyBuilder.getIndexAttr(1)});
+    lastHidden = bodyBuilder.create<tensor::CastOp>(loc, hiddenType, lastHidden);
     auto lmHead = bodyBuilder.create<func::CallOp>(
         loc, "llmcp_lm_head",
         TypeRange{RankedTensorType::get({kDynamic, vocab}, f32)},
-        ValueRange{forward.getResult(0), arena});
+        ValueRange{lastHidden, arena});
     Value logits = lmHead.getResult(0);
 
-    Value zero = bodyBuilder.create<arith::ConstantIndexOp>(loc, 0);
-    Value one = bodyBuilder.create<arith::ConstantIndexOp>(loc, 1);
-    Value rows = bodyBuilder.create<tensor::DimOp>(loc, logits, 0);
     Value vocabValue = bodyBuilder.create<arith::ConstantIndexOp>(loc, vocab);
-    auto rowLoop =
-        bodyBuilder.create<scf::ForOp>(loc, zero, rows, one, ValueRange{});
-    bodyBuilder.setInsertionPointToStart(rowLoop.getBody());
-    Value row = rowLoop.getInductionVar();
     auto columnLoop = bodyBuilder.create<scf::ForOp>(loc, zero, vocabValue, one,
                                                      ValueRange{});
     bodyBuilder.setInsertionPointToStart(columnLoop.getBody());
     Value column = columnLoop.getInductionVar();
     Value value = bodyBuilder.create<tensor::ExtractOp>(
-        loc, logits, ValueRange{row, column});
+        loc, logits, ValueRange{zero, column});
     bodyBuilder.create<memref::StoreOp>(loc, value, logitsOut,
-                                        ValueRange{row, column});
+                                        ValueRange{zero, column});
     bodyBuilder.setInsertionPointAfter(columnLoop);
-    bodyBuilder.setInsertionPointAfter(rowLoop);
     bodyBuilder.create<func::ReturnOp>(loc);
   }
 
   void buildAotModel(OpBuilder &moduleBuilder, int64_t rotary, int64_t vocab,
                      Type arenaType, Type kvType, Type deltaType, Type convType,
                      Type logitsType) {
+    OpBuilder bodyBuilder(context);
+    createFunc(moduleBuilder, "llmcp_model_abi_version", {},
+               {moduleBuilder.getI32Type()}, bodyBuilder, /*isPublic=*/true);
+    Value version = bodyBuilder.create<arith::ConstantIntOp>(
+        loc, ::llmcp::kAotAbiVersion, 32);
+    bodyBuilder.create<func::ReturnOp>(loc, version);
     buildAotEntry(moduleBuilder, "llmcp_model_prefill", "llmcp_forward_prefill",
                   rotary, vocab, arenaType, kvType, deltaType, convType,
                   logitsType);

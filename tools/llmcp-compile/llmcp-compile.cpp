@@ -193,9 +193,10 @@ int main(int argc, char **argv) {
                    "--convert-func-to-llvm",
                    "--convert-arith-to-llvm",
                    "--expand-strided-metadata",
+                   "--lower-affine",
                    "--finalize-memref-to-llvm",
-                   "--reconcile-unrealized-casts",
                    "--convert-arith-to-llvm",
+                   "--reconcile-unrealized-casts",
                    "-o",
                    llvmMlir}))
     return fail(std::move(error));

@@ -70,6 +70,7 @@ public:
   ~AotRuntime();
 
   bool init(const std::string &path, int64_t maxSequence);
+  /// Process a nonempty sequence and return only the final position's logits.
   bool forward(const Arena &arena, const std::vector<int64_t> &tokens,
                int64_t startPos, int64_t cacheLength,
                ::llmcp::CacheLineAlignedVector<float> &logits);

@@ -8,9 +8,13 @@
 
 #include "llmcp/Dialect/LLMCP/IR/LLMCP.h"
 #include "llmcp/Model/ModelBuilder.h"
+#include "llmcp/Support/AotAbi.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/Support/raw_ostream.h"
 #include "gtest/gtest.h"
@@ -96,13 +100,39 @@ TEST(ModelBuilderTest, BuildsCompleteGraph) {
         SymbolTable::lookupSymbolIn(module.get(), entry.first));
     ASSERT_TRUE(func);
     bool found = false;
+    bool foundLastLogits = false;
     func.walk([&](func::CallOp call) {
       if (call.getCallee() == entry.second)
         found = true;
+      if (call.getCallee() == "llmcp_lm_head") {
+        auto cast = call.getOperand(0).getDefiningOp<tensor::CastOp>();
+        ASSERT_TRUE(cast);
+        auto slice = cast.getSource().getDefiningOp<tensor::ExtractSliceOp>();
+        ASSERT_TRUE(slice);
+        auto sizes = slice.getStaticSizes();
+        ASSERT_EQ(sizes.size(), 2u);
+        EXPECT_EQ(sizes[0], 1);
+        EXPECT_EQ(sizes[1], config.text.hiddenSize);
+        auto last = slice.getOffsets().front().getDefiningOp<arith::SubIOp>();
+        ASSERT_TRUE(last);
+        EXPECT_TRUE(matchPattern(last.getRhs(), m_One()));
+        auto dim = last.getLhs().getDefiningOp<tensor::DimOp>();
+        ASSERT_TRUE(dim);
+        EXPECT_EQ(dim.getSource(), slice.getSource());
+        foundLastLogits = true;
+      }
     });
+    EXPECT_TRUE(foundLastLogits);
     EXPECT_TRUE(found) << entry.first.str() << " must call "
                        << entry.second.str();
   }
+
+  auto abi = module->lookupSymbol<func::FuncOp>("llmcp_model_abi_version");
+  ASSERT_TRUE(abi);
+  auto ret = cast<func::ReturnOp>(abi.getBody().front().getTerminator());
+  auto version = ret.getOperand(0).getDefiningOp<arith::ConstantIntOp>();
+  ASSERT_TRUE(version);
+  EXPECT_EQ(version.value(), ::llmcp::kAotAbiVersion);
 
   auto model = dyn_cast_or_null<func::FuncOp>(
       SymbolTable::lookupSymbolIn(module.get(), "llmcp_model"));

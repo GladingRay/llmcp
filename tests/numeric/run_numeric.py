@@ -256,21 +256,30 @@ def emit_gated_rms_norm(x, gate, weight, group_size) -> str:
     return wrap(body, globals_, m, h, "bf16")
 
 
-def emit_lm_head(hidden, table) -> str:
+def emit_lm_head(hidden, table, last_only=False) -> str:
     m, h = len(hidden), len(hidden[0])
     vocab = len(table)
     body = [
         f"  %hidden = arith.constant dense<{dense_2d(hidden)}> : "
         f"tensor<{m}x{h}xbf16>",
         f"  %table = memref.get_global @table : memref<{vocab}x{h}xbf16>",
-        f"  %0 = llmcp.lm_head %hidden, %table : (tensor<{m}x{h}xbf16>, "
-        f"memref<{vocab}x{h}xbf16>) -> tensor<{m}x{vocab}xf32>",
     ]
+    source = "%hidden"
+    rows = m
+    if last_only:
+        rows = 1
+        source = "%last"
+        body.append(
+            f"  %last = tensor.extract_slice %hidden[{m - 1}, 0] "
+            f"[1, {h}] [1, 1] : tensor<{m}x{h}xbf16> to tensor<1x{h}xbf16>")
+    body.append(
+        f"  %0 = llmcp.lm_head {source}, %table : (tensor<{rows}x{h}xbf16>, "
+        f"memref<{vocab}x{h}xbf16>) -> tensor<{rows}x{vocab}xf32>")
     globals_ = [
         f'memref.global "private" constant @table : memref<{vocab}x{h}xbf16> = '
         f'dense<{dense_2d(table)}>'
     ]
-    return wrap(body, globals_, m, vocab, "f32")
+    return wrap(body, globals_, rows, vocab, "f32")
 
 
 def emit_causal_conv1d(x, weight, state) -> str:
@@ -514,7 +523,9 @@ def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
            "--convert-cf-to-llvm", "--convert-vector-to-llvm",
            "--convert-arith-to-llvm",
         "--convert-func-to-llvm", "--convert-arith-to-llvm",
-        "--expand-strided-metadata", "--finalize-memref-to-llvm", "--reconcile-unrealized-casts", "--convert-arith-to-llvm",
+        "--expand-strided-metadata", "--lower-affine",
+        "--finalize-memref-to-llvm", "--convert-arith-to-llvm",
+        "--reconcile-unrealized-casts",
         "-o", str(llvm_mlir),
     ])
     run([args.mlir_translate, "--mlir-to-llvmir", str(llvm_mlir), "-o",
@@ -729,6 +740,14 @@ def main():
     compile_and_run(args, "lm_head_vec",
                     emit_lm_head(hidden.tolist(), table.tolist()), ref,
                     (1e-3, 1e-3))
+
+    # AOT generation projects a one-row view, including a nonzero row offset.
+    for sequence in (1, 7):
+        hidden = torch.randn(sequence, 64).to(bf16)
+        ref = (hidden[-1:].float() @ table.float().T).flatten()
+        compile_and_run(args, f"lm_head_last_{sequence}",
+                        emit_lm_head(hidden.tolist(), table.tolist(),
+                                     last_only=True), ref, (1e-3, 1e-3))
 
 #causal_conv1d(prefill + state update)
     seq, channels, kernel = 3, 4, 3

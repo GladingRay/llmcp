@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llmcp/Runtime/AotRuntime.h"
+#include "llmcp/Support/AotAbi.h"
 
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -112,6 +113,13 @@ bool AotRuntime::init(const std::string &path, int64_t maxSequence) {
     errs() << "AotRuntime: dlopen: " << dlerror() << "\n";
     return false;
   }
+  using AbiVersionFn = int32_t (*)();
+  auto abiVersion = reinterpret_cast<AbiVersionFn>(
+      dlsym(handle, "llmcp_model_abi_version"));
+  if (!abiVersion || abiVersion() != ::llmcp::kAotAbiVersion) {
+    errs() << "AotRuntime: incompatible AOT ABI; recompile the model library\n";
+    return false;
+  }
   prefillFn =
       reinterpret_cast<Fn>(dlsym(handle, "_mlir_ciface_llmcp_model_prefill"));
   decodeFn =
@@ -128,7 +136,8 @@ bool AotRuntime::forward(const Arena &arena, const std::vector<int64_t> &tokens,
                          int64_t startPos, int64_t cacheLength,
                          ::llmcp::CacheLineAlignedVector<float> &logits) {
   int64_t sequence = static_cast<int64_t>(tokens.size());
-  if (startPos + sequence > capacity)
+  if (sequence == 0 || startPos < 0 || startPos > capacity ||
+      sequence > capacity - startPos)
     return false;
   std::vector<int64_t> tokenData = tokens;
   ::llmcp::CacheLineAlignedVector<float> cos(
@@ -140,7 +149,7 @@ bool AotRuntime::forward(const Arena &arena, const std::vector<int64_t> &tokens,
     std::copy(c.begin(), c.end(), cos.begin() + t * 64);
     std::copy(s.begin(), s.end(), sin.begin() + t * 64);
   }
-  logits.assign(static_cast<size_t>(sequence * 248320), 0.0f);
+  logits.assign(248320, 0.0f);
 
   MemRef<int64_t, 1> rt{tokenData.data(), tokenData.data(), 0, {0}, {1}};
   rt.sizes[0] = sequence;
@@ -169,8 +178,7 @@ bool AotRuntime::forward(const Arena &arena, const std::vector<int64_t> &tokens,
   MemRef<uint16_t, 3> rv{
       conv.data(), conv.data(), 0, {24, 3, 8192}, {3 * 8192, 8192, 1}};
   MemRef<float, 2> ro{
-      logits.data(), logits.data(), 0, {0, 248320}, {248320, 1}};
-  ro.sizes[0] = sequence;
+      logits.data(), logits.data(), 0, {1, 248320}, {248320, 1}};
 
   Fn fn = sequence > 1 ? prefillFn : decodeFn;
   fn(&rt, &rc, &rs, (void *)startPos, (void *)cacheLength, &ra, &rk, &rd, &rv,

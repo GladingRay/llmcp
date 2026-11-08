@@ -153,6 +153,17 @@ tokens [S]
 
 生成阶段只需要最后一个位置的 logits。Prefill 阶段如果对所有位置都算 lm_head，`[S, 248320]` 的输出会非常大（S=2048 时约 2GB f32），因此运行时必须只取最后一个 hidden state；训练/困惑度评估才需要逐位置计算。
 
+AOT 生成入口 `llmcp_model_prefill` / `llmcp_model_decode` 在 lm_head 前用
+`tensor.extract_slice` 截取最后一行，输出 memref 的形状固定为 `[1, 248320]`。
+所有 prompt 位置仍完整经过各层以更新 KV cache、DeltaNet state 和卷积状态。
+默认手写执行器也只投影最后一行。`llmcp_model` 张量返回入口保留逐位置输出。
+
+输出契约由共享的 `kAotAbiVersion = 2` 定义，模型导出
+`llmcp_model_abi_version() -> i32`。运行时拒绝缺少版本符号或版本不匹配的库，
+避免旧库向单行 logits 缓冲区写入多行数据。空序列不允许调用生成入口。
+切片产生的 strided metadata 在展开后需要再次执行 `lower-affine`，才能完成
+LLVM IR 转换。
+
 ---
 
 ## 6. 线性注意力（Gated DeltaNet）
