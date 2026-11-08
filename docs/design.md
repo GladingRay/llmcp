@@ -377,7 +377,7 @@ llmcp/
 │   ├── llmcp-compile/llmcp-compile.cpp # 模型 → .mlir → .dylib
 │   ├── llmcp-inspect/llmcp-inspect.cpp # 只读 header 的配置/布局检查
 │   ├── llmcp-dump/llmcp-dump.cpp      # 生成并 dump 完整 llmcp 计算图
-│   ├── llmcp-pack/llmcp-pack.cpp      # safetensors → weights.bin + manifest
+│   ├── llmcp-pack/llmcp-pack.cpp      # safetensors → weights.bin（内嵌 manifest）
 │   ├── llmcp-run/llmcp-run.cpp        # CLI 推理
 │   ├── llmcp-benchmark/llmcp-benchmark.cpp # AOT prefill/decode 性能
 │   └── llmcp-tokenize/                # tokenizer 对照工具（可选）
@@ -795,13 +795,14 @@ struct ModelConfig {
 布局由 `WeightLayout` 统一计算，`llmcp-pack` 和 `llmcp-compile` 共享同一份代码，避免两边偏移不一致。
 
 ```text
-offset 0:      header (magic, version, model hash, dtype, layout hash)
+offset 0:      header (magic, version, arena size, manifest offset/size)
 offset 64:     embedding                  [248320 × 2560] bf16
 offset ...:    group 0 (layers 0..3)      3 × linear + 1 × full
 offset ...:    group 1 (layers 4..7)
 ...
 offset ...:    group 7 (layers 28..31)
 offset ...:    final norm
+offset ...:    embedded JSON manifest
 ```
 
 每个 group 的层集合相同，因此 **group stride 固定**。group 内每层、每个张量的偏移固定。这样：
@@ -814,7 +815,8 @@ offset ...:    final norm
 
 **q/gate 的反交错**：全注意力 `q_proj.weight [8192, 2560]` 的行是 head-major 的 `[q_h(256), gate_h(256)]` 交错。`llmcp-pack` 应把它反交错成两个逻辑矩阵 `q_all [4096, 2560]` 和 `gate_all [4096, 2560]`，前端发射两个 `llmcp.linear`。这样每次 matmul 的输出都是连续的，避免 kernel 以 512 行为步长跨行读取。数学上与 HF 等价。若选择保留交错布局，则必须由 attention op 内部按 head 拆分，不能 flat 前后切。
 
-manifest 示例：
+manifest 内嵌在权重文件尾部，由 64 字节头部记录其偏移和长度；无需独立 JSON。
+当前格式与校验规则见 [单文件权重格式](packed-weights.md)。以下为设计示例：
 
 ```json
 {
@@ -830,7 +832,7 @@ manifest 示例：
 }
 ```
 
-> 运行时不解析每个 tensor 的 offset；编译产物里已经是常量。manifest 用于工具链、校验和调试。
+> AOT 中的 tensor offset 是常量；运行时仍解析内嵌 manifest，以供手写执行器查找权重并校验文件。
 
 ### 5.4 IR 构建：完整图 dump 与层组循环
 
@@ -1840,7 +1842,7 @@ M0 权重布局/参考数据
 
 - [x] CMake + `find_package(MLIR)` + `llmcp-opt` + lit 配置。
 - [x] `LLMCPDialect`/`LLMCPOps`（全部 11 个 op）。
-- [x] `ModelConfig` 解析与校验；`WeightLayout`（bf16）；`llmcp-pack` 生成 arena + manifest。
+- [x] `ModelConfig` 解析与校验；`WeightLayout`（bf16）；`llmcp-pack` 生成内嵌 manifest 的 arena。
 - [x] tokenizer：tokenizers-cpp HF BPE + ByteLevel + added tokens；与 HF 对照。
 - [ ] 确认 `venv314` 的依赖（`pytest 9.1.1`、`lit 23.1.4` 已装）、HF 参考脚本、8 组 prompt、golden 格式。
 - [ ] tiny 模型（2 层、hidden 64）与 NumPy 参考。

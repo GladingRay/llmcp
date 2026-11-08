@@ -28,6 +28,7 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 
 - [技术路线与架构设计](docs/design.md)：分层架构、方言、pass pipeline、内核、里程碑、风险、ADR
 - [模型规格与编译契约](docs/model-spec.md)：Qwen3.5-4B 的形状、公式、状态布局、数值语义
+- [单文件权重格式](docs/packed-weights.md)：权重与 manifest 合并、版本头部与迁移方式
 - [真实权重数值对齐](docs/real-alignment.md)：单 token、AOT、Q8 对齐结果
 - [AOT 缓冲区生命周期](docs/aot-buffer-lifetimes.md)：中间分配释放与回归验证
 - [Unicode 流式输出](docs/streaming-unicode.md)：跨 token 字符缓冲与结束刷新
@@ -69,7 +70,7 @@ safetensors
   Q8 在支持 DotProd 的 CPU 上使用 `sdot`，否则回退 scalar；
   attention 使用 FlashAttention-2 风格 online softmax + key tiling；
 - `llmcp-pack`：
-  bf16 arena + JSON manifest；
+  单文件 bf16 arena（内嵌 JSON manifest）；
   `--quant q8_0` 生成 Q8_0 arena，scale 与 qs 分离存放；
 - `llmcp-compile`：
   完整图经过 linalg、elementwise 融合、OpenMP 并行化、
@@ -214,12 +215,12 @@ copy            46.8 GB/s
 
 ```bash
 OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
-  --weights build/weights.bin --manifest build/weights.json \
+  --weights build/weights.bin \
   --aot build/libqwen35_aot.dylib \
   --prefill-tokens 32 --decode-tokens 32
 
 OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
-  --weights build/weights-q8.bin --manifest build/weights-q8.json \
+  --weights build/weights-q8.bin \
   --aot build/libqwen35_aot_q8.dylib \
   --prefill-tokens 32 --decode-tokens 32
 
@@ -276,7 +277,7 @@ ctest --test-dir build --output-on-failure
 ctest --test-dir build -R llmcp-numeric --output-on-failure
 
 # 7. 输出 token golden test
-#    需要 build/weights*.bin、manifest 和 AOT dylib 已生成
+#    需要 build/weights*.bin（内嵌 manifest）和 AOT dylib 已生成
 ctest --test-dir build -R llmcp-golden-tokens --output-on-failure
 ```
 
@@ -303,14 +304,14 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 ```bash
 # 打包 bf16 权重
 ./build/bin/llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b \
-  --out build/weights.bin --manifest build/weights.json
+  --out build/weights.bin
 
 # 只校验，不写 arena
 ./build/bin/llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b --dry-run
 
 # 打包 Q8_0 权重
 ./build/bin/llmcp-pack --model /Users/guorui/Work/models/qwen3.5-4b \
-  --quant q8_0 --out build/weights-q8.bin --manifest build/weights-q8.json
+  --quant q8_0 --out build/weights-q8.bin
 
 # AOT 编译 bf16 / Q8
 ./build/bin/llmcp-compile --model /Users/guorui/Work/models/qwen3.5-4b \
@@ -320,25 +321,25 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 
 # 手写路径：单 token golden / 多 token greedy
 ./build/bin/llmcp-run --weights build/weights.bin \
-  --manifest build/weights.json --text Hello --golden build/golden_logits.bin
+  --text Hello --golden build/golden_logits.bin
 ./build/bin/llmcp-run --weights build/weights.bin \
-  --manifest build/weights.json --text 'Hello world' --max-new-tokens 2
+  --text 'Hello world' --max-new-tokens 2
 
 # AOT bf16 / Q8
 ./build/bin/llmcp-run --weights build/weights.bin \
-  --manifest build/weights.json --text Hello --aot build/libqwen35_aot.dylib
+  --text Hello --aot build/libqwen35_aot.dylib
 ./build/bin/llmcp-run --weights build/weights-q8.bin \
-  --manifest build/weights-q8.json --text Hello \
+  --text Hello \
   --aot build/libqwen35_aot_q8.dylib
 
 # Chat template（默认 thinking；可加 --no-thinking / --system）
 ./build/bin/llmcp-run --weights build/weights.bin \
-  --manifest build/weights.json --text Hello --chat --max-new-tokens 8 \
+  --text Hello --chat --max-new-tokens 8 \
   --aot build/libqwen35_aot.dylib
 
 # AOT 性能测试
 ./build/bin/llmcp-benchmark --weights build/weights.bin \
-  --manifest build/weights.json --aot build/libqwen35_aot.dylib \
+  --aot build/libqwen35_aot.dylib \
   --prefill-tokens 32 --decode-tokens 32
 
 # 单算子 matmul benchmark；--q8 走 Q8/sdot

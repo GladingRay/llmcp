@@ -5,10 +5,11 @@ add_executable(llmcp-unittests
   ModelBuilderTest.cpp
   CacheLineAlignedVectorTest.cpp
   QuantizationTest.cpp)
-target_sources(llmcp-unittests PRIVATE StreamingDecoderTest.cpp)
+target_sources(llmcp-unittests PRIVATE StreamingDecoderTest.cpp PackedWeightsTest.cpp)
 
 target_link_libraries(llmcp-unittests PRIVATE
   MLIRLLMCPModel
+  MLIRLLMCPRuntime
   llmcp-streaming-decoder
   GTest::gtest_main)
 

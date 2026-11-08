@@ -42,8 +42,6 @@ namespace {
 
 cl::opt<std::string> weightsPath("weights", cl::desc("Packed arena"),
                                  cl::init("build/weights.bin"));
-cl::opt<std::string> manifestPath("manifest", cl::desc("Arena manifest"),
-                                  cl::init("build/weights.json"));
 cl::opt<std::string> goldenPath("golden", cl::desc("Optional f32 logits file"));
 cl::opt<long long> tokenId("tokens", cl::desc("Token ID when --text is empty"),
                            cl::init(9419));
@@ -658,7 +656,7 @@ int main(int argc, char **argv) {
 
   if (!aotPath.empty()) {
     Arena aotArena;
-    if (Error error = aotArena.load(weightsPath, manifestPath)) {
+    if (Error error = aotArena.load(weightsPath)) {
       errs() << "llmcp-run: " << toString(std::move(error)) << "\n";
       return 1;
     }
@@ -706,7 +704,7 @@ int main(int argc, char **argv) {
   }
 
   Arena arena;
-  if (Error error = arena.load(weightsPath, manifestPath)) {
+  if (Error error = arena.load(weightsPath)) {
     errs() << "llmcp-run: " << toString(std::move(error)) << "\n";
     return 1;
   }

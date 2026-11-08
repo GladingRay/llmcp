@@ -112,42 +112,34 @@ endif()
 # libraries; they are enabled only when all artifacts exist.
 set(LLMCP_GOLDEN_BF16_WEIGHTS "${CMAKE_BINARY_DIR}/weights.bin" CACHE FILEPATH
     "Arena used by the bf16 golden token test")
-set(LLMCP_GOLDEN_BF16_MANIFEST "${CMAKE_BINARY_DIR}/weights.json" CACHE FILEPATH
-    "Manifest used by the bf16 golden token test")
 set(LLMCP_GOLDEN_BF16_AOT "${CMAKE_BINARY_DIR}/libqwen35_aot.dylib" CACHE FILEPATH
     "AOT library used by the bf16 golden token test")
 set(LLMCP_GOLDEN_Q8_WEIGHTS "${CMAKE_BINARY_DIR}/weights-q8.bin" CACHE FILEPATH
     "Arena used by the Q8 golden token test")
-set(LLMCP_GOLDEN_Q8_MANIFEST "${CMAKE_BINARY_DIR}/weights-q8.json" CACHE FILEPATH
-    "Manifest used by the Q8 golden token test")
 set(LLMCP_GOLDEN_Q8_AOT "${CMAKE_BINARY_DIR}/libqwen35_aot_q8.dylib" CACHE FILEPATH
     "AOT library used by the Q8 golden token test")
 set(LLMCP_GOLDEN_TOKENS "${CMAKE_CURRENT_SOURCE_DIR}/golden/hello_world.tokens")
 
 if(LLMCP_PYTHON AND EXISTS "${LLMCP_MODEL_DIR}/tokenizer.json")
   if(EXISTS "${LLMCP_GOLDEN_BF16_WEIGHTS}"
-     AND EXISTS "${LLMCP_GOLDEN_BF16_MANIFEST}"
      AND EXISTS "${LLMCP_GOLDEN_BF16_AOT}")
     add_test(NAME llmcp-golden-tokens-bf16
       COMMAND ${LLMCP_PYTHON}
         "${CMAKE_CURRENT_SOURCE_DIR}/golden/run_golden.py"
         --llmcp-run $<TARGET_FILE:llmcp-run>
         --weights "${LLMCP_GOLDEN_BF16_WEIGHTS}"
-        --manifest "${LLMCP_GOLDEN_BF16_MANIFEST}"
         --aot "${LLMCP_GOLDEN_BF16_AOT}"
         --tokenizer "${LLMCP_MODEL_DIR}/tokenizer.json"
         --expected "${LLMCP_GOLDEN_TOKENS}")
     set_tests_properties(llmcp-golden-tokens-bf16 PROPERTIES TIMEOUT 300)
   endif()
   if(EXISTS "${LLMCP_GOLDEN_Q8_WEIGHTS}"
-     AND EXISTS "${LLMCP_GOLDEN_Q8_MANIFEST}"
      AND EXISTS "${LLMCP_GOLDEN_Q8_AOT}")
     add_test(NAME llmcp-golden-tokens-q8
       COMMAND ${LLMCP_PYTHON}
         "${CMAKE_CURRENT_SOURCE_DIR}/golden/run_golden.py"
         --llmcp-run $<TARGET_FILE:llmcp-run>
         --weights "${LLMCP_GOLDEN_Q8_WEIGHTS}"
-        --manifest "${LLMCP_GOLDEN_Q8_MANIFEST}"
         --aot "${LLMCP_GOLDEN_Q8_AOT}"
         --tokenizer "${LLMCP_MODEL_DIR}/tokenizer.json"
         --expected "${LLMCP_GOLDEN_TOKENS}")

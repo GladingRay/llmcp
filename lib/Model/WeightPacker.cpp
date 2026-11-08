@@ -1,10 +1,11 @@
 //===- WeightPacker.cpp - Pack safetensors into the runtime arena ---------===//
 //
-// Packs model tensors into the arena and writes the JSON manifest.
+// Packs model tensors and their JSON manifest into one weight container.
 //
 //===----------------------------------------------------------------------===//
 
 #include "llmcp/Model/WeightPacker.h"
+#include "llmcp/Support/PackedWeights.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
@@ -17,6 +18,7 @@
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <limits>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -121,8 +123,7 @@ llvm::Expected<TensorMap> loadTensorHeaders(llvm::StringRef modelDir,
   return merged;
 }
 
-llvm::Error writeManifest(llvm::StringRef path, llvm::StringRef modelDir,
-                          const WeightLayout &layout) {
+std::string buildManifest(llvm::StringRef modelDir, const WeightLayout &layout) {
   llvm::json::Object root;
   root["model"] = modelDir.str();
   root["total_bytes"] = layout.getTotalBytes();
@@ -152,12 +153,10 @@ llvm::Error writeManifest(llvm::StringRef path, llvm::StringRef modelDir,
   }
   root["tensors"] = std::move(entries);
 
-  std::error_code error;
-  llvm::raw_fd_ostream out(path, error, llvm::sys::fs::OF_Text);
-  if (error)
-    return llvm::errorCodeToError(error);
+  std::string text;
+  llvm::raw_string_ostream out(text);
   out << llvm::json::Value(std::move(root)) << "\n";
-  return llvm::Error::success();
+  return text;
 }
 
 } // namespace
@@ -166,7 +165,6 @@ llvm::Error mlir::llmcp::packWeights(llvm::StringRef modelDir,
                                      const WeightLayout &layout,
                                      const TensorMap &tensors,
                                      llvm::StringRef outputPath,
-                                     llvm::StringRef manifestPath,
                                      const PackOptions &options) {
   SafetensorsIndex index;
   bool hasIndex = false;
@@ -204,8 +202,16 @@ llvm::Error mlir::llmcp::packWeights(llvm::StringRef modelDir,
     return indexOrErr.takeError();
   index = std::move(*indexOrErr);
 
-  auto outputOrErr =
-      MappedFile::open(outputPath, /*writable=*/true, layout.getTotalBytes());
+  std::string manifest = buildManifest(modelDir, layout);
+  uint64_t arenaBytes = layout.getTotalBytes();
+  if (layout.getHeaderBytes() != ::llmcp::kPackedWeightsHeaderBytes ||
+      manifest.size() > std::numeric_limits<uint64_t>::max() - arenaBytes ||
+      arenaBytes + manifest.size() >
+          static_cast<uint64_t>(std::numeric_limits<off_t>::max()))
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "packed weights file is too large or has an invalid header");
+  auto outputOrErr = MappedFile::open(
+      outputPath, /*writable=*/true, arenaBytes + manifest.size());
   if (!outputOrErr)
     return outputOrErr.takeError();
   MappedFile output = std::move(*outputOrErr);
@@ -259,9 +265,9 @@ llvm::Error mlir::llmcp::packWeights(llvm::StringRef modelDir,
                    << entry.name << "\n";
   }
 
-  if (!manifestPath.empty()) {
-    if (llvm::Error error = writeManifest(manifestPath, modelDir, layout))
-      return error;
-  }
+  std::memcpy(output.data() + arenaBytes, manifest.data(), manifest.size());
+  // Publish the header only after all tensors and metadata have been written.
+  ::llmcp::PackedWeightsHeader{arenaBytes, arenaBytes, manifest.size()}.write(
+      output.data());
   return llvm::Error::success();
 }

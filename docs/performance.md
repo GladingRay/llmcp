@@ -12,7 +12,6 @@
 ```bash
 ➜  llmcp git:(main) ./build/bin/llmcp-benchmark \
   --weights build/weights.bin \
-  --manifest build/weights.json \
   --aot build/libqwen35_aot.dylib \
   --prefill-tokens 16 \
   --decode-tokens 16
@@ -28,7 +27,6 @@ decode_tokens_per_second: 0.2747
 ```bash
 ➜  llmcp git:(main) ./build/bin/llmcp-benchmark \
   --weights build/weights.bin \
-  --manifest build/weights.json \
   --aot build/libqwen35_aot.dylib \
   --prefill-tokens 16 \
   --decode-tokens 16

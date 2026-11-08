@@ -25,9 +25,6 @@ llvm::cl::opt<std::string>
               llvm::cl::Required);
 llvm::cl::opt<std::string>
     outputPath("out", llvm::cl::desc("Output packed arena (weights.bin)"));
-llvm::cl::opt<std::string>
-    manifestPath("manifest",
-                 llvm::cl::desc("Output JSON manifest (default: <out>.json)"));
 llvm::cl::opt<bool> dryRun("dry-run",
                            llvm::cl::desc("Validate only, do not write arena"),
                            llvm::cl::init(false));
@@ -71,15 +68,11 @@ int main(int argc, char **argv) {
     return fail(layoutOrErr.takeError());
   const WeightLayout &layout = *layoutOrErr;
 
-  std::string manifest = manifestPath;
-  if (manifest.empty() && !outputPath.empty())
-    manifest = outputPath + ".json";
-
   PackOptions options;
   options.dryRun = dryRun;
   options.verbose = verbose;
   if (llvm::Error error =
-          packWeights(modelDir, layout, tensors, outputPath, manifest, options))
+          packWeights(modelDir, layout, tensors, outputPath, options))
     return fail(std::move(error));
 
   uint64_t totalTensorBytes = 0;
@@ -93,7 +86,5 @@ int main(int argc, char **argv) {
   if (!dryRun)
     llvm::outs() << " -> " << outputPath;
   llvm::outs() << "\n";
-  if (!manifest.empty())
-    llvm::outs() << "manifest: " << manifest << "\n";
   return 0;
 }

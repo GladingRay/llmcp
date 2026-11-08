@@ -271,6 +271,9 @@ row: [scales K/32 * 2 bytes][qs K bytes]
 
 ## 5. Arena 与 manifest
 
+manifest 现已内嵌到权重文件尾部，无需单独 JSON 文件或 `--manifest` 参数。
+bf16 与 Q8 使用相同的容器格式，见 [单文件权重格式](packed-weights.md)。
+
 `llmcp-pack` 新增：
 
 ```bash
@@ -770,7 +773,7 @@ Q8 的收益主要来自：
 - `llmcp-compile --quant q8_0`；
 - `WeightLayout` 的 Q8 布局与 `llmcp-pack --quant q8_0` 一致；
 - `ModelBuilder` 对量化 entry 生成 i8 view 和 `weight_format="q8_0"`；
-- `llmcp-run --weights weights-q8.bin --manifest weights-q8.json --aot ...`；
+- `llmcp-run --weights weights-q8.bin --aot ...`；
 - Q8 AOT `next 11`，greedy `0 271 760 2614`；
 - Q8 vs bf16 logits：`max_abs 0.509`、`mean_abs 0.087`，top1/top5 一致。
 

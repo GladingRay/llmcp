@@ -36,8 +36,6 @@ namespace {
 
 cl::opt<std::string> weightsPath("weights", cl::desc("Packed arena"),
                                  cl::init("build/weights.bin"));
-cl::opt<std::string> manifestPath("manifest", cl::desc("Arena manifest"),
-                                  cl::init("build/weights.json"));
 cl::opt<std::string> aotPath("aot", cl::desc("AOT shared library"),
                              cl::Required);
 cl::opt<int64_t> prefillTokens("prefill-tokens",
@@ -72,7 +70,7 @@ int main(int argc, char **argv) {
   }
 
   Arena arena;
-  if (Error error = arena.load(weightsPath, manifestPath)) {
+  if (Error error = arena.load(weightsPath)) {
     errs() << "llmcp-benchmark: " << toString(std::move(error)) << "\n";
     return 1;
   }

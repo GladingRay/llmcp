@@ -1,6 +1,6 @@
 //===- WeightPacker.h - Pack safetensors into the runtime arena -*- C++ -*-===//
 //
-// Copies model tensors into the arena and writes the JSON manifest.
+// Copies model tensors and their JSON manifest into one weight container.
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,11 +23,10 @@ struct PackOptions {
 
 /// Packs all tensors referenced by `layout` into `outputPath`.
 ///
-/// `manifestPath` may be empty to skip the manifest. In dry-run mode the
-/// tensors are validated but no arena file is written.
+/// The manifest is embedded in the output. In dry-run mode the tensors are
+/// validated but no file is written.
 llvm::Error packWeights(llvm::StringRef modelDir, const WeightLayout &layout,
                         const TensorMap &tensors, llvm::StringRef outputPath,
-                        llvm::StringRef manifestPath,
                         const PackOptions &options = {});
 
 } // namespace llmcp

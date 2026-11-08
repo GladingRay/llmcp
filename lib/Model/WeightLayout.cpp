@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llmcp/Model/WeightLayout.h"
+#include "llmcp/Support/PackedWeights.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/Error.h"
@@ -18,7 +19,7 @@ using llvm::StringRef;
 namespace {
 
 constexpr uint64_t kTensorAlignment = 64;
-constexpr uint64_t kHeaderBytes = 64;
+constexpr uint64_t kHeaderBytes = ::llmcp::kPackedWeightsHeaderBytes;
 
 llvm::Error makeError(const llvm::Twine &message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), message);

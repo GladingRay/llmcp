@@ -25,14 +25,14 @@ C++ 执行器：
 
 ```bash
 ./build/bin/llmcp-run --weights build/weights.bin \
-  --manifest build/weights.json --text Hello \
+  --text Hello \
   --golden build/golden_logits.bin
 ```
 
 它完成：
 
 - mmap `weights.bin`；
-- 读取 `weights.json` 并建立 tensor → offset 映射；
+- 读取权重文件内嵌的 manifest 并建立 tensor → offset 映射；
 - 通过 `tokenizers-cpp` 的 `Tokenizer::FromBlobJSON` 加载完整 `tokenizer.json`（HF BPE / ByteLevel / Unicode）；
 - 生成 position 0 的 cos/sin；
 - 调用 `runModel`，执行 32 层 embedding / DeltaNet / attention / MLP / final norm / lm_head；
@@ -61,7 +61,7 @@ top1 ours=11 hf=11, top5 overlap=5/5
 
 ```bash
 ./build/bin/llmcp-run --weights build/weights.bin \
-  --manifest build/weights.json --text 'Hello world!' --max-new-tokens 0
+  --text 'Hello world!' --max-new-tokens 0
 # next: 271
 ```
 
@@ -69,7 +69,7 @@ greedy decode：
 
 ```bash
 ./build/bin/llmcp-run --weights build/weights.bin \
-  --manifest build/weights.json --text 'Hello world' --max-new-tokens 2
+  --text 'Hello world' --max-new-tokens 2
 # tokens: 0 271
 ```
 
@@ -80,7 +80,7 @@ AOT 路径：
 
 ```bash
 ./build/bin/llmcp-run --weights build/weights.bin \
-  --manifest build/weights.json --text Hello \
+  --text Hello \
   --aot build/libqwen35_aot.dylib
 # aot logits: 248320 next 11
 ```
@@ -93,7 +93,7 @@ AOT 路径严格按正常顺序执行：先加载 tokenizer，再调用 AOT，�
 
 ```bash
 ./build/bin/llmcp-run --weights build/weights.bin \
-  --manifest build/weights.json --text 'Hello world!' \
+  --text 'Hello world!' \
   --aot build/libqwen35_aot.dylib
 # aot logits: 248320 next 271
 ```
@@ -102,7 +102,7 @@ AOT 路径严格按正常顺序执行：先加载 tokenizer，再调用 AOT，�
 
 ```bash
 ./build/bin/llmcp-run --weights build/weights.bin \
-  --manifest build/weights.json --text 'Hello world' \
+  --text 'Hello world' \
   --max-new-tokens 4 --aot build/libqwen35_aot.dylib
 # output: !
 #

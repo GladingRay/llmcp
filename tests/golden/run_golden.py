@@ -11,7 +11,6 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--llmcp-run", required=True)
     parser.add_argument("--weights", required=True)
-    parser.add_argument("--manifest", required=True)
     parser.add_argument("--aot", required=True)
     parser.add_argument("--tokenizer", required=True)
     parser.add_argument("--expected", required=True)
@@ -31,7 +30,6 @@ def main():
     command = [
         args.llmcp_run,
         "--weights", args.weights,
-        "--manifest", args.manifest,
         "--aot", args.aot,
         "--tokenizer", args.tokenizer,
         "--text", args.text,

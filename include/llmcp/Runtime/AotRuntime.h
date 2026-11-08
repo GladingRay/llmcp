@@ -28,7 +28,7 @@ struct Weight {
   std::string dtype;
 };
 
-/// Memory-mapped packed weight arena and its JSON manifest.
+/// Memory-mapped weight container with an embedded JSON manifest.
 struct Arena {
   int fd = -1;
   const uint8_t *base = nullptr;
@@ -41,8 +41,11 @@ struct Arena {
   Arena &operator=(const Arena &) = delete;
   ~Arena();
 
-  llvm::Error load(llvm::StringRef bin, llvm::StringRef manifest);
+  llvm::Error load(llvm::StringRef bin);
   const Weight &get(llvm::StringRef name) const;
+
+private:
+  uint64_t mappedSize = 0;
 };
 
 /// Strided memref descriptor passed to the MLIR C interface.

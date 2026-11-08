@@ -7,82 +7,15 @@
 #include "llmcp/Runtime/AotRuntime.h"
 #include "llmcp/Support/AotAbi.h"
 
-#include "llvm/Support/JSON.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <dlfcn.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 using namespace mlir::llmcp::runtime;
 using namespace llvm;
-
-Arena::~Arena() {
-  if (base)
-    munmap(const_cast<uint8_t *>(base), size);
-  if (fd >= 0)
-    close(fd);
-}
-
-Error Arena::load(StringRef bin, StringRef manifest) {
-  fd = open(bin.str().c_str(), O_RDONLY);
-  if (fd < 0)
-    return errorCodeToError(std::error_code(errno, std::generic_category()));
-  struct stat st;
-  if (fstat(fd, &st) != 0)
-    return errorCodeToError(std::error_code(errno, std::generic_category()));
-  size = static_cast<uint64_t>(st.st_size);
-  base = static_cast<const uint8_t *>(
-      mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0));
-  if (base == MAP_FAILED)
-    return errorCodeToError(std::error_code(errno, std::generic_category()));
-
-  auto buffer = MemoryBuffer::getFile(manifest);
-  if (!buffer)
-    return errorCodeToError(buffer.getError());
-  auto json = json::parse((*buffer)->getBuffer());
-  if (!json)
-    return json.takeError();
-  auto *object = json->getAsObject();
-  if (object) {
-    if (auto value = object->getString("quantization"))
-      quantization = value->str();
-  }
-  auto *tensors = object ? object->getArray("tensors") : nullptr;
-  if (!tensors)
-    return createStringError(inconvertibleErrorCode(),
-                             "manifest has no tensors");
-  for (const json::Value &value : *tensors) {
-    auto *entry = value.getAsObject();
-    if (!entry)
-      continue;
-    Weight weight;
-    std::string name = entry->getString("name")->str();
-    uint64_t offset = entry->getInteger("offset").value_or(0);
-    uint64_t bytes = entry->getInteger("size").value_or(0);
-    weight.dtype = entry->getString("dtype")->str();
-    for (const json::Value &dim : *entry->getArray("shape"))
-      weight.shape.push_back(dim.getAsInteger().value_or(0));
-    if (offset + bytes > size)
-      return createStringError(inconvertibleErrorCode(),
-                               "tensor outside arena: " + name);
-    weight.data = base + offset;
-    weights[name] = std::move(weight);
-  }
-  return Error::success();
-}
-
-const Weight &Arena::get(StringRef name) const {
-  auto it = weights.find(name.str());
-  assert(it != weights.end() && "missing weight");
-  return it->second;
-}
 
 std::pair<::llmcp::CacheLineAlignedVector<float>,
           ::llmcp::CacheLineAlignedVector<float>>

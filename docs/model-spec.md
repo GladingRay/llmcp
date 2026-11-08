@@ -437,14 +437,18 @@ mtp.*
 建议由 `llmcp-pack` 生成单一权重 blob，布局由 C++ 的 `WeightLayout` 统一计算，编译器和打包工具共享同一份代码：
 
 ```text
-[header/manifest]
+[64 字节固定头部]
 [embedding]                      # 248320 × 2560 bf16
 [group 0: layers 0..3]           # 3 × linear + 1 × full
 [group 1: layers 4..7]
 ...
 [group 7: layers 28..31]
 [final norm]
+[内嵌 JSON manifest]
 ```
+
+实际文件格式与迁移方式见 [单文件权重格式](packed-weights.md)。manifest
+位于权重尾部，张量偏移仍相对于整个文件起点，编译器无需因元数据长度改变布局。
 
 每个 group 的 4 层张量集合完全相同，因此 group 的字节跨度是固定的；层内偏移也是固定的。这样编译器可以用 `scf.for` 遍历 8 个 group，权重地址是 `group_base + constant_offset`，既避免展开 32 层导致 IR 爆炸，又能保持地址可计算。
 
