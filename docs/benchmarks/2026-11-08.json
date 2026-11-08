@@ -1,0 +1,1253 @@
+{
+  "date": "2026-11-08",
+  "timezone": "Asia/Shanghai",
+  "source_revision": "5ad618ad0c79a5146bd06f2b4a95bee17b66cf23",
+  "cpu": "Apple M2",
+  "memory_bytes": 25769803776,
+  "logical_cpus": 8,
+  "build_type": "Release",
+  "bfdot": true,
+  "sdot": true,
+  "aot_clang_opt_level": 2,
+  "notes": "串行测量；模型短序列每种精度预热一次后测三次；长序列单次；matmul 每组独立测三次，每次内部预热一次后计时 20 次。未主动清除系统 page cache。 微基准独立运行三次；compute 单线程预热后各计时至少 1 秒；带宽为 8 线程、256 MiB 缓冲区单次遍历，包含线程创建和回收；copy 按读写合计字节计算。",
+  "binary_sha256": {
+    "build/bin/llmcp-benchmark": "8921f7bb221fea7b22dfed42a2c4dfade57cc6cbef0d1cd5f7f013133142c24b",
+    "build/bin/llmcp-matmul-benchmark": "c6aefcfeb4c0a573785d5f5b362030ac81c06e0f7129b96127dbe69f1cb764a2",
+    "build/bin/llmcp-microbench": "319561f9356bcdf9f988a466edb1f131eb99ecdb597fadcee6e7a2d6f3a7ffdd",
+    "build/libqwen35_aot.dylib": "1ca7ccf7dea3d46ef577301819bc6786012626075c4f379fccd4bf877876437b",
+    "build/libqwen35_aot_q8.dylib": "4fc9ef154e0c4c5b5b002bc61eeb17fdb7e2c11e77097b56618fc97330da2498"
+  },
+  "runs": [
+    {
+      "kind": "model-short",
+      "label": "bf16",
+      "warmup": true,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights.bin",
+        "--aot",
+        "build/libqwen35_aot.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:51:14.329456+08:00",
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 2.0118\ndecode_seconds: 6.1508\ntotal_seconds: 8.1626\nprefill_tokens_per_second: 15.9061\ndecode_tokens_per_second: 5.2026\n",
+      "stderr": "        8.29 real        31.16 user         2.76 sys\n          8495644672  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              501001  page reclaims\n               18320  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  18  voluntary context switches\n              453795  involuntary context switches\n        165011061616  instructions retired\n         97914314618  cycles elapsed\n            69147128  peak memory footprint\n",
+      "wall_seconds": 8.297285208012909,
+      "finished_at": "2026-11-08T11:51:22.627316+08:00",
+      "metrics": {
+        "prefill_tokens": 32.0,
+        "decode_tokens": 32.0,
+        "prefill_seconds": 2.0118,
+        "decode_seconds": 6.1508,
+        "total_seconds": 8.1626,
+        "prefill_tokens_per_second": 15.9061,
+        "decode_tokens_per_second": 5.2026
+      },
+      "max_rss_bytes": 8495644672
+    },
+    {
+      "kind": "model-short",
+      "label": "bf16-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights.bin",
+        "--aot",
+        "build/libqwen35_aot.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:51:22.627778+08:00",
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 1.7258\ndecode_seconds: 6.4835\ntotal_seconds: 8.2093\nprefill_tokens_per_second: 18.5422\ndecode_tokens_per_second: 4.9356\n",
+      "stderr": "        8.33 real        30.55 user         2.50 sys\n          8495366144  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              519019  page reclaims\n                 118  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n              454724  involuntary context switches\n        164329981876  instructions retired\n         95265174808  cycles elapsed\n            68835784  peak memory footprint\n",
+      "wall_seconds": 8.339480957947671,
+      "finished_at": "2026-11-08T11:51:30.967578+08:00",
+      "metrics": {
+        "prefill_tokens": 32.0,
+        "decode_tokens": 32.0,
+        "prefill_seconds": 1.7258,
+        "decode_seconds": 6.4835,
+        "total_seconds": 8.2093,
+        "prefill_tokens_per_second": 18.5422,
+        "decode_tokens_per_second": 4.9356
+      },
+      "max_rss_bytes": 8495366144
+    },
+    {
+      "kind": "model-short",
+      "label": "bf16-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights.bin",
+        "--aot",
+        "build/libqwen35_aot.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:51:30.968110+08:00",
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 1.8272\ndecode_seconds: 6.3327\ntotal_seconds: 8.1600\nprefill_tokens_per_second: 17.5127\ndecode_tokens_per_second: 5.0531\n",
+      "stderr": "        8.28 real        30.97 user         2.54 sys\n          8495955968  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              519053  page reclaims\n                  87  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n              454498  involuntary context switches\n        164277535233  instructions retired\n         96106943467  cycles elapsed\n            69442016  peak memory footprint\n",
+      "wall_seconds": 8.290777625050396,
+      "finished_at": "2026-11-08T11:51:39.259284+08:00",
+      "metrics": {
+        "prefill_tokens": 32.0,
+        "decode_tokens": 32.0,
+        "prefill_seconds": 1.8272,
+        "decode_seconds": 6.3327,
+        "total_seconds": 8.16,
+        "prefill_tokens_per_second": 17.5127,
+        "decode_tokens_per_second": 5.0531
+      },
+      "max_rss_bytes": 8495955968
+    },
+    {
+      "kind": "model-short",
+      "label": "bf16-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights.bin",
+        "--aot",
+        "build/libqwen35_aot.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:51:39.259724+08:00",
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 1.9599\ndecode_seconds: 6.3651\ntotal_seconds: 8.3250\nprefill_tokens_per_second: 16.3278\ndecode_tokens_per_second: 5.0274\n",
+      "stderr": "        8.45 real        30.33 user         2.36 sys\n          8495988736  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              519097  page reclaims\n                  86  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n              460101  involuntary context switches\n        164339433454  instructions retired\n         92962288292  cycles elapsed\n            69474784  peak memory footprint\n",
+      "wall_seconds": 8.45671720802784,
+      "finished_at": "2026-11-08T11:51:47.716866+08:00",
+      "metrics": {
+        "prefill_tokens": 32.0,
+        "decode_tokens": 32.0,
+        "prefill_seconds": 1.9599,
+        "decode_seconds": 6.3651,
+        "total_seconds": 8.325,
+        "prefill_tokens_per_second": 16.3278,
+        "decode_tokens_per_second": 5.0274
+      },
+      "max_rss_bytes": 8495988736
+    },
+    {
+      "kind": "model-short",
+      "label": "q8_0",
+      "warmup": true,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "build/libqwen35_aot_q8.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:51:47.717363+08:00",
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 4.8972\ndecode_seconds: 3.8664\ntotal_seconds: 8.7636\nprefill_tokens_per_second: 6.5343\ndecode_tokens_per_second: 8.2764\n",
+      "stderr": "        8.82 real        17.23 user         4.44 sys\n          5146165248  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6344  page reclaims\n              309477  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  66  voluntary context switches\n              775463  involuntary context switches\n        162775720581  instructions retired\n         63590217703  cycles elapsed\n            67522688  peak memory footprint\n",
+      "wall_seconds": 8.827479125000536,
+      "finished_at": "2026-11-08T11:51:56.545159+08:00",
+      "metrics": {
+        "prefill_tokens": 32.0,
+        "decode_tokens": 32.0,
+        "prefill_seconds": 4.8972,
+        "decode_seconds": 3.8664,
+        "total_seconds": 8.7636,
+        "prefill_tokens_per_second": 6.5343,
+        "decode_tokens_per_second": 8.2764
+      },
+      "max_rss_bytes": 5146165248
+    },
+    {
+      "kind": "model-short",
+      "label": "q8_0-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "build/libqwen35_aot_q8.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:51:56.545788+08:00",
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 0.9724\ndecode_seconds: 3.8683\ntotal_seconds: 4.8407\nprefill_tokens_per_second: 32.9074\ndecode_tokens_per_second: 8.2724\n",
+      "stderr": "        4.92 real        18.02 user         2.05 sys\n          5150146560  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              314862  page reclaims\n                  91  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n              427088  involuntary context switches\n        145384533849  instructions retired\n         55657965164  cycles elapsed\n            67522688  peak memory footprint\n",
+      "wall_seconds": 4.933382541872561,
+      "finished_at": "2026-11-08T11:52:01.479410+08:00",
+      "metrics": {
+        "prefill_tokens": 32.0,
+        "decode_tokens": 32.0,
+        "prefill_seconds": 0.9724,
+        "decode_seconds": 3.8683,
+        "total_seconds": 4.8407,
+        "prefill_tokens_per_second": 32.9074,
+        "decode_tokens_per_second": 8.2724
+      },
+      "max_rss_bytes": 5150146560
+    },
+    {
+      "kind": "model-short",
+      "label": "q8_0-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "build/libqwen35_aot_q8.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:52:01.480760+08:00",
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 0.9948\ndecode_seconds: 3.7991\ntotal_seconds: 4.7939\nprefill_tokens_per_second: 32.1672\ndecode_tokens_per_second: 8.4230\n",
+      "stderr": "        4.87 real        18.39 user         2.07 sys\n          5150162944  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              314930  page reclaims\n                  55  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n              423474  involuntary context switches\n        145328707109  instructions retired\n         56394770072  cycles elapsed\n            67539072  peak memory footprint\n",
+      "wall_seconds": 4.882962583098561,
+      "finished_at": "2026-11-08T11:52:06.364026+08:00",
+      "metrics": {
+        "prefill_tokens": 32.0,
+        "decode_tokens": 32.0,
+        "prefill_seconds": 0.9948,
+        "decode_seconds": 3.7991,
+        "total_seconds": 4.7939,
+        "prefill_tokens_per_second": 32.1672,
+        "decode_tokens_per_second": 8.423
+      },
+      "max_rss_bytes": 5150162944
+    },
+    {
+      "kind": "model-short",
+      "label": "q8_0-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "build/libqwen35_aot_q8.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:52:06.364544+08:00",
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 1.1174\ndecode_seconds: 4.1278\ntotal_seconds: 5.2453\nprefill_tokens_per_second: 28.6369\ndecode_tokens_per_second: 7.7522\n",
+      "stderr": "        5.33 real        16.79 user         2.06 sys\n          5150769152  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              314893  page reclaims\n                  55  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n              436846  involuntary context switches\n        145538423510  instructions retired\n         51741626103  cycles elapsed\n            68161688  peak memory footprint\n",
+      "wall_seconds": 5.335812333039939,
+      "finished_at": "2026-11-08T11:52:11.700692+08:00",
+      "metrics": {
+        "prefill_tokens": 32.0,
+        "decode_tokens": 32.0,
+        "prefill_seconds": 1.1174,
+        "decode_seconds": 4.1278,
+        "total_seconds": 5.2453,
+        "prefill_tokens_per_second": 28.6369,
+        "decode_tokens_per_second": 7.7522
+      },
+      "max_rss_bytes": 5150769152
+    },
+    {
+      "kind": "model-long",
+      "label": "q8_0",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "build/libqwen35_aot_q8.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "1024",
+        "--decode-tokens",
+        "1024"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:52:11.701255+08:00",
+      "returncode": 0,
+      "stdout": "prefill_tokens: 1024\ndecode_tokens: 1024\nprefill_seconds: 29.5260\ndecode_seconds: 162.9938\ntotal_seconds: 192.5198\nprefill_tokens_per_second: 34.6812\ndecode_tokens_per_second: 6.2824\n",
+      "stderr": "      192.62 real       705.72 user        76.72 sys\n          5359697920  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n              332376  page reclaims\n                  87  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   5  voluntary context switches\n            13151067  involuntary context switches\n       4837488887319  instructions retired\n       1611071275277  cycles elapsed\n           277188904  peak memory footprint\n",
+      "wall_seconds": 192.63076362479478,
+      "finished_at": "2026-11-08T11:55:24.333643+08:00",
+      "metrics": {
+        "prefill_tokens": 1024.0,
+        "decode_tokens": 1024.0,
+        "prefill_seconds": 29.526,
+        "decode_seconds": 162.9938,
+        "total_seconds": 192.5198,
+        "prefill_tokens_per_second": 34.6812,
+        "decode_tokens_per_second": 6.2824
+      },
+      "max_rss_bytes": 5359697920
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-bf16-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "256",
+        "--n",
+        "256",
+        "--k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:24.334370+08:00",
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nthreads: 4\nseconds: 0.0078\ngflops: 85.8449\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": "        0.88 real         0.22 user         0.09 sys\n            49905664  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19034  page reclaims\n                1810  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  65  voluntary context switches\n                1526  involuntary context switches\n           282570203  instructions retired\n           119032823  cycles elapsed\n             7356944  peak memory footprint\n",
+      "wall_seconds": 0.8889859579503536,
+      "finished_at": "2026-11-08T11:55:25.223683+08:00",
+      "metrics": {
+        "m": 256.0,
+        "n": 256.0,
+        "k": 256.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.0078,
+        "gflops": 85.8449
+      },
+      "max_rss_bytes": 49905664
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-bf16-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "256",
+        "--n",
+        "256",
+        "--k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:25.224336+08:00",
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nthreads: 4\nseconds: 0.0075\ngflops: 89.3851\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": "        1.26 real         0.19 user         0.06 sys\n            50118656  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20179  page reclaims\n                 690  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n                1008  involuntary context switches\n           277722041  instructions retired\n           119615582  cycles elapsed\n             7307768  peak memory footprint\n",
+      "wall_seconds": 1.2675596657209098,
+      "finished_at": "2026-11-08T11:55:26.492150+08:00",
+      "metrics": {
+        "m": 256.0,
+        "n": 256.0,
+        "k": 256.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.0075,
+        "gflops": 89.3851
+      },
+      "max_rss_bytes": 50118656
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-bf16-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "256",
+        "--n",
+        "256",
+        "--k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:26.492714+08:00",
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nthreads: 4\nseconds: 0.0067\ngflops: 99.6555\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": "        0.60 real         0.18 user         0.06 sys\n            49922048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20243  page reclaims\n                 690  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  10  voluntary context switches\n                 763  involuntary context switches\n           277042656  instructions retired\n           119675907  cycles elapsed\n             7324152  peak memory footprint\n",
+      "wall_seconds": 0.6077516246587038,
+      "finished_at": "2026-11-08T11:55:27.100718+08:00",
+      "metrics": {
+        "m": 256.0,
+        "n": 256.0,
+        "k": 256.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.0067,
+        "gflops": 99.6555
+      },
+      "max_rss_bytes": 49922048
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-q8_0-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "256",
+        "--n",
+        "256",
+        "--k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify",
+        "--q8"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:27.101268+08:00",
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0045\ngflops: 148.0383\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": "        0.63 real         0.20 user         0.06 sys\n            52314112  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20585  page reclaims\n                 711  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  10  voluntary context switches\n                1076  involuntary context switches\n           288799803  instructions retired\n            89014355  cycles elapsed\n             8815096  peak memory footprint\n",
+      "wall_seconds": 0.6377199171110988,
+      "finished_at": "2026-11-08T11:55:27.739247+08:00",
+      "metrics": {
+        "m": 256.0,
+        "n": 256.0,
+        "k": 256.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.0045,
+        "gflops": 148.0383
+      },
+      "max_rss_bytes": 52314112
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-q8_0-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "256",
+        "--n",
+        "256",
+        "--k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify",
+        "--q8"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:27.739862+08:00",
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0039\ngflops: 172.3816\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": "        0.63 real         0.20 user         0.06 sys\n            52445184  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20719  page reclaims\n                 690  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   8  voluntary context switches\n                 880  involuntary context switches\n           287802069  instructions retired\n            89370671  cycles elapsed\n             8847888  peak memory footprint\n",
+      "wall_seconds": 0.6410512910224497,
+      "finished_at": "2026-11-08T11:55:28.381181+08:00",
+      "metrics": {
+        "m": 256.0,
+        "n": 256.0,
+        "k": 256.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.0039,
+        "gflops": 172.3816
+      },
+      "max_rss_bytes": 52445184
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-q8_0-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "256",
+        "--n",
+        "256",
+        "--k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify",
+        "--q8"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:28.381742+08:00",
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0040\ngflops: 169.8045\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": "        0.64 real         0.20 user         0.06 sys\n            52412416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20782  page reclaims\n                 690  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n                 917  involuntary context switches\n           288142846  instructions retired\n            85396129  cycles elapsed\n             8847864  peak memory footprint\n",
+      "wall_seconds": 0.6445784159004688,
+      "finished_at": "2026-11-08T11:55:29.026594+08:00",
+      "metrics": {
+        "m": 256.0,
+        "n": 256.0,
+        "k": 256.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.004,
+        "gflops": 169.8045
+      },
+      "max_rss_bytes": 52412416
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-bf16-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "16",
+        "--n",
+        "8192",
+        "--k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:29.027148+08:00",
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nthreads: 4\nseconds: 0.1216\ngflops: 110.3603\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": "        0.76 real         0.54 user         0.06 sys\n            71237632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               23346  page reclaims\n                 690  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n                 755  involuntary context switches\n          2131608374  instructions retired\n          1112653136  cycles elapsed\n            52134488  peak memory footprint\n",
+      "wall_seconds": 0.7675347500480711,
+      "finished_at": "2026-11-08T11:55:29.794954+08:00",
+      "metrics": {
+        "m": 16.0,
+        "n": 8192.0,
+        "k": 2560.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.1216,
+        "gflops": 110.3603
+      },
+      "max_rss_bytes": 71237632
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-bf16-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "16",
+        "--n",
+        "8192",
+        "--k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:29.795555+08:00",
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nthreads: 4\nseconds: 0.1238\ngflops: 108.4338\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": "        0.75 real         0.57 user         0.06 sys\n            71204864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               23305  page reclaims\n                 690  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n                 882  involuntary context switches\n          2132932619  instructions retired\n          1110213181  cycles elapsed\n            52052496  peak memory footprint\n",
+      "wall_seconds": 0.7548210411332548,
+      "finished_at": "2026-11-08T11:55:30.550680+08:00",
+      "metrics": {
+        "m": 16.0,
+        "n": 8192.0,
+        "k": 2560.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.1238,
+        "gflops": 108.4338
+      },
+      "max_rss_bytes": 71204864
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-bf16-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "16",
+        "--n",
+        "8192",
+        "--k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:30.551330+08:00",
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nthreads: 4\nseconds: 0.1157\ngflops: 115.9604\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": "        0.76 real         0.57 user         0.07 sys\n            71139328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               23115  page reclaims\n                 690  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n                1183  involuntary context switches\n          2134413609  instructions retired\n          1095659517  cycles elapsed\n            52036160  peak memory footprint\n",
+      "wall_seconds": 0.7705860421992838,
+      "finished_at": "2026-11-08T11:55:31.322265+08:00",
+      "metrics": {
+        "m": 16.0,
+        "n": 8192.0,
+        "k": 2560.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.1157,
+        "gflops": 115.9604
+      },
+      "max_rss_bytes": 71139328
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-q8_0-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "16",
+        "--n",
+        "8192",
+        "--k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify",
+        "--q8"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:31.322950+08:00",
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0504\ngflops: 266.2716\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": "        0.75 real         0.37 user         0.07 sys\n            52674560  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               22421  page reclaims\n                 690  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   8  voluntary context switches\n                1082  involuntary context switches\n          2224772415  instructions retired\n           485971475  cycles elapsed\n            33538576  peak memory footprint\n",
+      "wall_seconds": 0.7627495839260519,
+      "finished_at": "2026-11-08T11:55:32.086053+08:00",
+      "metrics": {
+        "m": 16.0,
+        "n": 8192.0,
+        "k": 2560.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.0504,
+        "gflops": 266.2716
+      },
+      "max_rss_bytes": 52674560
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-q8_0-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "16",
+        "--n",
+        "8192",
+        "--k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify",
+        "--q8"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:32.086716+08:00",
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0510\ngflops: 263.1307\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": "        0.70 real         0.35 user         0.07 sys\n            52723712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               22489  page reclaims\n                 690  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                1114  involuntary context switches\n          2226639024  instructions retired\n           494601213  cycles elapsed\n            33620544  peak memory footprint\n",
+      "wall_seconds": 0.7113967081531882,
+      "finished_at": "2026-11-08T11:55:32.798459+08:00",
+      "metrics": {
+        "m": 16.0,
+        "n": 8192.0,
+        "k": 2560.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.051,
+        "gflops": 263.1307
+      },
+      "max_rss_bytes": 52723712
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-q8_0-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "16",
+        "--n",
+        "8192",
+        "--k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--verify",
+        "--q8"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:32.799079+08:00",
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0479\ngflops: 280.4641\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": "        0.80 real         0.34 user         0.06 sys\n            52674560  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               22425  page reclaims\n                 740  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  12  voluntary context switches\n                1500  involuntary context switches\n          2234518661  instructions retired\n           491303089  cycles elapsed\n            33522192  peak memory footprint\n",
+      "wall_seconds": 0.8095101248472929,
+      "finished_at": "2026-11-08T11:55:33.608940+08:00",
+      "metrics": {
+        "m": 16.0,
+        "n": 8192.0,
+        "k": 2560.0,
+        "iters": 20.0,
+        "threads": 4.0,
+        "seconds": 0.0479,
+        "gflops": 280.4641
+      },
+      "max_rss_bytes": 52674560
+    },
+    {
+      "kind": "matmul",
+      "label": "1024x1024x1024-bf16-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "1024",
+        "--n",
+        "1024",
+        "--k",
+        "1024",
+        "--threads",
+        "8",
+        "--iters",
+        "20",
+        "--verify"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:33.609536+08:00",
+      "returncode": 0,
+      "stdout": "m: 1024\nn: 1024\nk: 1024\niters: 20\nthreads: 8\nseconds: 0.3499\ngflops: 122.7346\nfirst: 1024.0000 (expected 1024.0000)\n",
+      "stderr": "        1.02 real         1.62 user         0.08 sys\n            73990144  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               25658  page reclaims\n                 713  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                3717  involuntary context switches\n          6591495183  instructions retired\n          3649075094  cycles elapsed\n            54936128  peak memory footprint\n",
+      "wall_seconds": 1.032249417155981,
+      "finished_at": "2026-11-08T11:55:34.642114+08:00",
+      "metrics": {
+        "m": 1024.0,
+        "n": 1024.0,
+        "k": 1024.0,
+        "iters": 20.0,
+        "threads": 8.0,
+        "seconds": 0.3499,
+        "gflops": 122.7346
+      },
+      "max_rss_bytes": 73990144
+    },
+    {
+      "kind": "matmul",
+      "label": "1024x1024x1024-bf16-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "1024",
+        "--n",
+        "1024",
+        "--k",
+        "1024",
+        "--threads",
+        "8",
+        "--iters",
+        "20",
+        "--verify"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:34.642892+08:00",
+      "returncode": 0,
+      "stdout": "m: 1024\nn: 1024\nk: 1024\niters: 20\nthreads: 8\nseconds: 0.8976\ngflops: 47.8473\nfirst: 1024.0000 (expected 1024.0000)\n",
+      "stderr": "        1.96 real         1.97 user         0.12 sys\n            73957376  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               23122  page reclaims\n                 798  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n                8443  involuntary context switches\n          6630765015  instructions retired\n          3988788323  cycles elapsed\n            54903336  peak memory footprint\n",
+      "wall_seconds": 1.9709507497027516,
+      "finished_at": "2026-11-08T11:55:36.614287+08:00",
+      "metrics": {
+        "m": 1024.0,
+        "n": 1024.0,
+        "k": 1024.0,
+        "iters": 20.0,
+        "threads": 8.0,
+        "seconds": 0.8976,
+        "gflops": 47.8473
+      },
+      "max_rss_bytes": 73957376
+    },
+    {
+      "kind": "matmul",
+      "label": "1024x1024x1024-bf16-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "1024",
+        "--n",
+        "1024",
+        "--k",
+        "1024",
+        "--threads",
+        "8",
+        "--iters",
+        "20",
+        "--verify"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:36.615505+08:00",
+      "returncode": 0,
+      "stdout": "m: 1024\nn: 1024\nk: 1024\niters: 20\nthreads: 8\nseconds: 0.3770\ngflops: 113.9337\nfirst: 1024.0000 (expected 1024.0000)\n",
+      "stderr": "        1.32 real         1.82 user         0.11 sys\n            73973760  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24888  page reclaims\n                 690  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  23  voluntary context switches\n                4301  involuntary context switches\n          6587118019  instructions retired\n          3801288881  cycles elapsed\n            54936128  peak memory footprint\n",
+      "wall_seconds": 1.3325597504153848,
+      "finished_at": "2026-11-08T11:55:37.951964+08:00",
+      "metrics": {
+        "m": 1024.0,
+        "n": 1024.0,
+        "k": 1024.0,
+        "iters": 20.0,
+        "threads": 8.0,
+        "seconds": 0.377,
+        "gflops": 113.9337
+      },
+      "max_rss_bytes": 73973760
+    },
+    {
+      "kind": "matmul",
+      "label": "1024x1024x1024-q8_0-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "1024",
+        "--n",
+        "1024",
+        "--k",
+        "1024",
+        "--threads",
+        "8",
+        "--iters",
+        "20",
+        "--verify",
+        "--q8"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:37.952808+08:00",
+      "returncode": 0,
+      "stdout": "m: 1024\nn: 1024\nk: 1024\niters: 20\nmode: q8_0\nthreads: 8\nseconds: 0.1269\ngflops: 338.4999\nfirst: 1024.0000 (expected 1024.0000)\n",
+      "stderr": "        0.85 real         0.79 user         0.10 sys\n            97943552  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               28498  page reclaims\n                 721  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   8  voluntary context switches\n                3242  involuntary context switches\n          7042180244  instructions retired\n          1523468195  cycles elapsed\n            78905944  peak memory footprint\n",
+      "wall_seconds": 0.8548582922667265,
+      "finished_at": "2026-11-08T11:55:38.808283+08:00",
+      "metrics": {
+        "m": 1024.0,
+        "n": 1024.0,
+        "k": 1024.0,
+        "iters": 20.0,
+        "threads": 8.0,
+        "seconds": 0.1269,
+        "gflops": 338.4999
+      },
+      "max_rss_bytes": 97943552
+    },
+    {
+      "kind": "matmul",
+      "label": "1024x1024x1024-q8_0-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "1024",
+        "--n",
+        "1024",
+        "--k",
+        "1024",
+        "--threads",
+        "8",
+        "--iters",
+        "20",
+        "--verify",
+        "--q8"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:38.809001+08:00",
+      "returncode": 0,
+      "stdout": "m: 1024\nn: 1024\nk: 1024\niters: 20\nmode: q8_0\nthreads: 8\nseconds: 0.1252\ngflops: 342.9275\nfirst: 1024.0000 (expected 1024.0000)\n",
+      "stderr": "        0.82 real         0.78 user         0.09 sys\n            97910784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               27870  page reclaims\n                 726  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  10  voluntary context switches\n                3851  involuntary context switches\n          7036978773  instructions retired\n          1516124280  cycles elapsed\n            78873176  peak memory footprint\n",
+      "wall_seconds": 0.8268591249361634,
+      "finished_at": "2026-11-08T11:55:39.636305+08:00",
+      "metrics": {
+        "m": 1024.0,
+        "n": 1024.0,
+        "k": 1024.0,
+        "iters": 20.0,
+        "threads": 8.0,
+        "seconds": 0.1252,
+        "gflops": 342.9275
+      },
+      "max_rss_bytes": 97910784
+    },
+    {
+      "kind": "matmul",
+      "label": "1024x1024x1024-q8_0-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "--m",
+        "1024",
+        "--n",
+        "1024",
+        "--k",
+        "1024",
+        "--threads",
+        "8",
+        "--iters",
+        "20",
+        "--verify",
+        "--q8"
+      ],
+      "env": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "started_at": "2026-11-08T11:55:39.637120+08:00",
+      "returncode": 0,
+      "stdout": "m: 1024\nn: 1024\nk: 1024\niters: 20\nmode: q8_0\nthreads: 8\nseconds: 0.1308\ngflops: 328.4061\nfirst: 1024.0000 (expected 1024.0000)\n",
+      "stderr": "        0.83 real         0.80 user         0.09 sys\n            97861632  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               28068  page reclaims\n                 690  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n                3528  involuntary context switches\n          7039188085  instructions retired\n          1593410894  cycles elapsed\n            78807616  peak memory footprint\n",
+      "wall_seconds": 0.8414716250263155,
+      "finished_at": "2026-11-08T11:55:40.479020+08:00",
+      "metrics": {
+        "m": 1024.0,
+        "n": 1024.0,
+        "k": 1024.0,
+        "iters": 20.0,
+        "threads": 8.0,
+        "seconds": 0.1308,
+        "gflops": 328.4061
+      },
+      "max_rss_bytes": 97861632
+    },
+    {
+      "kind": "micro",
+      "label": "micro-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-microbench",
+        "--seconds",
+        "1",
+        "--buffer-mb",
+        "256",
+        "--threads",
+        "8"
+      ],
+      "started_at": "2026-11-08T11:55:59.078207+08:00",
+      "stdout": "cpu: Apple M2\nlogical_cpus: 8\nfeatures: FP16=1 DotProd=1 BF16=1 I8MM=1 SVE=0 SME=0 FHM=1\nbandwidth_threads: 8\n\ncompute:\nscalar_f32              6.619 GFLOPS\nneon_f32                51.924 GFLOPS\nneon_f16                123.169 GFLOPS\nneon_bf16_dot           49.014 GFLOPS\nneon_i8_dot             253.980 GOPS\nneon_i8_mma             245.975 GOPS\n\nbandwidth:\nread                    25.616 GB/s\nwrite                   45.769 GB/s\ncopy                    46.150 GB/s\n",
+      "stderr": "        6.10 real         6.03 user         0.08 sys\n           539164672  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               33093  page reclaims\n                  39  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1213  involuntary context switches\n         42080356988  instructions retired\n         19360409248  cycles elapsed\n           538428112  peak memory footprint\n",
+      "returncode": 0,
+      "wall_seconds": 6.105987541843206,
+      "finished_at": "2026-11-08T11:56:05.184869+08:00",
+      "metrics": {
+        "scalar_f32": {
+          "value": 6.619,
+          "unit": "GFLOPS"
+        },
+        "neon_f32": {
+          "value": 51.924,
+          "unit": "GFLOPS"
+        },
+        "neon_f16": {
+          "value": 123.169,
+          "unit": "GFLOPS"
+        },
+        "neon_bf16_dot": {
+          "value": 49.014,
+          "unit": "GFLOPS"
+        },
+        "neon_i8_dot": {
+          "value": 253.98,
+          "unit": "GOPS"
+        },
+        "neon_i8_mma": {
+          "value": 245.975,
+          "unit": "GOPS"
+        },
+        "read": {
+          "value": 25.616,
+          "unit": "GB/s"
+        },
+        "write": {
+          "value": 45.769,
+          "unit": "GB/s"
+        },
+        "copy": {
+          "value": 46.15,
+          "unit": "GB/s"
+        }
+      },
+      "max_rss_bytes": 539164672
+    },
+    {
+      "kind": "micro",
+      "label": "micro-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-microbench",
+        "--seconds",
+        "1",
+        "--buffer-mb",
+        "256",
+        "--threads",
+        "8"
+      ],
+      "started_at": "2026-11-08T11:56:05.185847+08:00",
+      "stdout": "cpu: Apple M2\nlogical_cpus: 8\nfeatures: FP16=1 DotProd=1 BF16=1 I8MM=1 SVE=0 SME=0 FHM=1\nbandwidth_threads: 8\n\ncompute:\nscalar_f32              6.339 GFLOPS\nneon_f32                50.301 GFLOPS\nneon_f16                127.713 GFLOPS\nneon_bf16_dot           48.310 GFLOPS\nneon_i8_dot             251.669 GOPS\nneon_i8_mma             246.149 GOPS\n\nbandwidth:\nread                    46.268 GB/s\nwrite                   56.343 GB/s\ncopy                    69.056 GB/s\n",
+      "stderr": "        6.08 real         6.09 user         0.04 sys\n           539148288  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               33124  page reclaims\n                   8  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 760  involuntary context switches\n         41752834038  instructions retired\n         19066002970  cycles elapsed\n           538411728  peak memory footprint\n",
+      "returncode": 0,
+      "wall_seconds": 6.0846576248295605,
+      "finished_at": "2026-11-08T11:56:11.270957+08:00",
+      "metrics": {
+        "scalar_f32": {
+          "value": 6.339,
+          "unit": "GFLOPS"
+        },
+        "neon_f32": {
+          "value": 50.301,
+          "unit": "GFLOPS"
+        },
+        "neon_f16": {
+          "value": 127.713,
+          "unit": "GFLOPS"
+        },
+        "neon_bf16_dot": {
+          "value": 48.31,
+          "unit": "GFLOPS"
+        },
+        "neon_i8_dot": {
+          "value": 251.669,
+          "unit": "GOPS"
+        },
+        "neon_i8_mma": {
+          "value": 246.149,
+          "unit": "GOPS"
+        },
+        "read": {
+          "value": 46.268,
+          "unit": "GB/s"
+        },
+        "write": {
+          "value": 56.343,
+          "unit": "GB/s"
+        },
+        "copy": {
+          "value": 69.056,
+          "unit": "GB/s"
+        }
+      },
+      "max_rss_bytes": 539148288
+    },
+    {
+      "kind": "micro",
+      "label": "micro-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-microbench",
+        "--seconds",
+        "1",
+        "--buffer-mb",
+        "256",
+        "--threads",
+        "8"
+      ],
+      "started_at": "2026-11-08T11:56:11.271698+08:00",
+      "stdout": "cpu: Apple M2\nlogical_cpus: 8\nfeatures: FP16=1 DotProd=1 BF16=1 I8MM=1 SVE=0 SME=0 FHM=1\nbandwidth_threads: 8\n\ncompute:\nscalar_f32              6.383 GFLOPS\nneon_f32                50.445 GFLOPS\nneon_f16                125.608 GFLOPS\nneon_bf16_dot           46.883 GFLOPS\nneon_i8_dot             233.278 GOPS\nneon_i8_mma             247.019 GOPS\n\nbandwidth:\nread                    45.620 GB/s\nwrite                   60.652 GB/s\ncopy                    55.291 GB/s\n",
+      "stderr": "        6.08 real         6.02 user         0.05 sys\n           539148288  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               33130  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1663  involuntary context switches\n         40854876357  instructions retired\n         18722854272  cycles elapsed\n           538411728  peak memory footprint\n",
+      "returncode": 0,
+      "wall_seconds": 6.0829693749547005,
+      "finished_at": "2026-11-08T11:56:17.355122+08:00",
+      "metrics": {
+        "scalar_f32": {
+          "value": 6.383,
+          "unit": "GFLOPS"
+        },
+        "neon_f32": {
+          "value": 50.445,
+          "unit": "GFLOPS"
+        },
+        "neon_f16": {
+          "value": 125.608,
+          "unit": "GFLOPS"
+        },
+        "neon_bf16_dot": {
+          "value": 46.883,
+          "unit": "GFLOPS"
+        },
+        "neon_i8_dot": {
+          "value": 233.278,
+          "unit": "GOPS"
+        },
+        "neon_i8_mma": {
+          "value": 247.019,
+          "unit": "GOPS"
+        },
+        "read": {
+          "value": 45.62,
+          "unit": "GB/s"
+        },
+        "write": {
+          "value": 60.652,
+          "unit": "GB/s"
+        },
+        "copy": {
+          "value": 55.291,
+          "unit": "GB/s"
+        }
+      },
+      "max_rss_bytes": 539148288
+    }
+  ],
+  "core_finished_at": "2026-11-08T11:55:40.479781+08:00",
+  "os": "macOS 26.6.2 (25G83)",
+  "compiler": "Homebrew clang 20.1.8",
+  "measurement_wrapper": [
+    "/usr/bin/time",
+    "-l"
+  ],
+  "finished_at": "2026-11-08T11:56:17.355898+08:00",
+  "weight_containers": {
+    "build/weights.bin": {
+      "format_version": 1,
+      "file_bytes": 8411575924,
+      "arena_bytes": 8411510336,
+      "manifest_bytes": 65588,
+      "manifest_sha256": "e26aa844600891a47fac6bed95ec9f825e24335259aec2aba593341987a9e336",
+      "quantization": "none",
+      "tensor_count": 426
+    },
+    "build/weights-q8.bin": {
+      "format_version": 1,
+      "file_bytes": 5065553520,
+      "arena_bytes": 5065487936,
+      "manifest_bytes": 65584,
+      "manifest_sha256": "cf82ac39b3ce32d3d95302643a907b6da0bd7165b3d1036a742219dfc37d5571",
+      "quantization": "q8_0",
+      "tensor_count": 426
+    }
+  }
+}

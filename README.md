@@ -119,14 +119,25 @@ Q8 权重：
 
 ## 性能
 
-以下数据为 2026-11-07 在本机 Apple M2 上的实测，Release 构建，
-`OMP_NUM_THREADS=8`，AOT dylib，`prefill=32 / decode=32`；
-绝对值受 page cache / 内存压力影响：
+以下数据为 **2026-11-08** 在 Apple M2（24 GiB 内存、8 个逻辑核）上的实测。
+macOS 26.6.2，Release 构建，LLVM 20.1.8，AOT 使用 `-O2 -mcpu=native`，bfdot/sdot 均启用。
+测试串行执行；短序列每种精度先完整预热一次，再用新进程测量三次，表中为中位数。
+未主动清除系统 page cache，因此这些是预热后的结果，不代表冷启动性能。
+原始输出、命令、样本时间和二进制 SHA-256 见 [本次测量记录](docs/benchmarks/2026-11-08.json)。
+
+全模型短序列使用 `OMP_NUM_THREADS=8`、`prefill=32 / decode=32`，prompt 为重复的
+合成 token `9419`。计时包含 forward 内的运行时开销，排除权重文件加载、动态库加载
+和 tokenizer；decode 吞吐统计 32 次自回归 forward。
 
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
-| bf16 + bfdot | 7.56 s | 4.23 | 6.39 s | 5.01 |
-| Q8_0 + sdot | 1.75 s | 18.27 | 4.35 s | 7.35 |
+| bf16 + bfdot | 1.83 s | 17.51 | 6.37 s | 5.03 |
+| Q8_0 + sdot | 0.99 s | 32.17 | 3.87 s | 8.27 |
+
+三次测量的吞吐范围：
+
+- bf16：prefill 16.33–18.54 tok/s；decode 4.94–5.05 tok/s。
+- Q8_0：prefill 28.64–32.91 tok/s；decode 7.75–8.42 tok/s。
 
 prefill 和 decode 使用不同的 AOT 入口：
 
@@ -170,48 +181,43 @@ bf16: 8.41 GB
 Q8:   5.07 GB
 ```
 
-长上下文 Q8（8 线程，`prefill=1024 / decode=1024`）：
+长上下文 Q8（8 线程，`prefill=1024 / decode=1024`，短序列测试之后单次测量）：
 
 ```text
-prefill: 61.47 s  (16.66 tok/s)
-decode:  202.35 s (5.06 tok/s)
-total:  263.82 s
+prefill: 29.53 s  (34.68 tok/s)
+decode:  162.99 s (6.28 tok/s)
+total:   192.52 s
 ```
 
-单算子 matmul（`llmcp-matmul-benchmark`）：
+单算子 matmul（`llmcp-matmul-benchmark`）：每组运行三次，每次内部预热一次、计时
+20 次迭代；下表为吞吐中位数，括号内为三次范围。Q8 使用 `2*M*N*K/time`
+计算等效 GFLOPS；计时不包含编译与动态库加载。
 
-```text
-256 x 256 x 256，4 线程：
-  bf16: 99.4 GFLOPS
-  q8:   179.4 GFLOPS
+| M × N × K | 线程 | bf16 GFLOPS（范围） | Q8 等效 GFLOPS（范围） |
+|---|---:|---:|---:|
+| 256 × 256 × 256 | 4 | 89.4（85.8–99.7） | 169.8（148.0–172.4） |
+| 16 × 8192 × 2560 | 4 | 110.4（108.4–116.0） | 266.3（263.1–280.5） |
+| 1024 × 1024 × 1024 | 8 | 113.9（47.8–122.7） | 338.5（328.4–342.9） |
 
-M=16, N=8192, K=2560，4 线程：
-  bf16: 119.4 GFLOPS
-  q8:   268.7 GFLOPS
+1024³ bf16 有一次明显较慢的样本，已保留在范围内，未作剔除；因此不应把单次吞吐
+视为稳定基线。
 
-1024 x 1024 x 1024，8 线程，20 次迭代：
-  bf16 blocked:    168.3 GFLOPS
-  bf16 unblocked:   84.8 GFLOPS（早期 A/B）
-  Q8 blocked:      403.4 GFLOPS
-  Q8 unblocked:    218.4 GFLOPS（早期 A/B）
-```
+CPU 指令与内存带宽（`llmcp-microbench`）：三次独立运行的中位数和范围。
+compute 单线程，每项预热后计时至少 1 秒；带宽使用 8 线程、256 MiB 缓冲区单次遍历，
+包含线程创建和回收开销，copy 按读写合计流量计算。硬件特性为
+`FP16=1 DotProd=1 BF16=1 I8MM=1`。
 
-CPU 指令与内存带宽（`llmcp-microbench`）：
+| 项目 | 中位数 | 三次范围 |
+|---|---:|---:|
+| neon_bf16_dot | 48.31 GFLOPS | 46.88–49.01 GFLOPS |
+| neon_i8_dot | 251.67 GOPS | 233.28–253.98 GOPS |
+| neon_i8_mma | 246.15 GOPS | 245.97–247.02 GOPS |
+| read | 45.62 GB/s | 25.62–46.27 GB/s |
+| write | 56.34 GB/s | 45.77–60.65 GB/s |
+| copy | 55.29 GB/s | 46.15–69.06 GB/s |
 
-```text
-Apple M2, 8 logical CPUs
-FP16=1 DotProd=1 BF16=1 I8MM=1
-
-neon_bf16_dot   53.1 GFLOPS
-neon_i8_dot    275.3 GOPS
-neon_i8_mma    264.3 GOPS
-
-read            15.6 GB/s
-write           26.0 GB/s
-copy            46.8 GB/s
-```
-
-复现命令：
+以下为单次运行示例：短序列每种精度先预热一次，再重复三次；matmul 和微基准各
+重复三次，长上下文只运行一次。所有实际命令均保存在本次测量记录中。
 
 ```bash
 OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
@@ -224,17 +230,22 @@ OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
   --aot build/libqwen35_aot_q8.dylib \
   --prefill-tokens 32 --decode-tokens 32
 
-./build/bin/llmcp-matmul-benchmark \
-  --m 16 --n 8192 --k 2560 --iters 5 --threads 4 --q8
+OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
+  --weights build/weights-q8.bin \
+  --aot build/libqwen35_aot_q8.dylib \
+  --prefill-tokens 1024 --decode-tokens 1024
 
-./build/bin/llmcp-microbench --seconds 1 --buffer-mb 256
+./build/bin/llmcp-matmul-benchmark \
+  --m 16 --n 8192 --k 2560 --iters 20 --threads 4 --q8
+
+./build/bin/llmcp-microbench --seconds 1 --buffer-mb 256 --threads 8
 ```
 
 注意：
 
 - 该机器在反复加载 8 GB 权重后会出现明显 page cache / 内存压力，
-  绝对值可能波动；上表用于同一时段的 bf16/Q8 对比；
-- prefill 包含 32 个 prompt token，decode 统计 32 个生成 token；
+  绝对值可能波动；本次保留全部样本并报告中位数和范围；
+- 短序列为 32/32，长序列为 1024/1024；decode 计时包括 argmax 和运行时开销；
 - 尚未做 CUDA/Metal 等 GPU 后端对比；
 - prefill/decode 的性能差异来自独立入口、attention 调度以及 GEMM/GEMV 分叉。
 
@@ -344,10 +355,10 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 
 # 单算子 matmul benchmark；--q8 走 Q8/sdot
 ./build/bin/llmcp-matmul-benchmark --m 256 --n 256 --k 256 --iters 10 --threads 4
-./build/bin/llmcp-matmul-benchmark --m 16 --n 8192 --k 2560 --iters 5 --threads 4 --q8
+./build/bin/llmcp-matmul-benchmark --m 16 --n 8192 --k 2560 --iters 20 --threads 4 --q8
 
 # CPU 指令与带宽 microbench
-./build/bin/llmcp-microbench --seconds 1 --buffer-mb 256
+./build/bin/llmcp-microbench --seconds 1 --buffer-mb 256 --threads 8
 ```
 
 ## License
