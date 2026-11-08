@@ -1,4 +1,4 @@
-//===- AllocationTracker.cpp - Check generated buffer lifetimes ------------===//
+//===- AllocationTracker.cpp - Check generated buffer lifetimes -----------===//
 //
 // Track allocations from generated IR without intercepting runtime libraries.
 //

@@ -1,4 +1,4 @@
-//===- PackedWeightsTest.cpp - Weight container tests -------------------===//
+//===- PackedWeightsTest.cpp - Weight container tests ---------------------===//
 //
 //===----------------------------------------------------------------------===//
 

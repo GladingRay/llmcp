@@ -1,4 +1,4 @@
-//===- StreamingDecoder.cpp - ByteLevel streaming output -------------------===//
+//===- StreamingDecoder.cpp - ByteLevel streaming output ------------------===//
 //
 //===----------------------------------------------------------------------===//
 

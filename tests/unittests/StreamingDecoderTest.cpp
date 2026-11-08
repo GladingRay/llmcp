@@ -1,4 +1,4 @@
-//===- StreamingDecoderTest.cpp - ByteLevel streaming tests ----------------===//
+//===- StreamingDecoderTest.cpp - ByteLevel streaming tests ---------------===//
 //
 //===----------------------------------------------------------------------===//
 

@@ -1,4 +1,4 @@
-//===- PackedWeights.h - Packed weight container format --------*- C++ -*-===//
+//===- PackedWeights.h - Packed weight container format ---------*- C++ -*-===//
 //
 //===----------------------------------------------------------------------===//
 
