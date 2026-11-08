@@ -505,6 +505,7 @@ def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
         args.mlir_opt, str(linalg),
         "--linalg-fuse-elementwise-ops",
         "--one-shot-bufferize=bufferize-function-boundaries=1",
+        "--inline", "--symbol-dce", "--buffer-deallocation",
         "--convert-linalg-to-parallel-loops", "--convert-scf-to-openmp",
         "--convert-openmp-to-llvm", "--lower-affine", "--convert-scf-to-cf",
         "--convert-cf-to-llvm", "--convert-arith-to-llvm",
@@ -518,7 +519,13 @@ def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
     ])
     run([args.mlir_translate, "--mlir-to-llvmir", str(llvm_mlir), "-o",
          str(llvm_ir)])
+    # Track only generated allocations, excluding the runner and OpenMP runtime.
+    ir = llvm_ir.read_text()
+    ir = ir.replace("@malloc(", "@llmcp_test_malloc(")
+    ir = ir.replace("@free(", "@llmcp_test_free(")
+    llvm_ir.write_text(ir)
     clang_args = [args.clang, str(llvm_ir), "-Wno-override-module",
+                  str(pathlib.Path(__file__).with_name("AllocationTracker.cpp")),
                   "-o", str(exe), f"-L{args.runner_lib_dir}",
                   "-lmlir_runner_utils",
                   "-lmlir_c_runner_utils", "-L/opt/homebrew/opt/libomp/lib",
@@ -548,6 +555,57 @@ def compile_and_run(args, case: str, mlir: str, ref: torch.Tensor, tolerance):
     print(f"{case}: OK ({len(actual)} values)")
 
 
+def emit_buffer_lifetimes():
+    return """
+memref.global "private" constant @input : memref<2x4xbf16> = dense<1.0>
+memref.global "private" @output : memref<2x4xbf16> = dense<0.0>
+func.func private @printF32(f32)
+func.func private @printNewline()
+func.func private @helper(%x: tensor<2x4xbf16>) -> tensor<2x4xbf16> {
+  %0 = llmcp.add %x, %x : (tensor<2x4xbf16>, tensor<2x4xbf16>) -> tensor<2x4xbf16>
+  return %0 : tensor<2x4xbf16>
+}
+func.func @entry(%input: memref<2x4xbf16>, %output: memref<2x4xbf16>) {
+  %x = bufferization.to_tensor %input restrict : memref<2x4xbf16> to tensor<2x4xbf16>
+  %hidden = func.call @helper(%x) : (tensor<2x4xbf16>) -> tensor<2x4xbf16>
+  %result = func.call @helper(%hidden) : (tensor<2x4xbf16>) -> tensor<2x4xbf16>
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c4 = arith.constant 4 : index
+  scf.for %i = %c0 to %c2 step %c1 {
+    scf.for %j = %c0 to %c4 step %c1 {
+      %v = tensor.extract %result[%i, %j] : tensor<2x4xbf16>
+      memref.store %v, %output[%i, %j] : memref<2x4xbf16>
+    }
+  }
+  return
+}
+func.func @main() -> i32 {
+  %input = memref.get_global @input : memref<2x4xbf16>
+  %output = memref.get_global @output : memref<2x4xbf16>
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c4 = arith.constant 4 : index
+  %c32 = arith.constant 32 : index
+  scf.for %iteration = %c0 to %c32 step %c1 {
+    func.call @entry(%input, %output) : (memref<2x4xbf16>, memref<2x4xbf16>) -> ()
+  }
+  scf.for %i = %c0 to %c2 step %c1 {
+    scf.for %j = %c0 to %c4 step %c1 {
+      %v = memref.load %output[%i, %j] : memref<2x4xbf16>
+      %f = arith.extf %v : bf16 to f32
+      func.call @printF32(%f) : (f32) -> ()
+      func.call @printNewline() : () -> ()
+    }
+  }
+  %ret = arith.constant 0 : i32
+  return %ret : i32
+}
+"""
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--llmcp-opt", required=True)
@@ -560,6 +618,10 @@ def main():
 
     torch.manual_seed(0)
     bf16 = torch.bfloat16
+
+    # Repeated entries must release helper results and preserve borrowed buffers.
+    compile_and_run(args, "buffer_lifetimes", emit_buffer_lifetimes(),
+                    torch.full((8,), 4.0), (0, 0))
 
 #linear
     x = torch.randn(2, 4).to(bf16)

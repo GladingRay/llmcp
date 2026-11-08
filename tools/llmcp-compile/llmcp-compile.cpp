@@ -169,6 +169,13 @@ int main(int argc, char **argv) {
                   {linalg,
                    "--linalg-fuse-elementwise-ops",
                    "--one-shot-bufferize=bufferize-function-boundaries=1",
+                   // Inline before deallocation so buffers returned by helpers
+                   // are released by their final consumer in the AOT entry.
+                   // LLVM 20's ownership-based pipeline rejects call_intrinsic;
+                   // the legacy pass supports our structured, inlined kernels.
+                   "--inline",
+                   "--symbol-dce",
+                   "--buffer-deallocation",
                    "--convert-linalg-to-parallel-loops",
                    "--convert-scf-to-openmp",
                    "--convert-openmp-to-llvm",

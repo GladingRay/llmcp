@@ -29,6 +29,7 @@ config + safetensors ──► llmcp dialect ──► linalg/vector/LLVM ──
 - [技术路线与架构设计](docs/design.md)：分层架构、方言、pass pipeline、内核、里程碑、风险、ADR
 - [模型规格与编译契约](docs/model-spec.md)：Qwen3.5-4B 的形状、公式、状态布局、数值语义
 - [真实权重数值对齐](docs/real-alignment.md)：单 token、AOT、Q8 对齐结果
+- [AOT 缓冲区生命周期](docs/aot-buffer-lifetimes.md)：中间分配释放与回归验证
 - [FlashAttention-2](docs/flash-attention.md)：full attention 的 online softmax + key tiling
 - [算子并行化](docs/parallelization.md)：OpenMP、RMSNorm 合并、elementwise 融合、benchmark
 - [INT8 量化](docs/int8-quantization.md)：Q8_0/Q8_1、llmcp-pack、sdot、真实模型接入
