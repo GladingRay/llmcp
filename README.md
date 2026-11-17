@@ -173,6 +173,8 @@ llmcp_model_decode   -> llmcp_forward_decode
 - decode：
   - attention 按 head 并行，query loop 只有 1 次；
   - linear 使用 GEMV：column 并行，去掉 row loop。
+  - Q8 SDOT 沿 N 维每 4 列分块。每个 K 量化 block 内展开四列点积，共用
+    activation 向量和 scale。尾部不足 4 列时逐列计算。
 
 对应的 arena：
 

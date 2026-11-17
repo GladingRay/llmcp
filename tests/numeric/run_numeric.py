@@ -67,14 +67,17 @@ def print_tensor(name: str, rows: int, columns: int, element_type: str):
     return lines
 
 
-def wrap(body, globals_, rows: int, columns: int, element_type: str) -> str:
+def wrap(body, globals_, rows: int, columns: int, element_type: str,
+         execution_mode=None) -> str:
     lines = [
         "func.func private @printF32(f32)",
         "func.func private @printNewline()",
         "",
     ]
     lines += globals_
-    lines += ["", "func.func @main() -> i32 {"]
+    attributes = (f' attributes {{llmcp.execution_mode = "{execution_mode}"}}'
+                  if execution_mode else "")
+    lines += ["", f"func.func @main() -> i32{attributes} {{"]
     lines += body
     lines += print_tensor("0", rows, columns, element_type)
     lines += ["  %ret = arith.constant 0 : i32", "  return %ret : i32", "}", ""]
@@ -136,7 +139,7 @@ def q8_0_dequant(matrix):
     return values
 
 
-def emit_linear_q8(x, w) -> str:
+def emit_linear_q8(x, w, execution_mode=None) -> str:
     m, k = len(x), len(x[0])
     n = len(w)
     encoded = q8_0_bytes(w)
@@ -153,7 +156,7 @@ def emit_linear_q8(x, w) -> str:
         f'memref.global "private" constant @w : '
         f'memref<{n}x{width}xi8> = dense<{dense_2d_int(encoded_rows)}>'
     ]
-    return wrap(body, globals_, m, n, "bf16")
+    return wrap(body, globals_, m, n, "bf16", execution_mode)
 
 
 def emit_lm_head_q8(hidden, table) -> str:
@@ -655,6 +658,17 @@ def main():
     wq = torch.tensor(q8_0_dequant(w.tolist()), dtype=torch.float32).reshape(w.shape)
     ref = (xq @ wq.T).to(bf16).float().flatten()
     compile_and_run(args, "linear_q8", emit_linear_q8(x.tolist(), w.tolist()),
+                    ref, (1e-2, 2e-3))
+
+    # Two full N tiles and a three-column tail, with distinct K block scales.
+    rng = torch.Generator().manual_seed(0)
+    x = torch.randn(1, 96, generator=rng).to(bf16)
+    w = torch.randn(11, 96, generator=rng).to(bf16)
+    xq = torch.tensor(q8_0_dequant(x.tolist())).reshape(x.shape)
+    wq = torch.tensor(q8_0_dequant(w.tolist())).reshape(w.shape)
+    ref = (xq @ wq.T).to(bf16).float().flatten()
+    compile_and_run(args, "linear_q8_decode",
+                    emit_linear_q8(x.tolist(), w.tolist(), "decode"),
                     ref, (1e-2, 2e-3))
 
     # Q8 prefill path (blocked kernel) with four-row register tiles.

@@ -20,6 +20,7 @@
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 using namespace mlir;
@@ -52,10 +53,11 @@ struct MatmulLoops {
 /// parallelize output columns.
 MatmulLoops createMatmulLoops(PatternRewriter &rewriter, Location loc,
                               Value zero, Value rows, Value one,
-                              Value columns, Value step, bool decode) {
+                              Value columns, Value step, bool decode,
+                              Value columnStart = {}) {
   MatmulLoops loops;
-  loops.columnLoop = rewriter.create<scf::ForOp>(loc, zero, columns, step,
-                                                ValueRange{});
+  loops.columnLoop = rewriter.create<scf::ForOp>(
+      loc, columnStart ? columnStart : zero, columns, step, ValueRange{});
   loops.columnLoop->setAttr("llmcp.parallel",
                             UnitAttr::get(rewriter.getContext()));
   rewriter.setInsertionPointToStart(loops.columnLoop.getBody());
@@ -209,117 +211,142 @@ Value emitQ8Matmul(PatternRewriter &rewriter, Location loc, Value input,
   rewriter.setInsertionPointAfter(quantBlockLoop);
   rewriter.setInsertionPointAfter(rowQuantLoop);
 
-  // Q8_0 x Q8_1 dot product.
-  MatmulLoops loops =
-      createMatmulLoops(rewriter, loc, zero, rows, one, channelsValue, one, decode);
-  Value row = loops.row;
-  Value column = loops.column;
-  Value accInit =
-      rewriter.create<arith::ConstantOp>(loc, rewriter.getF32FloatAttr(0.0f));
-  auto blockLoop = rewriter.create<scf::ForOp>(loc, zero, blockCount, one,
-                                               ValueRange{accInit});
-  rewriter.setInsertionPointToStart(blockLoop.getBody());
-  Value block = blockLoop.getInductionVar();
-  Value dotBlockBase = rewriter.create<arith::MulIOp>(loc, block, blockSize);
-  Value scaleOffset = rewriter.create<arith::MulIOp>(
-      loc, block, rewriter.create<arith::ConstantIndexOp>(loc, 2));
-  Value dataOffset = rewriter.create<arith::MulIOp>(
-      loc, blockCount, rewriter.create<arith::ConstantIndexOp>(loc, 2));
-  Value lowByte = rewriter.create<memref::LoadOp>(
-      loc, weight, ValueRange{column, scaleOffset});
-  Value highOffset = rewriter.create<arith::AddIOp>(loc, scaleOffset, one);
-  Value highByte = rewriter.create<memref::LoadOp>(
-      loc, weight, ValueRange{column, highOffset});
-  Value low = rewriter.create<arith::ExtUIOp>(loc, i16, lowByte);
-  Value high = rewriter.create<arith::ExtUIOp>(loc, i16, highByte);
-  Value shift =
-      rewriter.create<arith::ConstantOp>(loc, rewriter.getI16IntegerAttr(8));
-  Value shifted = rewriter.create<arith::ShLIOp>(loc, high, shift);
-  Value bits = rewriter.create<arith::OrIOp>(loc, low, shifted);
-  Value half =
-      rewriter.create<arith::BitcastOp>(loc, rewriter.getF16Type(), bits);
-  Value weightScale = rewriter.create<arith::ExtFOp>(loc, f32, half);
+  // Q8_0 x Q8_1 dot product. Each output column keeps its own accumulator
+  // across K blocks. An SDOT decode tile shares activation loads across columns.
+  Value two = rewriter.create<arith::ConstantIndexOp>(loc, 2);
+  Value dataOffset = rewriter.create<arith::MulIOp>(loc, blockCount, two);
+  auto emitColumns = [&](Value start, Value end, int64_t width) {
+    Value step = width == 1
+                     ? one
+                     : rewriter.create<arith::ConstantIndexOp>(loc, width);
+    MatmulLoops loops =
+        createMatmulLoops(rewriter, loc, zero, rows, one, end, step, decode, start);
+    Value row = loops.row;
+    SmallVector<Value, 4> columns{loops.column};
+    for (int64_t lane = 1; lane < width; ++lane)
+      columns.push_back(rewriter.create<arith::AddIOp>(
+          loc, loops.column,
+          rewriter.create<arith::ConstantIndexOp>(loc, lane)));
 
-  Value weightedDot;
+    SmallVector<Value, 4> init(width, zeroF);
+    auto blockLoop =
+        rewriter.create<scf::ForOp>(loc, zero, blockCount, one, ValueRange(init));
+    rewriter.setInsertionPointToStart(blockLoop.getBody());
+    Value block = blockLoop.getInductionVar();
+    Value dotBlockBase = rewriter.create<arith::MulIOp>(loc, block, blockSize);
+    Value scaleOffset = rewriter.create<arith::MulIOp>(loc, block, two);
+    Value highOffset = rewriter.create<arith::AddIOp>(loc, scaleOffset, one);
+    Value wBase = rewriter.create<arith::AddIOp>(loc, dataOffset, dotBlockBase);
+    Value activationScale =
+        rewriter.create<memref::LoadOp>(loc, scales, ValueRange{row, block});
 #if defined(__aarch64__) && defined(LLMCP_ENABLE_SDOT)
-  auto i8x16 = VectorType::get({16}, i8);
-  auto i32x4 = VectorType::get({4}, i32);
-  AffineMap rowMap = AffineMap::get(2, 0, {rewriter.getAffineDimExpr(1)},
-                                    rewriter.getContext());
-  SmallVector<bool> inBounds = {true};
-  Value zeroVec = rewriter.create<arith::ConstantOp>(
-      loc, DenseElementsAttr::get(i32x4, rewriter.getI32IntegerAttr(0)));
-  Value aVec0 = rewriter.create<vector::TransferReadOp>(
-      loc, i8x16, quantized, ValueRange{row, dotBlockBase}, rowMap, inBounds);
-  Value aVec1 = rewriter.create<vector::TransferReadOp>(
-      loc, i8x16, quantized,
-      ValueRange{row, rewriter.create<arith::AddIOp>(
-                          loc, dotBlockBase,
-                          rewriter.create<arith::ConstantIndexOp>(loc, 16))},
-      rowMap, inBounds);
-  Value wBase = rewriter.create<arith::AddIOp>(loc, dataOffset, dotBlockBase);
-  Value wVec0 = rewriter.create<vector::TransferReadOp>(
-      loc, i8x16, weight, ValueRange{column, wBase}, rowMap, inBounds);
-  Value wVec1 = rewriter.create<vector::TransferReadOp>(
-      loc, i8x16, weight,
-      ValueRange{column, rewriter.create<arith::AddIOp>(
-                             loc, wBase,
-                             rewriter.create<arith::ConstantIndexOp>(loc, 16))},
-      rowMap, inBounds);
-  auto sdot0 = rewriter.create<LLVM::CallIntrinsicOp>(
-      loc, i32x4,
-      StringAttr::get(rewriter.getContext(), "llvm.aarch64.neon.sdot"),
-      ValueRange{zeroVec, aVec0, wVec0});
-  auto sdot1 = rewriter.create<LLVM::CallIntrinsicOp>(
-      loc, i32x4,
-      StringAttr::get(rewriter.getContext(), "llvm.aarch64.neon.sdot"),
-      ValueRange{sdot0.getResult(0), aVec1, wVec1});
-  Value dot = rewriter.create<vector::ReductionOp>(
-      loc, vector::CombiningKind::ADD, sdot1.getResult(0));
-#else
-  Value dotInit =
-      rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
-  auto dotLoop = rewriter.create<scf::ForOp>(loc, zero, blockSize, one,
-                                             ValueRange{dotInit});
-  rewriter.setInsertionPointToStart(dotLoop.getBody());
-  Value dotIndex = dotLoop.getInductionVar();
-  Value dotSource = rewriter.create<arith::AddIOp>(loc, dotBlockBase, dotIndex);
-  Value dotAByte = rewriter.create<memref::LoadOp>(
-      loc, quantized, ValueRange{row, dotSource});
-  Value dotAInt = rewriter.create<arith::ExtSIOp>(loc, i32, dotAByte);
-  Value weightIndex = rewriter.create<arith::AddIOp>(
-      loc, dataOffset,
-      rewriter.create<arith::AddIOp>(loc, dotBlockBase, dotIndex));
-  Value wByte = rewriter.create<memref::LoadOp>(
-      loc, weight, ValueRange{column, weightIndex});
-  Value wInt = rewriter.create<arith::ExtSIOp>(loc, i32, wByte);
-  Value product = rewriter.create<arith::MulIOp>(loc, dotAInt, wInt);
-  Value dotSum =
-      rewriter.create<arith::AddIOp>(loc, dotLoop.getRegionIterArg(0), product);
-  rewriter.create<scf::YieldOp>(loc, dotSum);
-  rewriter.setInsertionPointAfter(dotLoop);
-  Value dot = dotLoop.getResult(0);
+    auto i8x16 = VectorType::get({16}, i8);
+    auto i32x4 = VectorType::get({4}, i32);
+    AffineMap rowMap = AffineMap::get(2, 0, {rewriter.getAffineDimExpr(1)},
+                                     rewriter.getContext());
+    SmallVector<bool> inBounds = {true};
+    Value zeroVec = rewriter.create<arith::ConstantOp>(
+        loc, DenseElementsAttr::get(i32x4, rewriter.getI32IntegerAttr(0)));
+    Value sixteen = rewriter.create<arith::ConstantIndexOp>(loc, 16);
+    Value aNext = rewriter.create<arith::AddIOp>(loc, dotBlockBase, sixteen);
+    Value wNext = rewriter.create<arith::AddIOp>(loc, wBase, sixteen);
+    Value aVec0 = rewriter.create<vector::TransferReadOp>(
+        loc, i8x16, quantized, ValueRange{row, dotBlockBase}, rowMap, inBounds);
+    Value aVec1 = rewriter.create<vector::TransferReadOp>(
+        loc, i8x16, quantized, ValueRange{row, aNext}, rowMap, inBounds);
 #endif
 
-  Value activationScale =
-      rewriter.create<memref::LoadOp>(loc, scales, ValueRange{row, block});
-  Value dotF = rewriter.create<arith::SIToFPOp>(loc, f32, dot);
-  Value contribution = rewriter.create<arith::MulFOp>(
-      loc, dotF,
-      rewriter.create<arith::MulFOp>(loc, activationScale, weightScale));
-  Value acc = rewriter.create<arith::AddFOp>(loc, blockLoop.getRegionIterArg(0),
-                                             contribution);
-  rewriter.create<scf::YieldOp>(loc, acc);
-  rewriter.setInsertionPointAfter(blockLoop);
+    // Unroll the N tile when building the IR, leaving one K loop.
+    SmallVector<Value, 4> next;
+    for (auto [column, acc] :
+         llvm::zip_equal(columns, blockLoop.getRegionIterArgs())) {
+      Value lowByte = rewriter.create<memref::LoadOp>(
+          loc, weight, ValueRange{column, scaleOffset});
+      Value highByte = rewriter.create<memref::LoadOp>(
+          loc, weight, ValueRange{column, highOffset});
+      Value low = rewriter.create<arith::ExtUIOp>(loc, i16, lowByte);
+      Value high = rewriter.create<arith::ExtUIOp>(loc, i16, highByte);
+      Value shift =
+          rewriter.create<arith::ConstantOp>(loc, rewriter.getI16IntegerAttr(8));
+      Value shifted = rewriter.create<arith::ShLIOp>(loc, high, shift);
+      Value bits = rewriter.create<arith::OrIOp>(loc, low, shifted);
+      Value half =
+          rewriter.create<arith::BitcastOp>(loc, rewriter.getF16Type(), bits);
+      Value weightScale = rewriter.create<arith::ExtFOp>(loc, f32, half);
 
-  Value result = blockLoop.getResult(0);
-  result = applyActivation(rewriter, loc, result, activation);
-  if (resultType.getElementType().isBF16())
-    result =
-        rewriter.create<arith::TruncFOp>(loc, rewriter.getBF16Type(), result);
-  rewriter.create<memref::StoreOp>(loc, result, output,
-                                   ValueRange{row, column});
-  rewriter.setInsertionPointAfter(loops.columnLoop);
+#if defined(__aarch64__) && defined(LLMCP_ENABLE_SDOT)
+      Value wVec0 = rewriter.create<vector::TransferReadOp>(
+          loc, i8x16, weight, ValueRange{column, wBase}, rowMap, inBounds);
+      Value wVec1 = rewriter.create<vector::TransferReadOp>(
+          loc, i8x16, weight, ValueRange{column, wNext}, rowMap, inBounds);
+      auto sdot0 = rewriter.create<LLVM::CallIntrinsicOp>(
+          loc, i32x4,
+          StringAttr::get(rewriter.getContext(), "llvm.aarch64.neon.sdot"),
+          ValueRange{zeroVec, aVec0, wVec0});
+      auto sdot1 = rewriter.create<LLVM::CallIntrinsicOp>(
+          loc, i32x4,
+          StringAttr::get(rewriter.getContext(), "llvm.aarch64.neon.sdot"),
+          ValueRange{sdot0.getResult(0), aVec1, wVec1});
+      Value dot = rewriter.create<vector::ReductionOp>(
+          loc, vector::CombiningKind::ADD, sdot1.getResult(0));
+#else
+      Value dotInit =
+          rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
+      auto dotLoop = rewriter.create<scf::ForOp>(loc, zero, blockSize, one,
+                                                ValueRange{dotInit});
+      rewriter.setInsertionPointToStart(dotLoop.getBody());
+      Value dotIndex = dotLoop.getInductionVar();
+      Value dotSource =
+          rewriter.create<arith::AddIOp>(loc, dotBlockBase, dotIndex);
+      Value dotAByte = rewriter.create<memref::LoadOp>(
+          loc, quantized, ValueRange{row, dotSource});
+      Value dotAInt = rewriter.create<arith::ExtSIOp>(loc, i32, dotAByte);
+      Value weightIndex = rewriter.create<arith::AddIOp>(loc, wBase, dotIndex);
+      Value wByte = rewriter.create<memref::LoadOp>(
+          loc, weight, ValueRange{column, weightIndex});
+      Value wInt = rewriter.create<arith::ExtSIOp>(loc, i32, wByte);
+      Value product = rewriter.create<arith::MulIOp>(loc, dotAInt, wInt);
+      Value dotSum = rewriter.create<arith::AddIOp>(
+          loc, dotLoop.getRegionIterArg(0), product);
+      rewriter.create<scf::YieldOp>(loc, dotSum);
+      rewriter.setInsertionPointAfter(dotLoop);
+      Value dot = dotLoop.getResult(0);
+#endif
+      Value dotF = rewriter.create<arith::SIToFPOp>(loc, f32, dot);
+      Value contribution = rewriter.create<arith::MulFOp>(
+          loc, dotF,
+          rewriter.create<arith::MulFOp>(loc, activationScale, weightScale));
+      next.push_back(rewriter.create<arith::AddFOp>(loc, acc, contribution));
+    }
+    rewriter.create<scf::YieldOp>(loc, ValueRange(next));
+    rewriter.setInsertionPointAfter(blockLoop);
+
+    for (auto [column, acc] : llvm::zip_equal(columns, blockLoop.getResults())) {
+      Value result = applyActivation(rewriter, loc, acc, activation);
+      if (resultType.getElementType().isBF16())
+        result =
+            rewriter.create<arith::TruncFOp>(loc, rewriter.getBF16Type(), result);
+      rewriter.create<memref::StoreOp>(loc, result, output,
+                                      ValueRange{row, column});
+    }
+    rewriter.setInsertionPointAfter(loops.columnLoop);
+  };
+
+  int64_t columnTile = 1;
+#if defined(__aarch64__) && defined(LLMCP_ENABLE_SDOT)
+  if (decode && channels >= 4)
+    columnTile = 4;
+#endif
+  if (columnTile > 1) {
+    int64_t tiledChannels = channels - channels % columnTile;
+    Value tiledEnd = rewriter.create<arith::ConstantIndexOp>(loc, tiledChannels);
+    emitColumns(zero, tiledEnd, columnTile);
+    if (tiledChannels != channels)
+      emitColumns(tiledEnd, channelsValue, 1);
+  } else {
+    emitColumns(zero, channelsValue, 1);
+  }
+
   return rewriter.create<bufferization::ToTensorOp>(loc, resultType, output,
                                                     true);
 }
