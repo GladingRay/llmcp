@@ -193,7 +193,8 @@ int main(int argc, char **argv) {
   }
 
   std::vector<std::string> mlirArgs = {
-      inputForLowering, "--one-shot-bufferize=bufferize-function-boundaries=1"};
+      inputForLowering, "--one-shot-bufferize=bufferize-function-boundaries=1",
+      "--buffer-deallocation"};
   if (noParallel)
     mlirArgs.push_back("--convert-linalg-to-loops");
   else {

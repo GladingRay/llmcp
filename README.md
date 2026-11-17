@@ -204,6 +204,9 @@ total:   192.52 s
 1024³ bf16 有一次明显较慢的样本，已保留在范围内，未作剔除；因此不应把单次吞吐
 视为稳定基线。
 
+1024³ Q8_0 打包内核及同线程数 SDOT 峰值实测见
+[matmul-benchmark.md](docs/matmul-benchmark.md#8-q8_0-sdot-的-1024-方阵)。
+
 CPU 指令与内存带宽（`llmcp-microbench`）：三次独立运行的中位数和范围。
 compute 单线程，每项预热后计时至少 1 秒；带宽使用 8 线程、256 MiB 缓冲区单次遍历，
 包含线程创建和回收开销，copy 按读写合计流量计算。硬件特性为
@@ -217,6 +220,11 @@ compute 单线程，每项预热后计时至少 1 秒；带宽使用 8 线程、
 | read | 45.62 GB/s | 25.62–46.27 GB/s |
 | write | 56.34 GB/s | 45.77–60.65 GB/s |
 | copy | 55.29 GB/s | 46.15–69.06 GB/s |
+
+表中的 `neon_i8_dot` 是八条累加链的历史测量。当前基准使用 16 条独立累加链，
+每轮展开到 64 条寄存器间 SDOT，每条指令计 16 次乘加，即 32 次整数运算。
+`--sdot-threads N` 仅测 SDOT，N 个线程预热后同步开始，用 `32 × 总指令数`
+除以共同的墙钟时间计算吞吐量。测量 Q8 GEMM 峰值占比时，使用相同线程数并重复采样。
 
 以下为单次运行示例：短序列每种精度先预热一次，再重复三次；matmul 和微基准各
 重复三次，长上下文只运行一次。所有实际命令均保存在本次测量记录中。
@@ -361,6 +369,9 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
 
 # CPU 指令与带宽 microbench
 ./build/bin/llmcp-microbench --seconds 1 --buffer-mb 256 --threads 8
+
+# SDOT 峰值 microbench，四个计算线程
+./build/bin/llmcp-microbench --seconds 1 --sdot-threads 4
 ```
 
 ## License

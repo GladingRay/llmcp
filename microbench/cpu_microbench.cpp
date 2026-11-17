@@ -10,10 +10,13 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <mutex>
+#include <numeric>
 #include <string>
 #include <sys/sysctl.h>
 #include <thread>
@@ -36,6 +39,10 @@ cl::opt<int64_t> bufferMB("buffer-mb", cl::desc("Bandwidth buffer in MiB"),
                           cl::init(256));
 cl::opt<int64_t> threads("threads", cl::desc("Bandwidth thread count"),
                          cl::init(0));
+cl::opt<unsigned>
+    sdotThreads("sdot-threads",
+                cl::desc("Run only SDOT with this many compute workers"),
+                cl::init(0));
 
 int sysctlInt(const char *name) {
   int value = 0;
@@ -194,25 +201,107 @@ __attribute__((target("i8mm"))) int32_t neonI8MMA(uint64_t iterations) {
 }
 
 #if defined(__aarch64__) && defined(LLMCP_ENABLE_SDOT)
-__attribute__((target("dotprod"))) int32_t neonInt8(uint64_t iterations) {
-  int8x16_t a = vdupq_n_s8(1);
-  int8x16_t b = vdupq_n_s8(1);
-  int32x4_t c0 = vdupq_n_s32(0), c1 = c0, c2 = c0, c3 = c0;
-  int32x4_t c4 = c0, c5 = c0, c6 = c0, c7 = c0;
-  for (uint64_t i = 0; i < iterations; ++i) {
-    c0 = vdotq_s32(c0, a, b);
-    c1 = vdotq_s32(c1, a, b);
-    c2 = vdotq_s32(c2, a, b);
-    c3 = vdotq_s32(c3, a, b);
-    c4 = vdotq_s32(c4, a, b);
-    c5 = vdotq_s32(c5, a, b);
-    c6 = vdotq_s32(c6, a, b);
-    c7 = vdotq_s32(c7, a, b);
+constexpr uint64_t kSdotAccumulators = 16;
+constexpr uint64_t kSdotUnroll = 4;
+constexpr uint64_t kSdotInstructions = kSdotAccumulators * kSdotUnroll;
+
+__attribute__((target("dotprod"))) void neonInt8(uint64_t iterations) {
+  // Keep enough independent chains to cover SDOT latency at peak issue rate.
+  // Assembly preserves those chains and keeps the timed loop free of loads.
+  asm volatile("movi v24.16b, #1\n\t"
+               "movi v25.16b, #3\n\t"
+               "movi v0.4s, #0\n\t"
+               "movi v1.4s, #0\n\t"
+               "movi v2.4s, #0\n\t"
+               "movi v3.4s, #0\n\t"
+               "movi v4.4s, #0\n\t"
+               "movi v5.4s, #0\n\t"
+               "movi v6.4s, #0\n\t"
+               "movi v7.4s, #0\n\t"
+               "movi v16.4s, #0\n\t"
+               "movi v17.4s, #0\n\t"
+               "movi v18.4s, #0\n\t"
+               "movi v19.4s, #0\n\t"
+               "movi v20.4s, #0\n\t"
+               "movi v21.4s, #0\n\t"
+               "movi v22.4s, #0\n\t"
+               "movi v23.4s, #0\n\t"
+               "1:\n\t"
+               ".rept %c[unroll]\n\t"
+               "sdot v0.4s, v24.16b, v25.16b\n\t"
+               "sdot v1.4s, v24.16b, v25.16b\n\t"
+               "sdot v2.4s, v24.16b, v25.16b\n\t"
+               "sdot v3.4s, v24.16b, v25.16b\n\t"
+               "sdot v4.4s, v24.16b, v25.16b\n\t"
+               "sdot v5.4s, v24.16b, v25.16b\n\t"
+               "sdot v6.4s, v24.16b, v25.16b\n\t"
+               "sdot v7.4s, v24.16b, v25.16b\n\t"
+               "sdot v16.4s, v24.16b, v25.16b\n\t"
+               "sdot v17.4s, v24.16b, v25.16b\n\t"
+               "sdot v18.4s, v24.16b, v25.16b\n\t"
+               "sdot v19.4s, v24.16b, v25.16b\n\t"
+               "sdot v20.4s, v24.16b, v25.16b\n\t"
+               "sdot v21.4s, v24.16b, v25.16b\n\t"
+               "sdot v22.4s, v24.16b, v25.16b\n\t"
+               "sdot v23.4s, v24.16b, v25.16b\n\t"
+               ".endr\n\t"
+               "subs %[iterations], %[iterations], #1\n\t"
+               "b.ne 1b"
+               : [iterations] "+r"(iterations)
+               : [unroll] "i"(kSdotUnroll)
+               : "cc", "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v16",
+                 "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25");
+}
+
+double measureSdot(unsigned workerCount, uint64_t &instructions) {
+  if (workerCount == 1)
+    return measure(
+        "neon_i8_dot",
+        [](uint64_t iterations) {
+          neonInt8(iterations);
+          return iterations * kSdotInstructions;
+        },
+        instructions);
+
+  using Clock = std::chrono::steady_clock;
+  Clock::time_point start;
+  const std::chrono::duration<double> duration(secondsPerBench.getValue());
+  std::mutex mutex;
+  std::condition_variable condition;
+  unsigned ready = 0;
+  bool started = false;
+  std::vector<uint64_t> counts(workerCount);
+  std::vector<std::thread> workers;
+  workers.reserve(workerCount);
+  for (unsigned id = 0; id < workerCount; ++id) {
+    workers.emplace_back([&, id] {
+      neonInt8(1024);
+      {
+        std::unique_lock<std::mutex> lock(mutex);
+        if (++ready == workerCount)
+          condition.notify_all();
+        condition.wait(lock, [&] { return started; });
+      }
+      constexpr uint64_t kChunkIterations = 100000;
+      uint64_t count = 0;
+      do {
+        neonInt8(kChunkIterations);
+        count += kChunkIterations * kSdotInstructions;
+      } while (Clock::now() - start < duration);
+      counts[id] = count;
+    });
   }
-  asm volatile(""
-               : "+w"(c0), "+w"(c1), "+w"(c2), "+w"(c3), "+w"(c4), "+w"(c5),
-                 "+w"(c6), "+w"(c7));
-  return vgetq_lane_s32(vaddq_s32(vaddq_s32(c0, c1), vaddq_s32(c2, c3)), 0);
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    condition.wait(lock, [&] { return ready == workerCount; });
+    start = Clock::now();
+    started = true;
+  }
+  condition.notify_all();
+  for (auto &worker : workers)
+    worker.join();
+  instructions = std::accumulate(counts.begin(), counts.end(), uint64_t{0});
+  return std::chrono::duration<double>(Clock::now() - start).count();
 }
 #endif
 #endif
@@ -321,6 +410,19 @@ int main(int argc, char **argv) {
                       ? "1"
                       : "0");
   std::cout << "\n";
+  if (sdotThreads > 0) {
+#if defined(__aarch64__) && defined(LLMCP_ENABLE_SDOT)
+    if (sysctlInt("hw.optional.arm.FEAT_DotProd")) {
+      std::cout << "sdot_threads: " << sdotThreads << "\n";
+      uint64_t instructions = 0;
+      double elapsed = measureSdot(sdotThreads, instructions);
+      printRate("neon_i8_dot", instructions, elapsed, 2.0 * 16.0, "GOPS");
+      return 0;
+    }
+#endif
+    std::cerr << "SDOT microbenchmark is unavailable on this build or CPU\n";
+    return 1;
+  }
   std::cout << "bandwidth_threads: " << threadCount << "\n";
 
   std::cout << "\ncompute:\n";
@@ -370,13 +472,7 @@ int main(int argc, char **argv) {
 
 #if defined(__aarch64__) && defined(LLMCP_ENABLE_SDOT)
   if (sysctlInt("hw.optional.arm.FEAT_DotProd")) {
-    elapsed = measure(
-        "neon_i8_dot",
-        [&](uint64_t n) {
-          neonInt8(n);
-          return n * 8;
-        },
-        ops);
+    elapsed = measureSdot(1, ops);
     printRate("neon_i8_dot", ops, elapsed, 2.0 * 16.0, "GOPS");
   }
 #endif

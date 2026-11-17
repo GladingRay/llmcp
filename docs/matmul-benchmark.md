@@ -1,9 +1,8 @@
 # Qwen3.5-4B 中的 matmul shape 与 AOT 性能
 
 > 注：本文的逐 shape 表是 2026-10 的未启用 OpenMP 历史基线，保留用于分析
-> shape 分布。当前工具默认并行，并支持 bf16 blocked、Q8 4x4、BF16/SDOT
-> 特性回退；最新性能见 [README](../README.md#性能) 和
-> [parallelization.md](parallelization.md)。
+> shape 分布。当前工具默认并行。BF16 和 Q8 的历史性能见 [README](../README.md#性能)
+> 和 [parallelization.md](parallelization.md)。1024 方阵的 Q8 SDOT 数据见本文末节。
 
 ## 1. 统计口径
 
@@ -177,3 +176,50 @@ M=16, N=8192, K=2560:
 
 Q8 在大 N/K 下收益明显，主要来自权重流量减半和 sdot 吞吐。
 当前 bf16 路径仍使用 `bfdot`，Q8 路径使用 `sdot`。
+
+## 8. Q8_0 SDOT 的 1024 方阵
+
+Prefill 采用 BLIS 的缓存面板与寄存器分块，并参考 OpenBLAS Arm 内核按 K 的取数顺序
+交错打包。激活量化后直接写入 A 微面板。每个 OpenMP 任务打包并复用一个 64 列的 B
+面板，任务内遍历 32 行的 M 面板和 4×8 寄存器 tile。B 每组四列的四字节权重排列在同一个
+128 位向量中，lane SDOT 的四个输出 lane 各对应一列。每 32 个 K 元素完成一次
+整数点积和融合浮点累加，FP32 输出累加器保持在寄存器中直到 K 结束。
+[BLIS GEMM 分块](https://www.cs.utexas.edu/~flame/pubs/blis3_ipdps14.pdf)
+· [OpenBLAS Arm 交错打包](https://github.com/OpenMathLib/OpenBLAS/pull/6145)
+
+打包内核用于支持 SDOT、M≥16、N≥64、N 为 8 的倍数且权重 K 维连续的矩阵。
+动态 M 在运行时分派。权重仍使用现有 Q8_0 布局，逐 32 元素的 scale 相乘后用 FMA
+累加，相比乘法和加法分别舍入的路径可以有末位舍入差异。
+
+使用 `2 × M × N × K / 秒数` 计算等效 GOPS。GEMM 计时包括动态激活量化、权重
+面板打包、缩放、累加和输出 copy。指令基准预热后执行 16 条独立的 SDOT 累加链，
+每条 SDOT 计 32 次整数运算。按相同线程数采样并比较两者的中位数。
+
+```bash
+./build/bin/llmcp-matmul-benchmark --q8 -m 1024 -n 1024 -k 1024 --iters 80 --no-parallel
+./build/bin/llmcp-matmul-benchmark --q8 -m 1024 -n 1024 -k 1024 --iters 80 --threads 4
+./build/bin/llmcp-matmul-benchmark --q8 -m 1024 -n 1024 -k 1024 --iters 80 --threads 8
+./build/bin/llmcp-microbench --sdot-threads 1 --seconds 0.5
+./build/bin/llmcp-microbench --sdot-threads 4 --seconds 0.5
+./build/bin/llmcp-microbench --sdot-threads 8 --seconds 0.5
+```
+
+Apple M2、LLVM 20.1.8，三次独立运行的中位数。基线使用 `c6158b7` 的
+`llmcp-opt`，两组 GEMM 共用带缓冲区释放的 benchmark 计时流程。
+
+| 线程 | 基线 GOPS | 打包内核 GOPS | SDOT 峰值 GOPS | 加速 | 峰值占比 |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 131.6 | 288.3 | 434.1 | 2.19× | 66.4% |
+| 4 | 453.9 | 921.6 | 1609.9 | 2.03× | 57.2% |
+| 8 | 491.6 | 1072.8 | 2171.9 | 2.18× | 49.4% |
+
+对每个四列向量和 32 个 K 元素，内核发出 8 条 SDOT，以及转换整数点积的
+`SCVTF`、相乘激活与权重尺度的 `FMUL` 和累加结果的 `FMLA`。如果四种指令
+共享 SIMD 发射端口，仅用这个指令组合估算的吞吐上限为 `8 / 11 ≈ 72.7%`。
+这个估算沿用 Firestorm 的端口实测，另外还有打包、加载和写回开销。
+[Firestorm SIMD 指令测量](https://dougallj.github.io/applecpu/firestorm-simd.html)
+
+在 M2 上另用寄存器循环做了指令混合对照。每轮执行 64 条 lane SDOT，以及 8 条
+`SCVTF`、8 条 `FMUL` 和 8 条 `FMLA`，循环内无访存，只计 SDOT 运算量。
+单线程三次交替测量的中位数为 288.3 GOPS，约为同轮纯 lane SDOT 的 65.6%
+（439.8 GOPS）。这是该指令调度的实测值。

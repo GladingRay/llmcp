@@ -683,6 +683,25 @@ def main():
                     emit_linear_q8(x.tolist(), w.tolist()), ref,
                     (1e-2, 2e-3))
 
+    # Exercise partial row tiles and column panels with distinct K block
+    # scales. Power-of-two scales make the quantized operands exact.
+    m, n, k = 19, 136, 288
+    blocks = k // 32
+
+    def exact_q8_operand(rows):
+        values = torch.randint(-63, 64, (rows, blocks, 32), generator=rng)
+        values[:, :, 0] = 127
+        exponents = torch.randint(-6, -4, (rows, blocks, 1), generator=rng)
+        return torch.ldexp(values.float(), exponents).reshape(rows, k).to(bf16)
+
+    x = exact_q8_operand(m)
+    w = exact_q8_operand(n)
+    x[0, -32:] = 0
+    ref = (x.float() @ w.float().T).to(bf16).float().flatten()
+    compile_and_run(args, "linear_q8_prefill_boundaries",
+                    emit_linear_q8(x.tolist(), w.tolist(), "prefill"), ref,
+                    (1e-5, 1e-6))
+
 #rms_norm
     x = torch.randn(2, 8).to(bf16)
     w = torch.randn(8).to(bf16)
