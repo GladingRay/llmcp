@@ -119,11 +119,13 @@ Q8 权重：
 
 ## 性能
 
-以下数据为 **2026-11-08** 在 Apple M2（24 GiB 内存、8 个逻辑核）上的实测。
+以下数据为 **2026-11-17** 在 Apple M2（24 GiB 内存、8 个逻辑核）上使用
+`dd4c2da` 的实测。
 macOS 26.6.2，Release 构建，LLVM 20.1.8，AOT 使用 `-O2 -mcpu=native`，bfdot/sdot 均启用。
 测试串行执行；短序列每种精度先完整预热一次，再用新进程测量三次，表中为中位数。
 未主动清除系统 page cache，因此这些是预热后的结果，不代表冷启动性能。
-原始输出、命令、样本时间和二进制 SHA-256 见 [本次测量记录](docs/benchmarks/2026-11-08.json)。
+原始输出、命令和二进制 SHA-256 见 [本次测量记录](docs/benchmarks/2026-11-17.json)。
+[2026-11-08 的测量记录](docs/benchmarks/2026-11-08.json) 保留作历史参考。
 
 全模型短序列使用 `OMP_NUM_THREADS=8`、`prefill=32 / decode=32`，prompt 为重复的
 合成 token `9419`。计时包含 forward 内的运行时开销，排除权重文件加载、动态库加载
@@ -131,13 +133,13 @@ macOS 26.6.2，Release 构建，LLVM 20.1.8，AOT 使用 `-O2 -mcpu=native`，bf
 
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
-| bf16 + bfdot | 1.83 s | 17.51 | 6.37 s | 5.03 |
-| Q8_0 + sdot | 0.99 s | 32.17 | 3.87 s | 8.27 |
+| bf16 + bfdot | 1.44 s | 22.21 | 5.93 s | 5.40 |
+| Q8_0 + sdot | 0.59 s | 54.31 | 3.91 s | 8.18 |
 
 三次测量的吞吐范围：
 
-- bf16：prefill 16.33–18.54 tok/s；decode 4.94–5.05 tok/s。
-- Q8_0：prefill 28.64–32.91 tok/s；decode 7.75–8.42 tok/s。
+- bf16 的 prefill 为 20.80–22.44 tok/s，decode 为 5.22–5.45 tok/s。
+- Q8_0 的 prefill 为 53.80–56.08 tok/s，decode 为 8.15–8.22 tok/s。
 
 prefill 和 decode 使用不同的 AOT 入口：
 
@@ -168,7 +170,8 @@ llmcp_model_decode   -> llmcp_forward_decode
   - 非 BF16 Apple Silicon 自动回退到 vector/f32 路径；
   - 无 DotProd 的 CPU 自动回退到 scalar Q8 路径；
   - `LLMCP_ENABLE_BFDOT` / `LLMCP_ENABLE_SDOT` 可显式控制；
-  - Q8 使用 4-row × 4-column 寄存器 tile + 128-K cache block；
+  - 满足分块条件时，Q8 使用 32 行 × 64 列缓存面板和 4×8 lane SDOT
+    寄存器 tile。[打包内核](lib/Dialect/LLMCP/Transforms/Q8Matmul.cpp)
   - activation epilogue 在 matmul 输出 store 前完成。
 - decode：
   - attention 按 head 并行，query loop 只有 1 次；
@@ -186,26 +189,31 @@ Q8:   5.07 GB
 长上下文 Q8（8 线程，`prefill=1024 / decode=1024`，短序列测试之后单次测量）：
 
 ```text
-prefill: 29.53 s  (34.68 tok/s)
-decode:  162.99 s (6.28 tok/s)
-total:   192.52 s
+prefill: 15.08 s  (67.88 tok/s)
+decode:  136.38 s (7.51 tok/s)
+total:   151.47 s
 ```
 
-单算子 matmul（`llmcp-matmul-benchmark`）：每组运行三次，每次内部预热一次、计时
-20 次迭代；下表为吞吐中位数，括号内为三次范围。Q8 使用 `2*M*N*K/time`
-计算等效 GFLOPS；计时不包含编译与动态库加载。
+单算子 matmul（`llmcp-matmul-benchmark`）每组运行三次，每次内部预热一次。
+1024 方阵计时 80 次迭代，其余形状计时 20 次。下表为吞吐中位数，括号内为
+三次范围。两种精度均按 `2*M*N*K/time` 统计吞吐。Q8 计时包含激活量化、
+权重打包、缩放累加和输出拷贝。编译与动态库加载在计时前完成。
 
-| M × N × K | 线程 | bf16 GFLOPS（范围） | Q8 等效 GFLOPS（范围） |
+| M × N × K | 线程 | bf16 GFLOPS（范围） | Q8 等效 GOPS（范围） |
 |---|---:|---:|---:|
-| 256 × 256 × 256 | 4 | 89.4（85.8–99.7） | 169.8（148.0–172.4） |
-| 16 × 8192 × 2560 | 4 | 110.4（108.4–116.0） | 266.3（263.1–280.5） |
-| 1024 × 1024 × 1024 | 8 | 113.9（47.8–122.7） | 338.5（328.4–342.9） |
+| 256 × 256 × 256 | 4 | 61.4（59.2–68.6） | 182.6（150.5–251.6） |
+| 16 × 8192 × 2560 | 4 | 152.7（150.2–162.9） | 424.7（421.7–459.2） |
+| 1024 × 1024 × 1024 | 8 | 208.1（205.6–210.6） | 1072.8（982.4–1075.9） |
 
-1024³ bf16 有一次明显较慢的样本，已保留在范围内，未作剔除；因此不应把单次吞吐
-视为稳定基线。
+1024³ Q8 GEMM 与同线程数的 SDOT 峰值对比。GEMM 基线为 `c6158b7`，指令峰值
+使用 `--sdot-threads N --seconds 0.5` 测量。各列使用三次运行的中位数。
+[测量方法与指令混合对照](docs/matmul-benchmark.md#8-q8_0-sdot-的-1024-方阵)
 
-1024³ Q8_0 打包内核及同线程数 SDOT 峰值实测见
-[matmul-benchmark.md](docs/matmul-benchmark.md#8-q8_0-sdot-的-1024-方阵)。
+| 线程 | 基线 GOPS | 打包内核 GOPS | SDOT 峰值 GOPS | 峰值占比 |
+|---:|---:|---:|---:|---:|
+| 1 | 131.6 | 288.3 | 434.1 | 66.4% |
+| 4 | 453.9 | 921.6 | 1609.9 | 57.2% |
+| 8 | 491.6 | 1072.8 | 2171.9 | 49.4% |
 
 CPU 指令与内存带宽（`llmcp-microbench`）：三次独立运行的中位数和范围。
 compute 单线程，每项预热后计时至少 1 秒；带宽使用 8 线程、256 MiB 缓冲区单次遍历，
@@ -214,15 +222,15 @@ compute 单线程，每项预热后计时至少 1 秒；带宽使用 8 线程、
 
 | 项目 | 中位数 | 三次范围 |
 |---|---:|---:|
-| neon_bf16_dot | 48.31 GFLOPS | 46.88–49.01 GFLOPS |
-| neon_i8_dot | 251.67 GOPS | 233.28–253.98 GOPS |
-| neon_i8_mma | 246.15 GOPS | 245.97–247.02 GOPS |
-| read | 45.62 GB/s | 25.62–46.27 GB/s |
-| write | 56.34 GB/s | 45.77–60.65 GB/s |
-| copy | 55.29 GB/s | 46.15–69.06 GB/s |
+| neon_bf16_dot | 55.39 GFLOPS | 55.32–55.46 GFLOPS |
+| neon_i8_dot | 438.96 GOPS | 424.59–443.17 GOPS |
+| neon_i8_mma | 272.66 GOPS | 254.73–276.22 GOPS |
+| read | 48.79 GB/s | 34.23–52.81 GB/s |
+| write | 62.54 GB/s | 53.26–63.77 GB/s |
+| copy | 68.40 GB/s | 59.46–68.94 GB/s |
 
-表中的 `neon_i8_dot` 是八条累加链的历史测量。当前基准使用 16 条独立累加链，
-每轮展开到 64 条寄存器间 SDOT，每条指令计 16 次乘加，即 32 次整数运算。
+当前 `neon_i8_dot` 基准使用 16 条独立累加链，每轮展开到 64 条寄存器间 SDOT，
+每条指令计 16 次乘加，即 32 次整数运算。
 `--sdot-threads N` 仅测 SDOT，N 个线程预热后同步开始，用 `32 × 总指令数`
 除以共同的墙钟时间计算吞吐量。测量 Q8 GEMM 峰值占比时，使用相同线程数并重复采样。
 
@@ -248,7 +256,11 @@ OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
 ./build/bin/llmcp-matmul-benchmark \
   --m 16 --n 8192 --k 2560 --iters 20 --threads 4 --q8
 
+./build/bin/llmcp-matmul-benchmark \
+  --m 1024 --n 1024 --k 1024 --iters 80 --threads 8 --q8
+
 ./build/bin/llmcp-microbench --seconds 1 --buffer-mb 256 --threads 8
+./build/bin/llmcp-microbench --sdot-threads 8 --seconds 0.5
 ```
 
 注意：

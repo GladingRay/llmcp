@@ -1,0 +1,825 @@
+{
+  "date": "2026-11-17",
+  "timezone": "Asia/Shanghai",
+  "source_revision": "dd4c2da2c935770f1ed455f7bc229e0df060bb5f",
+  "cpu": "Apple M2",
+  "memory_bytes": 25769803776,
+  "logical_cpus": 8,
+  "macos_version": "26.6.2",
+  "llvm_version": "20.1.8",
+  "build_type": "Release",
+  "bfdot": true,
+  "sdot": true,
+  "aot_clang_opt_level": 2,
+  "notes": "串行测量。短序列每种精度先预热一次，再用新进程测三次。长序列单次。每次 matmul 内部预热一次。未主动清除系统 page cache。",
+  "binary_sha256": {
+    "build/bin/llmcp-compile": "0a620496cbcf900fe13a1b7c08e1ab885713747d94065da96338186a032fe1ac",
+    "build/bin/llmcp-opt": "3ba778206fa7de998ba1bcb81f42a2447c197f86cf93ee9c95de31bf3870c751",
+    "build/bin/llmcp-benchmark": "8921f7bb221fea7b22dfed42a2c4dfade57cc6cbef0d1cd5f7f013133142c24b",
+    "build/bin/llmcp-matmul-benchmark": "587b5c44f97ecbae793c3e3a2e010f9f9f79a4b367707e95e7c41d4b194274a9",
+    "build/bin/llmcp-microbench": "c092f43f13faa7ea7c8c20f83f36736b086b7d2845c2060a8e52623732fc9849",
+    "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-bf16.dylib": "1fb945f9a41ca4d4871e086638b3ee3e57e1c3b3fb4c264ce7070256e4c23038",
+    "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-q8_0.dylib": "ae50ae0c1c1c1d05cf761e01360f87d443895c75af65ff1f44647687e1c7036d"
+  },
+  "q8_square": {
+    "notes": "同一提交内容的先前测量。按采集顺序保留吞吐样本。基线使用 --llmcp-opt 指向基线提交编译的 llmcp-opt，计时工具相同。",
+    "baseline_revision": "c6158b7",
+    "measurements": [
+      {
+        "threads": 1,
+        "gemm_command": [
+          "build/bin/llmcp-matmul-benchmark",
+          "--q8",
+          "-m",
+          "1024",
+          "-n",
+          "1024",
+          "-k",
+          "1024",
+          "--iters",
+          "80",
+          "--no-parallel"
+        ],
+        "sdot_peak_command": [
+          "build/bin/llmcp-microbench",
+          "--sdot-threads",
+          "1",
+          "--seconds",
+          "0.5"
+        ],
+        "baseline_gops": [
+          132.863,
+          127.5497,
+          131.5559
+        ],
+        "packed_gops": [
+          276.3838,
+          288.2794,
+          290.405
+        ],
+        "sdot_peak_gops": [
+          421.481,
+          434.067,
+          441.519
+        ]
+      },
+      {
+        "threads": 4,
+        "gemm_command": [
+          "build/bin/llmcp-matmul-benchmark",
+          "--q8",
+          "-m",
+          "1024",
+          "-n",
+          "1024",
+          "-k",
+          "1024",
+          "--iters",
+          "80",
+          "--threads",
+          "4"
+        ],
+        "sdot_peak_command": [
+          "build/bin/llmcp-microbench",
+          "--sdot-threads",
+          "4",
+          "--seconds",
+          "0.5"
+        ],
+        "baseline_gops": [
+          276.4698,
+          453.8773,
+          456.0315
+        ],
+        "packed_gops": [
+          921.5745,
+          876.9527,
+          939.1989
+        ],
+        "sdot_peak_gops": [
+          1547.895,
+          1610.802,
+          1609.886
+        ]
+      },
+      {
+        "threads": 8,
+        "gemm_command": [
+          "build/bin/llmcp-matmul-benchmark",
+          "--q8",
+          "-m",
+          "1024",
+          "-n",
+          "1024",
+          "-k",
+          "1024",
+          "--iters",
+          "80",
+          "--threads",
+          "8"
+        ],
+        "sdot_peak_command": [
+          "build/bin/llmcp-microbench",
+          "--sdot-threads",
+          "8",
+          "--seconds",
+          "0.5"
+        ],
+        "baseline_gops": [
+          486.3672,
+          491.6065,
+          517.8859
+        ],
+        "packed_gops": [
+          982.4422,
+          1075.9242,
+          1072.8444
+        ],
+        "sdot_peak_gops": [
+          2076.149,
+          2171.937,
+          2199.951
+        ]
+      }
+    ]
+  },
+  "runs": [
+    {
+      "kind": "compile",
+      "label": "bf16",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-compile",
+        "--model",
+        "/Users/guorui/Work/models/qwen3.5-4b",
+        "--quant",
+        "none",
+        "--emit=shared",
+        "--opt-level",
+        "2",
+        "--out",
+        "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-bf16.dylib"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 18.4253,
+      "returncode": 0,
+      "stdout": "compiled: /tmp/llmcp-readme-bench.9eYTfW/libqwen35-bf16.dylib (shared)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "compile",
+      "label": "q8_0",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-compile",
+        "--model",
+        "/Users/guorui/Work/models/qwen3.5-4b",
+        "--quant",
+        "q8_0",
+        "--emit=shared",
+        "--opt-level",
+        "2",
+        "--out",
+        "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-q8_0.dylib"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 75.5125,
+      "returncode": 0,
+      "stdout": "compiled: /tmp/llmcp-readme-bench.9eYTfW/libqwen35-q8_0.dylib (shared)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-bf16-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "256",
+        "-n",
+        "256",
+        "-k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.7345,
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nthreads: 4\nseconds: 0.0098\ngflops: 68.5709\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-bf16-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "256",
+        "-n",
+        "256",
+        "-k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.6727,
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nthreads: 4\nseconds: 0.0113\ngflops: 59.1737\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-bf16-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "256",
+        "-n",
+        "256",
+        "-k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.7225,
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nthreads: 4\nseconds: 0.0109\ngflops: 61.3983\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-q8_0-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "256",
+        "-n",
+        "256",
+        "-k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--q8"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.6421,
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0027\ngflops: 251.6307\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-q8_0-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "256",
+        "-n",
+        "256",
+        "-k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--q8"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.6458,
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0037\ngflops: 182.5533\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "256x256x256-q8_0-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "256",
+        "-n",
+        "256",
+        "-k",
+        "256",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--q8"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.6982,
+      "returncode": 0,
+      "stdout": "m: 256\nn: 256\nk: 256\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0045\ngflops: 150.5414\nfirst: 256.0000 (expected 256.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-bf16-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "16",
+        "-n",
+        "8192",
+        "-k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.7093,
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nthreads: 4\nseconds: 0.0894\ngflops: 150.1607\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-bf16-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "16",
+        "-n",
+        "8192",
+        "-k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.7233,
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nthreads: 4\nseconds: 0.0824\ngflops: 162.9154\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-bf16-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "16",
+        "-n",
+        "8192",
+        "-k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.6941,
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nthreads: 4\nseconds: 0.0879\ngflops: 152.7480\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-q8_0-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "16",
+        "-n",
+        "8192",
+        "-k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--q8"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.7154,
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0292\ngflops: 459.1832\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-q8_0-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "16",
+        "-n",
+        "8192",
+        "-k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--q8"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.6715,
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0318\ngflops: 421.7445\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "16x8192x2560-q8_0-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "16",
+        "-n",
+        "8192",
+        "-k",
+        "2560",
+        "--threads",
+        "4",
+        "--iters",
+        "20",
+        "--q8"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 0.6628,
+      "returncode": 0,
+      "stdout": "m: 16\nn: 8192\nk: 2560\niters: 20\nmode: q8_0\nthreads: 4\nseconds: 0.0316\ngflops: 424.7301\nfirst: 2560.0000 (expected 2560.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "1024x1024x1024-bf16-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "1024",
+        "-n",
+        "1024",
+        "-k",
+        "1024",
+        "--threads",
+        "8",
+        "--iters",
+        "80"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 1.5256,
+      "returncode": 0,
+      "stdout": "m: 1024\nn: 1024\nk: 1024\niters: 80\nthreads: 8\nseconds: 0.8254\ngflops: 208.1301\nfirst: 1024.0000 (expected 1024.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "1024x1024x1024-bf16-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "1024",
+        "-n",
+        "1024",
+        "-k",
+        "1024",
+        "--threads",
+        "8",
+        "--iters",
+        "80"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 1.4414,
+      "returncode": 0,
+      "stdout": "m: 1024\nn: 1024\nk: 1024\niters: 80\nthreads: 8\nseconds: 0.8357\ngflops: 205.5696\nfirst: 1024.0000 (expected 1024.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "matmul",
+      "label": "1024x1024x1024-bf16-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-matmul-benchmark",
+        "-m",
+        "1024",
+        "-n",
+        "1024",
+        "-k",
+        "1024",
+        "--threads",
+        "8",
+        "--iters",
+        "80"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 1.6353,
+      "returncode": 0,
+      "stdout": "m: 1024\nn: 1024\nk: 1024\niters: 80\nthreads: 8\nseconds: 0.8157\ngflops: 210.6268\nfirst: 1024.0000 (expected 1024.0000)\n",
+      "stderr": ""
+    },
+    {
+      "kind": "microbench",
+      "label": "1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-microbench",
+        "--seconds",
+        "1",
+        "--buffer-mb",
+        "256",
+        "--threads",
+        "8"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 6.0738,
+      "returncode": 0,
+      "stdout": "cpu: Apple M2\nlogical_cpus: 8\nfeatures: FP16=1 DotProd=1 BF16=1 I8MM=1 SVE=0 SME=0 FHM=1\nbandwidth_threads: 8\n\ncompute:\nscalar_f32              5.889 GFLOPS\nneon_f32                52.439 GFLOPS\nneon_f16                142.269 GFLOPS\nneon_bf16_dot           55.463 GFLOPS\nneon_i8_dot             424.588 GOPS\nneon_i8_mma             276.216 GOPS\n\nbandwidth:\nread                    48.786 GB/s\nwrite                   63.775 GB/s\ncopy                    68.396 GB/s\n",
+      "stderr": ""
+    },
+    {
+      "kind": "microbench",
+      "label": "2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-microbench",
+        "--seconds",
+        "1",
+        "--buffer-mb",
+        "256",
+        "--threads",
+        "8"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 6.0728,
+      "returncode": 0,
+      "stdout": "cpu: Apple M2\nlogical_cpus: 8\nfeatures: FP16=1 DotProd=1 BF16=1 I8MM=1 SVE=0 SME=0 FHM=1\nbandwidth_threads: 8\n\ncompute:\nscalar_f32              6.874 GFLOPS\nneon_f32                54.808 GFLOPS\nneon_f16                144.123 GFLOPS\nneon_bf16_dot           55.387 GFLOPS\nneon_i8_dot             443.166 GOPS\nneon_i8_mma             272.656 GOPS\n\nbandwidth:\nread                    52.808 GB/s\nwrite                   62.539 GB/s\ncopy                    68.943 GB/s\n",
+      "stderr": ""
+    },
+    {
+      "kind": "microbench",
+      "label": "3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-microbench",
+        "--seconds",
+        "1",
+        "--buffer-mb",
+        "256",
+        "--threads",
+        "8"
+      ],
+      "env_overrides": {},
+      "elapsed_seconds": 6.0845,
+      "returncode": 0,
+      "stdout": "cpu: Apple M2\nlogical_cpus: 8\nfeatures: FP16=1 DotProd=1 BF16=1 I8MM=1 SVE=0 SME=0 FHM=1\nbandwidth_threads: 8\n\ncompute:\nscalar_f32              6.859 GFLOPS\nneon_f32                54.615 GFLOPS\nneon_f16                142.884 GFLOPS\nneon_bf16_dot           55.321 GFLOPS\nneon_i8_dot             438.957 GOPS\nneon_i8_mma             254.732 GOPS\n\nbandwidth:\nread                    34.225 GB/s\nwrite                   53.258 GB/s\ncopy                    59.460 GB/s\n",
+      "stderr": ""
+    },
+    {
+      "kind": "model-short",
+      "label": "bf16",
+      "warmup": true,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights.bin",
+        "--aot",
+        "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-bf16.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env_overrides": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "elapsed_seconds": 14.7885,
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 8.3834\ndecode_seconds: 5.9123\ntotal_seconds: 14.2958\nprefill_tokens_per_second: 3.8170\ndecode_tokens_per_second: 5.4124\n",
+      "stderr": ""
+    },
+    {
+      "kind": "model-short",
+      "label": "bf16-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights.bin",
+        "--aot",
+        "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-bf16.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env_overrides": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "elapsed_seconds": 7.4875,
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 1.4411\ndecode_seconds: 5.9267\ntotal_seconds: 7.3678\nprefill_tokens_per_second: 22.2053\ndecode_tokens_per_second: 5.3993\n",
+      "stderr": ""
+    },
+    {
+      "kind": "model-short",
+      "label": "bf16-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights.bin",
+        "--aot",
+        "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-bf16.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env_overrides": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "elapsed_seconds": 7.4093,
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 1.4258\ndecode_seconds: 5.8668\ntotal_seconds: 7.2926\nprefill_tokens_per_second: 22.4431\ndecode_tokens_per_second: 5.4545\n",
+      "stderr": ""
+    },
+    {
+      "kind": "model-short",
+      "label": "bf16-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights.bin",
+        "--aot",
+        "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-bf16.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env_overrides": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "elapsed_seconds": 7.7844,
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 1.5387\ndecode_seconds: 6.1284\ntotal_seconds: 7.6671\nprefill_tokens_per_second: 20.7967\ndecode_tokens_per_second: 5.2216\n",
+      "stderr": ""
+    },
+    {
+      "kind": "model-short",
+      "label": "q8_0",
+      "warmup": true,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-q8_0.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env_overrides": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "elapsed_seconds": 10.0331,
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 5.5857\ndecode_seconds: 3.9125\ntotal_seconds: 9.4982\nprefill_tokens_per_second: 5.7289\ndecode_tokens_per_second: 8.1789\n",
+      "stderr": ""
+    },
+    {
+      "kind": "model-short",
+      "label": "q8_0-1",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-q8_0.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env_overrides": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "elapsed_seconds": 4.5806,
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 0.5892\ndecode_seconds: 3.9119\ntotal_seconds: 4.5011\nprefill_tokens_per_second: 54.3119\ndecode_tokens_per_second: 8.1801\n",
+      "stderr": ""
+    },
+    {
+      "kind": "model-short",
+      "label": "q8_0-2",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-q8_0.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env_overrides": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "elapsed_seconds": 4.5389,
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 0.5706\ndecode_seconds: 3.8908\ntotal_seconds: 4.4613\nprefill_tokens_per_second: 56.0846\ndecode_tokens_per_second: 8.2246\n",
+      "stderr": ""
+    },
+    {
+      "kind": "model-short",
+      "label": "q8_0-3",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-q8_0.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "env_overrides": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "elapsed_seconds": 4.5961,
+      "returncode": 0,
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 0.5948\ndecode_seconds: 3.9254\ntotal_seconds: 4.5202\nprefill_tokens_per_second: 53.7988\ndecode_tokens_per_second: 8.1521\n",
+      "stderr": ""
+    },
+    {
+      "kind": "model-long",
+      "label": "q8_0",
+      "warmup": false,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "/tmp/llmcp-readme-bench.9eYTfW/libqwen35-q8_0.dylib",
+        "--token",
+        "9419",
+        "--prefill-tokens",
+        "1024",
+        "--decode-tokens",
+        "1024"
+      ],
+      "env_overrides": {
+        "OMP_NUM_THREADS": "8"
+      },
+      "elapsed_seconds": 151.5589,
+      "returncode": 0,
+      "stdout": "prefill_tokens: 1024\ndecode_tokens: 1024\nprefill_seconds: 15.0844\ndecode_seconds: 136.3822\ntotal_seconds: 151.4666\nprefill_tokens_per_second: 67.8846\ndecode_tokens_per_second: 7.5083\n",
+      "stderr": ""
+    }
+  ]
+}
