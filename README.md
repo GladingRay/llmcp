@@ -67,14 +67,14 @@ safetensors
 - `llmcp-lower-to-linalg`：
   全部 11 类算子 lowering；
   Linear/LmHead 在支持 BF16 的 arm64 上使用 `bfdot`，否则回退 vector/f32；
-  Q8 在支持 DotProd 的 CPU 上使用 `sdot`，否则回退 scalar；
+  Q8 使用 `sdot`，需要 ARM DotProd；不支持时禁用 Q8；
   attention 使用 FlashAttention-2 风格 online softmax + key tiling；
 - `llmcp-pack`：
   单文件 bf16 arena（内嵌 JSON manifest）；
-  `--quant q8_0` 生成 Q8_0 arena，scale 与 qs 分离存放；
+  `--quant q8_0` 生成 Q8_0 arena，按四列 SDOT lane 预打包；
 - `llmcp-compile`：
   完整图经过 linalg、elementwise 融合、OpenMP 并行化、
-  bf16/bfdot（不支持时 vector/f32）或 Q8/sdot（不支持时 scalar），
+  bf16/bfdot（不支持时 vector/f32）或 Q8/sdot（需要 DotProd），
   AOT 到 LLVM IR / object / shared library；
   `--quant q8_0` 编译真实 Q8 模型；
 - `llmcp-run`：
@@ -182,10 +182,10 @@ llmcp_model_decode   -> llmcp_forward_decode
   - linear 使用 GEMM：column 并行，row loop 保留；
   - bf16 使用 4-row 寄存器 tile + cache block；
   - 非 BF16 Apple Silicon 自动回退到 vector/f32 路径；
-  - 无 DotProd 的 CPU 自动回退到 scalar Q8 路径；
   - `LLMCP_ENABLE_BFDOT` / `LLMCP_ENABLE_SDOT` 可显式控制；
-  - 满足分块条件时，Q8 使用 32 行 × 64 列缓存面板和 4×8 lane SDOT
-    寄存器 tile。[打包内核](lib/Dialect/LLMCP/Transforms/Q8Matmul.cpp)
+  - Q8 直接读预打包的四列 lane，使用 4-row × 8-column SDOT 寄存器 tile，
+    只打包每次变化的激活面板。
+    [打包内核](lib/Dialect/LLMCP/Transforms/Q8Matmul.cpp)
   - activation epilogue 在 matmul 输出 store 前完成。
 - decode：
   - attention 按 head 并行，query loop 只有 1 次；

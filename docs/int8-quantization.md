@@ -347,17 +347,19 @@ bf16 原大小：
 
 ```mlir
 %0 = llmcp.linear %x, %w_q8
-    {weight_format = "q8_0"}
+    {weight_format = "q8_0_p4"}
     : tensor<?x2560xbf16>, memref<?xi8> -> tensor<?x9216xbf16>
 ```
 
 verifier 检查：
 
 ```text
-weight byte width == K + (K / 32) * 2
+weight 是 rank-1 i8
+weight bytes == N * (K + (K / 32) * 2)
+N % 8 == 0, K % 32 == 0
 ```
 
-`transpose_b = true` 的首期不支持，直接 fallback bf16。
+`transpose_b = true` 不支持，verifier 直接拒绝。
 
 ### 6.2 新增内部 op
 
@@ -500,8 +502,8 @@ default       -> bf16 path
 `llmcp.linear` 的 lowering 根据 `weight_format` 分派：
 
 ```text
-q8_0  -> emitQ8Matmul
-other -> emitBfDotMatmul
+q8_0_p4 -> emitQ8PackedMatmul / emitQ8PackedDecodeMatmul
+other   -> emitBfDotMatmul
 ```
 
 ## 9. 精度设计
@@ -730,7 +732,7 @@ GEMV/prefill GEMM。
 
 已完成：
 
-- `llmcp.linear` / `llmcp.lm_head` 增加 `weight_format = "q8_0"`；
+- `llmcp.linear` / `llmcp.lm_head` 增加 `weight_format = "q8_0_p4"`；
 - Q8_1 激活动态量化（标量）；
 - Q8_0 x Q8_1 int32 点积；
 - f32 scale 累加；
@@ -751,10 +753,10 @@ ARM `sdot` 并接入真实模型 AOT。当前状态以第 16 节为准。
 - ARM `llvm.aarch64.neon.sdot`；
 - 每个 32-element block 用 2 条 sdot；
 - int32 点积后 f32 scale 累加；
-- Q8 prefill 使用 4-row x 4-column register tile + 128-K cache block；
+- Q8 prefill 使用 4-row × 8-column（两个 lane group）register tile；
 - configure 阶段同时检查 `FEAT_DotProd` 和编译器后端；
-- 不支持时关闭 `LLMCP_ENABLE_SDOT`，走 scalar Q8 fallback；
-- numeric 覆盖 `linear_q8` 与 `linear_q8_prefill`；
+- 不支持 DotProd 时 Q8 lowering 返回失败；Q8 只在 ARM SDOT 上启用；
+- numeric 覆盖 `linear_q8_p4_decode` / `linear_q8_p4_prefill`；
 - `llmcp-matmul-benchmark --q8`；
 - `llmcp-matmul-benchmark-q8` CTest。
 

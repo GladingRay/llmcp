@@ -32,8 +32,6 @@ struct WeightEntry {
   uint64_t size = 0;
   uint64_t sourceSize = 0;
   bool quantized = false;
-  /// True when the payload uses the packed four-column Q8_0 lane layout.
-  bool packed = false;
   std::string dtype;
   llvm::SmallVector<int64_t, 4> shape;
 };

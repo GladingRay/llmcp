@@ -18,11 +18,6 @@ namespace llmcp {
 Value applyMatmulActivation(PatternRewriter &rewriter, Location loc,
                             Value value, llvm::StringRef activation);
 
-/// Returns the output buffer when the vectorized SDOT decode path is available.
-Value emitQ8DecodeMatmul(PatternRewriter &rewriter, Location loc, Value input,
-                         Value weight, RankedTensorType resultType,
-                         llvm::StringRef activation);
-
 /// Returns the output buffer when the packed-layout decode GEMV is available.
 /// The weight is a flat byte payload in the four-column lane layout.
 Value emitQ8PackedDecodeMatmul(PatternRewriter &rewriter, Location loc,

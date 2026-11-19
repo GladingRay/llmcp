@@ -71,6 +71,7 @@ llvm::Error WeightLayout::addTensor(StringRef name,
   entry.shape = it->second.shape;
   if (quantization_ == QuantizationMode::Q8_0 && entry.shape.size() == 2 &&
       entry.shape[1] % kQ8_0BlockSize == 0 &&
+      isQ8PackedShape(entry.shape) &&
       (entry.dtype == "BF16" || entry.dtype == "F32")) {
     auto quantizedSize = getQ8_0TensorSize(entry.shape);
     if (!quantizedSize)
@@ -78,9 +79,6 @@ llvm::Error WeightLayout::addTensor(StringRef name,
     entry.size = *quantizedSize;
     entry.dtype = "Q8_0";
     entry.quantized = true;
-    // Shapes that do not fill a pair of four-column lane groups keep the
-    // canonical row layout and select the q8_0 kernels.
-    entry.packed = isQ8PackedShape(entry.shape);
   }
   entries_.push_back(std::move(entry));
   offsets_[name] = offset;

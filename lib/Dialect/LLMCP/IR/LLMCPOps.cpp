@@ -25,10 +25,6 @@ bool areCompatible(int64_t lhs, int64_t rhs) {
   return ShapedType::isDynamic(lhs) || ShapedType::isDynamic(rhs) || lhs == rhs;
 }
 
-/// Returns true for the canonical and packed Q8_0 storage formats.
-bool isQ8Format(StringRef format) {
-  return format == "q8_0" || format == "q8_0_p4";
-}
 
 } // namespace
 
@@ -67,27 +63,6 @@ LogicalResult LinearOp::verify() {
             : channels * rowBytes;
     if (!areCompatible(weightType.getDimSize(0), expectedBytes))
       return emitOpError("q8_0_p4 weight size must be N * (K + (K/32)*2)");
-    if (!areCompatible(inputType.getDimSize(0), outputType.getDimSize(0)))
-      return emitOpError("output outer dimension must match input");
-    if (outputType.getElementType() != inputType.getElementType())
-      return emitOpError("output element type must match input");
-    return success();
-  }
-  if (format == "q8_0") {
-    if (transposeB)
-      return emitOpError("q8_0 weights do not support transpose_b");
-    if (!weightType.getElementType().isInteger(8))
-      return emitOpError("q8_0 weight must be i8");
-    const int64_t inputK = inputType.getDimSize(1);
-    if (!ShapedType::isDynamic(inputK) && inputK % 32 != 0)
-      return emitOpError("q8_0 requires K to be a multiple of 32");
-    const int64_t expectedBytes = ShapedType::isDynamic(inputK)
-                                      ? ShapedType::kDynamic
-                                      : inputK + (inputK / 32) * 2;
-    if (!areCompatible(weightType.getDimSize(1), expectedBytes))
-      return emitOpError("q8_0 weight byte width must be K + (K/32)*2");
-    if (!areCompatible(weightType.getDimSize(0), outputType.getDimSize(1)))
-      return emitOpError("output inner dimension must match weight rows");
     if (!areCompatible(inputType.getDimSize(0), outputType.getDimSize(0)))
       return emitOpError("output outer dimension must match input");
     if (outputType.getElementType() != inputType.getElementType())
@@ -242,22 +217,6 @@ LogicalResult EmbeddingOp::verify() {
   }
   if (table.getRank() != 2)
     return emitOpError("table must be a rank-2 memref");
-  if (isQ8Format(getWeightFormat())) {
-    if (!table.getElementType().isInteger(8))
-      return emitOpError("q8_0 table must be i8");
-    const int64_t hiddenDim = result.getDimSize(1);
-    if (!ShapedType::isDynamic(hiddenDim) && hiddenDim % 32 != 0)
-      return emitOpError("q8_0 requires hidden size to be a multiple of 32");
-    const int64_t expectedBytes = ShapedType::isDynamic(hiddenDim)
-                                      ? ShapedType::kDynamic
-                                      : hiddenDim + (hiddenDim / 32) * 2;
-    if (!areCompatible(table.getDimSize(1), expectedBytes))
-      return emitOpError("q8_0 table byte width must be K + (K/32)*2");
-    if (!result.getElementType().isBF16() &&
-        !result.getElementType().isF32())
-      return emitOpError("q8_0 result must be bf16 or f32");
-    return success();
-  }
   if (getWeightFormat() != "bf16")
     return emitOpError("unsupported weight_format: " + getWeightFormat());
   if (!areCompatible(result.getDimSize(1), table.getDimSize(1)))
@@ -298,21 +257,6 @@ LogicalResult LmHeadOp::verify() {
   }
   if (table.getRank() != 2)
     return emitOpError("table must be a rank-2 memref");
-  if (isQ8Format(getWeightFormat())) {
-    if (!table.getElementType().isInteger(8))
-      return emitOpError("q8_0 table must be i8");
-    const int64_t hiddenDim = hidden.getDimSize(1);
-    if (!ShapedType::isDynamic(hiddenDim) && hiddenDim % 32 != 0)
-      return emitOpError("q8_0 requires hidden size to be a multiple of 32");
-    const int64_t expectedBytes = ShapedType::isDynamic(hiddenDim)
-                                      ? ShapedType::kDynamic
-                                      : hiddenDim + (hiddenDim / 32) * 2;
-    if (!areCompatible(table.getDimSize(1), expectedBytes))
-      return emitOpError("q8_0 table byte width must be K + (K/32)*2");
-    if (!areCompatible(logits.getDimSize(1), table.getDimSize(0)))
-      return emitOpError("logits vocabulary dimension must match the table");
-    return success();
-  }
   if (!areCompatible(hidden.getDimSize(1), table.getDimSize(1)))
     return emitOpError("hidden dimension must match the table");
   if (!areCompatible(logits.getDimSize(1), table.getDimSize(0)))

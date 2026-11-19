@@ -253,11 +253,9 @@ llvm::Error mlir::llmcp::packWeights(llvm::StringRef modelDir,
                                      "tensor extends past shard: " +
                                          entry.name);
     if (entry.quantized) {
-      auto quantize =
-          entry.packed ? quantizeTensorQ8_0Packed : quantizeTensorQ8_0;
-      if (llvm::Error error =
-              quantize(info, shard.data() + info.dataOffset,
-                       output.data() + entry.offset))
+      if (llvm::Error error = quantizeTensorQ8_0Packed(
+              info, shard.data() + info.dataOffset,
+              output.data() + entry.offset))
         return error;
     } else {
       std::memcpy(output.data() + entry.offset, shard.data() + info.dataOffset,

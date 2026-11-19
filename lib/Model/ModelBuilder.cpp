@@ -134,9 +134,7 @@ private:
   StringRef weightFormat(StringRef name) const {
     auto it = entries.find(name);
     assert(it != entries.end() && "weight must exist in the layout");
-    if (it->second->dtype != "Q8_0")
-      return "bf16";
-    return it->second->packed ? "q8_0_p4" : "q8_0";
+    return it->second->dtype == "Q8_0" ? "q8_0_p4" : "bf16";
   }
 
   Value getWeight(OpBuilder &builder, Value arena, StringRef name,
@@ -162,13 +160,11 @@ private:
       llvm_unreachable("unsupported weight dtype in layout");
 
     SmallVector<int64_t, 4> weightShape;
-    if (entry.packed) {
+    if (entry.quantized) {
       // Packed Q8_0 groups four rows, so expose the payload as flat bytes.
       weightShape.push_back(static_cast<int64_t>(entry.size));
     } else {
       weightShape.assign(entry.shape.begin(), entry.shape.end());
-      if (entry.dtype == "Q8_0")
-        weightShape[1] = entry.shape[1] + (entry.shape[1] / 32) * 2;
     }
     auto memrefType = MemRefType::get(weightShape, elementType);
     auto offset = builder.create<arith::ConstantIndexOp>(loc, entry.offset);

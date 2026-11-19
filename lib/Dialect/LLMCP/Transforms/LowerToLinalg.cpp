@@ -162,7 +162,7 @@ public:
       rewriter.replaceOp(op, lowered);
       return success();
     }
-    if (op.getWeightFormat() == "q8_0" || op.getWeightFormat() == "q8_0_p4")
+    if (op.getWeightFormat() == "q8_0_p4")
       return failure();
     Value weight = toTensor(rewriter, loc, op.getWeight());
 
@@ -426,90 +426,9 @@ public:
   }
 };
 
-constexpr int64_t kQ8BlockSize = 32;
-
 /// Dequantizes the selected rows of a Q8_0 table into a dense buffer. Each row
 /// stores its f16 block scales before the int8 values, so a lookup first finds
 /// the block containing the hidden element, then decodes that block's scale.
-Value emitQ8Embedding(PatternRewriter &rewriter, Location loc, EmbeddingOp op,
-                      RankedTensorType resultType) {
-  const int64_t hidden = resultType.getDimSize(1);
-  if (ShapedType::isDynamic(hidden) || hidden % kQ8BlockSize != 0)
-    return Value();
-  const int64_t blockCount = hidden / kQ8BlockSize;
-  auto outputType =
-      MemRefType::get(resultType.getShape(), resultType.getElementType());
-  Value output = rewriter.create<memref::AllocOp>(
-      loc, outputType,
-      getDynamicSizes(rewriter, loc, resultType, op.getTokens()));
-  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-  Value blockSize = rewriter.create<arith::ConstantIndexOp>(loc, kQ8BlockSize);
-  Value two = rewriter.create<arith::ConstantIndexOp>(loc, 2);
-  Value hiddenValue = rewriter.create<arith::ConstantIndexOp>(loc, hidden);
-  Value dataOffset =
-      rewriter.create<arith::ConstantIndexOp>(loc, blockCount * 2);
-  Value rows = rewriter.create<tensor::DimOp>(loc, op.getTokens(), 0);
-
-  auto rowLoop = rewriter.create<scf::ForOp>(loc, zero, rows, one);
-  rowLoop->setAttr("llmcp.parallel", UnitAttr::get(rewriter.getContext()));
-  rewriter.setInsertionPointToStart(rowLoop.getBody());
-  Value row = rowLoop.getInductionVar();
-  Value token =
-      rewriter.create<tensor::ExtractOp>(loc, op.getTokens(), ValueRange{row});
-  auto columnLoop = rewriter.create<scf::ForOp>(loc, zero, hiddenValue, one);
-  rewriter.setInsertionPointToStart(columnLoop.getBody());
-  Value column = columnLoop.getInductionVar();
-  Value block =
-      rewriter.create<arith::DivUIOp>(loc, column, blockSize).getResult();
-  Value within =
-      rewriter.create<arith::RemUIOp>(loc, column, blockSize).getResult();
-
-  // Decode the little-endian f16 scale stored at the row's block header.
-  Value scaleBase =
-      rewriter.create<arith::MulIOp>(loc, block, two).getResult();
-  Value lowByte = rewriter.create<memref::LoadOp>(
-      loc, op.getTable(), ValueRange{token, scaleBase});
-  Value highByte = rewriter.create<memref::LoadOp>(
-      loc, op.getTable(),
-      ValueRange{token, rewriter.create<arith::AddIOp>(loc, scaleBase, one)});
-  Value low = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI16Type(),
-                                              lowByte);
-  Value high = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI16Type(),
-                                               highByte);
-  Value shift =
-      rewriter.create<arith::ConstantOp>(loc, rewriter.getI16IntegerAttr(8));
-  Value bits = rewriter.create<arith::OrIOp>(
-      loc, low, rewriter.create<arith::ShLIOp>(loc, high, shift));
-  Value half =
-      rewriter.create<arith::BitcastOp>(loc, rewriter.getF16Type(), bits);
-  Value scale = rewriter.create<arith::ExtFOp>(loc, rewriter.getF32Type(), half);
-
-  Value blockBase =
-      rewriter.create<arith::MulIOp>(loc, block, blockSize).getResult();
-  Value valueIndex =
-      rewriter.create<arith::AddIOp>(
-          loc, rewriter.create<arith::AddIOp>(loc, dataOffset, blockBase),
-          within)
-          .getResult();
-  Value quantized = rewriter.create<memref::LoadOp>(
-      loc, op.getTable(), ValueRange{token, valueIndex});
-  Value integer = rewriter.create<arith::ExtSIOp>(loc, rewriter.getI32Type(),
-                                                  quantized);
-  Value converted =
-      rewriter.create<arith::SIToFPOp>(loc, rewriter.getF32Type(), integer);
-  Value value =
-      rewriter.create<arith::MulFOp>(loc, converted, scale).getResult();
-  if (resultType.getElementType().isBF16())
-    value = rewriter.create<arith::TruncFOp>(loc, rewriter.getBF16Type(),
-                                             value);
-  rewriter.create<memref::StoreOp>(loc, value, output,
-                                   ValueRange{row, column});
-  rewriter.setInsertionPointAfter(rowLoop);
-  return rewriter.create<bufferization::ToTensorOp>(loc, resultType, output,
-                                                    /*restrict=*/true);
-}
-
 /// Dequantizes selected rows from the packed four-column Q8_0 layout. A row is
 /// distributed across four lanes, so the lookup selects its lane and reads one
 /// four-byte word per SDOT chunk.
@@ -619,13 +538,6 @@ public:
                                 PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
     auto resultType = cast<RankedTensorType>(op.getResult().getType());
-    if (op.getWeightFormat() == "q8_0") {
-      Value result = emitQ8Embedding(rewriter, loc, op, resultType);
-      if (!result)
-        return failure();
-      rewriter.replaceOp(op, result);
-      return success();
-    }
     if (op.getWeightFormat() == "q8_0_p4") {
       Value result = emitQ8PackedEmbedding(rewriter, loc, op, resultType);
       if (!result)
@@ -834,7 +746,7 @@ public:
       rewriter.replaceOp(op, lowered);
       return success();
     }
-    if (op.getWeightFormat() == "q8_0" || op.getWeightFormat() == "q8_0_p4")
+    if (op.getWeightFormat() == "q8_0_p4")
       return failure();
     Value table = toTensor(rewriter, loc, op.getTable());
     Value output = createEmpty(rewriter, loc, resultType, op.getHidden());

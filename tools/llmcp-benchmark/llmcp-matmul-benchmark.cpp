@@ -105,10 +105,14 @@ std::string generateMlir(int64_t m, int64_t n, int64_t k, bool useQ8) {
   std::string ir;
   raw_string_ostream os(ir);
   os << "module {\n";
+  const int64_t weightBytes = k + (k / 32) * 2;
   os << "  func.func @linear_bench(%a: memref<" << m << "x" << k
-     << "xbf16>, %b: memref<" << n << "x"
-     << (useQ8 ? k + (k / 32) * 2 : k) << (useQ8 ? "xi8" : "xbf16")
-     << ">, %c: memref<" << m << "x" << n
+     << "xbf16>, %b: memref<";
+  if (useQ8)
+    os << n * weightBytes;
+  else
+    os << n << "x" << k;
+  os << (useQ8 ? "xi8" : "xbf16") << ">, %c: memref<" << m << "x" << n
      << "xbf16>) attributes {llvm.emit_c_interface";
   if (decode)
     os << ", llmcp.execution_mode = \"decode\"";
@@ -120,9 +124,9 @@ std::string generateMlir(int64_t m, int64_t n, int64_t k, bool useQ8) {
   os << "    %at = bufferization.to_tensor %a restrict : memref<" << m << "x"
      << k << "xbf16> to tensor<" << m << "x" << k << "xbf16>\n";
   if (useQ8) {
-    os << "    %out = llmcp.linear %at, %b {weight_format = \"q8_0\"} : "
-       << "tensor<" << m << "x" << k << "xbf16>, memref<" << n << "x"
-       << (k + (k / 32) * 2) << "xi8> -> tensor<" << m << "x" << n
+    os << "    %out = llmcp.linear %at, %b {weight_format = \"q8_0_p4\"} : "
+       << "tensor<" << m << "x" << k << "xbf16>, memref<"
+       << n * weightBytes << "xi8> -> tensor<" << m << "x" << n
        << "xbf16>\n";
   } else {
     os << "    %out = llmcp.linear %at, %b : tensor<" << m << "x" << k
@@ -154,6 +158,8 @@ int main(int argc, char **argv) {
     return fail("m, n, k and iters must be positive");
   if (decode && mDim != 1)
     return fail("--decode requires m=1");
+  if (q8 && (nDim % 8 != 0 || kDim % 32 != 0))
+    return fail("--q8 requires n % 8 == 0 and k % 32 == 0");
 
   auto llmcpOptOrErr = findTool(llmcpOptPath, "llmcp-opt", argv[0]);
   if (!llmcpOptOrErr)
@@ -269,14 +275,17 @@ int main(int argc, char **argv) {
   int64_t bColumns = kDim;
   if (q8) {
     bColumns = kDim + (kDim / 32) * 2;
-    const int64_t dataOffset = (kDim / 32) * 2;
-    bQ8.assign(static_cast<size_t>(nDim * bColumns), 0);
-    for (int64_t row = 0; row < nDim; ++row) {
-      uint8_t *rowData = bQ8.data() + row * bColumns;
-      for (int64_t block = 0; block < kDim / 32; ++block) {
-        rowData[block * 2] = 0x08;
-        rowData[block * 2 + 1] = 0x20;
-        std::memset(rowData + dataOffset + block * 32, 127, 32);
+    const int64_t blocks = kDim / 32;
+    const int64_t groups = nDim / 4;
+    bQ8.assign(static_cast<size_t>(groups * blocks * 136), 0);
+    for (int64_t group = 0; group < groups; ++group) {
+      for (int64_t block = 0; block < blocks; ++block) {
+        uint8_t *record = bQ8.data() + (group * blocks + block) * 136;
+        for (int64_t lane = 0; lane < 4; ++lane) {
+          record[lane * 2] = 0x08;
+          record[lane * 2 + 1] = 0x20;
+        }
+        std::memset(record + 8, 127, 128);
       }
     }
   } else {
@@ -284,10 +293,9 @@ int main(int argc, char **argv) {
   }
   MemRef<uint16_t, 2> ra{a.data(), a.data(), 0, {mDim, kDim}, {kDim, 1}};
   MemRef<uint16_t, 2> rc{c.data(), c.data(), 0, {mDim, nDim}, {nDim, 1}};
-  MemRef<int8_t, 2> rbQ8{
+  MemRef<int8_t, 1> rbQ8{
       reinterpret_cast<int8_t *>(bQ8.data()),
-      reinterpret_cast<int8_t *>(bQ8.data()), 0, {nDim, bColumns},
-      {bColumns, 1}};
+      reinterpret_cast<int8_t *>(bQ8.data()), 0, {nDim * bColumns}, {1}};
   MemRef<uint16_t, 2> rbBf16{bBf16.data(), bBf16.data(), 0, {nDim, kDim},
                              {kDim, 1}};
 
