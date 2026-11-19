@@ -313,11 +313,13 @@ private:
                            {tokensType, arenaType}, {hiddenType}, bodyBuilder);
     llvm::StringMap<Value> cache;
     Value arena = func.getArgument(1);
-    Value table = getWeight(bodyBuilder, arena,
-                            "model.language_model.embed_tokens.weight", cache);
-    Value result = bodyBuilder.create<EmbeddingOp>(loc, hiddenType,
-                                                   func.getArgument(0), table);
-    bodyBuilder.create<func::ReturnOp>(loc, result);
+    StringRef name = "model.language_model.embed_tokens.weight";
+    Value table = getWeight(bodyBuilder, arena, name, cache);
+    auto op = bodyBuilder.create<EmbeddingOp>(loc, hiddenType,
+                                              func.getArgument(0), table);
+    if (entryDtype(name) == "Q8_0")
+      op.setWeightFormat("q8_0");
+    bodyBuilder.create<func::ReturnOp>(loc, op.getResult());
   }
 
   void buildLmHead(OpBuilder &moduleBuilder, Type hiddenType, Type arenaType,
@@ -327,11 +329,13 @@ private:
                            {hiddenType, arenaType}, {logitsType}, bodyBuilder);
     llvm::StringMap<Value> cache;
     Value arena = func.getArgument(1);
-    Value table = getWeight(bodyBuilder, arena,
-                            "model.language_model.embed_tokens.weight", cache);
-    Value result = bodyBuilder.create<LmHeadOp>(loc, logitsType,
-                                                func.getArgument(0), table);
-    bodyBuilder.create<func::ReturnOp>(loc, result);
+    StringRef name = "model.language_model.embed_tokens.weight";
+    Value table = getWeight(bodyBuilder, arena, name, cache);
+    auto op = bodyBuilder.create<LmHeadOp>(loc, logitsType,
+                                           func.getArgument(0), table);
+    if (entryDtype(name) == "Q8_0")
+      op.setWeightFormat("q8_0");
+    bodyBuilder.create<func::ReturnOp>(loc, op.getResult());
   }
 
   void buildForward(OpBuilder &moduleBuilder, StringRef name, StringRef mode,

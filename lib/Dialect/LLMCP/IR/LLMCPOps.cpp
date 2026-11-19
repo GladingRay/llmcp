@@ -191,6 +191,24 @@ LogicalResult EmbeddingOp::verify() {
     return emitOpError("result must be a rank-2 tensor");
   if (!areCompatible(result.getDimSize(0), tokens.getDimSize(0)))
     return emitOpError("result and tokens must have the same length");
+  if (getWeightFormat() == "q8_0") {
+    if (!table.getElementType().isInteger(8))
+      return emitOpError("q8_0 table must be i8");
+    const int64_t hiddenDim = result.getDimSize(1);
+    if (!ShapedType::isDynamic(hiddenDim) && hiddenDim % 32 != 0)
+      return emitOpError("q8_0 requires hidden size to be a multiple of 32");
+    const int64_t expectedBytes = ShapedType::isDynamic(hiddenDim)
+                                      ? ShapedType::kDynamic
+                                      : hiddenDim + (hiddenDim / 32) * 2;
+    if (!areCompatible(table.getDimSize(1), expectedBytes))
+      return emitOpError("q8_0 table byte width must be K + (K/32)*2");
+    if (!result.getElementType().isBF16() &&
+        !result.getElementType().isF32())
+      return emitOpError("q8_0 result must be bf16 or f32");
+    return success();
+  }
+  if (getWeightFormat() != "bf16")
+    return emitOpError("unsupported weight_format: " + getWeightFormat());
   if (!areCompatible(result.getDimSize(1), table.getDimSize(1)))
     return emitOpError("result hidden dimension must match the table");
   if (result.getElementType() != table.getElementType())

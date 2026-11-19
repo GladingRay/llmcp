@@ -93,7 +93,8 @@ def LLMCP_MulOp : LLMCP_Op<"mul", [Pure]> {
 
 def LLMCP_EmbeddingOp : LLMCP_Op<"embedding", [Pure]> {
   let summary = "Token embedding lookup";
-  let arguments = (ins AnyTensor:$tokens, AnyMemRef:$table);
+  let arguments = (ins AnyTensor:$tokens, AnyMemRef:$table,
+                       DefaultValuedAttr<StrAttr, "\"bf16\"">:$weight_format);
   let results = (outs AnyTensor:$result);
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;

@@ -222,7 +222,7 @@ def emit_silu_mul(gate, up, execution_mode=None) -> str:
     return wrap(body, [], m, n, "bf16", execution_mode)
 
 
-def emit_embedding(tokens, table) -> str:
+def emit_embedding(tokens, table, execution_mode=None) -> str:
     rows = len(tokens)
     vocab, d = len(table), len(table[0])
     token_text = "[" + ", ".join(str(int(t)) for t in tokens) + "]"
@@ -237,7 +237,29 @@ def emit_embedding(tokens, table) -> str:
         f'memref.global "private" constant @table : memref<{vocab}x{d}xbf16> = '
         f'dense<{dense_2d(table)}>'
     ]
-    return wrap(body, globals_, rows, d, "bf16")
+    return wrap(body, globals_, rows, d, "bf16", execution_mode)
+
+
+def emit_embedding_q8(tokens, table, execution_mode=None) -> str:
+    rows = len(tokens)
+    vocab, d = len(table), len(table[0])
+    encoded = q8_0_bytes(table)
+    width = len(encoded) // vocab
+    encoded_rows = [encoded[i * width:(i + 1) * width] for i in range(vocab)]
+    token_text = "[" + ", ".join(str(int(t)) for t in tokens) + "]"
+    body = [
+        f"  %tokens = arith.constant dense<{token_text}> : "
+        f"tensor<{rows}xindex>",
+        f"  %table = memref.get_global @table : memref<{vocab}x{width}xi8>",
+        f"  %0 = llmcp.embedding %tokens, %table {{weight_format = \"q8_0\"}} "
+        f": (tensor<{rows}xindex>, memref<{vocab}x{width}xi8>) -> "
+        f"tensor<{rows}x{d}xbf16>",
+    ]
+    globals_ = [
+        f'memref.global "private" constant @table : memref<{vocab}x{width}xi8> '
+        f'= dense<{dense_2d_int(encoded_rows)}>'
+    ]
+    return wrap(body, globals_, rows, d, "bf16", execution_mode)
 
 
 def emit_gated_rms_norm(x, gate, weight, group_size, gate_activated=False,
@@ -769,6 +791,16 @@ def main():
     ref = table[[2, 0]].float().flatten()
     compile_and_run(args, "embedding",
                     emit_embedding(tokens, table.tolist()), ref, (2e-2, 1e-2))
+    table_q8 = torch.randn(4, 32).to(bf16)
+    tokens = [2, 0]
+    dequantized = torch.tensor(q8_0_dequant(table_q8.tolist())).view(4, 32)
+    ref = dequantized[tokens].to(bf16).float().flatten()
+    compile_and_run(args, "embedding_q8",
+                    emit_embedding_q8(tokens, table_q8.tolist()), ref,
+                    (2e-2, 1e-2))
+    compile_and_run(args, "embedding_q8_decode",
+                    emit_embedding_q8(tokens, table_q8.tolist(), "decode"), ref,
+                    (2e-2, 1e-2))
 
 #gated_rms_norm
     m, groups, group = 2, 2, 4
