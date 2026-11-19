@@ -139,6 +139,32 @@ def q8_0_dequant(matrix):
     return values
 
 
+def q8_0_p4_bytes(matrix):
+    """Encode the packed four-column Q8_0 lane layout used by the arena."""
+    rows, cols = len(matrix), len(matrix[0])
+    if rows % 4 or cols % 32:
+        raise ValueError("packed Q8_0 needs rows % 4 == 0 and cols % 32 == 0")
+    blocks = cols // 32
+    per_row = [q8_0_blocks([row]) for row in matrix]
+    data = []
+    for group in range(rows // 4):
+        for block in range(blocks):
+            for lane in range(4):
+                data.extend(per_row[group * 4 + lane][block][0])
+            for half in range(2):
+                for word in range(4):
+                    for lane in range(4):
+                        quantized = per_row[group * 4 + lane][block][2]
+                        start = half * 16 + word * 4
+                        data.extend(quantized[start:start + 4])
+    return data
+
+
+def dense_1d_int(values) -> str:
+    return "[" + ", ".join(
+        str(int(v) - 256 if int(v) >= 128 else int(v)) for v in values) + "]"
+
+
 def emit_linear_q8(x, w, execution_mode=None) -> str:
     m, k = len(x), len(x[0])
     n = len(w)
@@ -159,7 +185,25 @@ def emit_linear_q8(x, w, execution_mode=None) -> str:
     return wrap(body, globals_, m, n, "bf16", execution_mode)
 
 
-def emit_lm_head_q8(hidden, table) -> str:
+def emit_linear_q8_p4(x, w, execution_mode=None) -> str:
+    m, k = len(x), len(w[0])
+    n = len(w)
+    encoded = q8_0_p4_bytes(w)
+    body = [
+        f"  %x = arith.constant dense<{dense_2d(x)}> : tensor<{m}x{k}xbf16>",
+        f"  %w = memref.get_global @w : memref<{len(encoded)}xi8>",
+        f"  %0 = llmcp.linear %x, %w {{weight_format = \"q8_0_p4\"}} : "
+        f"tensor<{m}x{k}xbf16>, memref<{len(encoded)}xi8> -> "
+        f"tensor<{m}x{n}xbf16>",
+    ]
+    globals_ = [
+        f'memref.global "private" constant @w : '
+        f'memref<{len(encoded)}xi8> = dense<{dense_1d_int(encoded)}>'
+    ]
+    return wrap(body, globals_, m, n, "bf16", execution_mode)
+
+
+def emit_lm_head_q8(hidden, table, execution_mode=None) -> str:
     m, h = len(hidden), len(hidden[0])
     vocab = len(table)
     encoded = q8_0_bytes(table)
@@ -179,7 +223,27 @@ def emit_lm_head_q8(hidden, table) -> str:
         f'memref<{vocab}x{width}xi8> = '
         f'dense<{dense_2d_int(encoded_rows)}>'
     ]
-    return wrap(body, globals_, m, vocab, "f32")
+    return wrap(body, globals_, m, vocab, "f32", execution_mode)
+
+
+def emit_lm_head_q8_p4(hidden, table, execution_mode=None) -> str:
+    m, h = len(hidden), len(hidden[0])
+    vocab = len(table)
+    encoded = q8_0_p4_bytes(table)
+    body = [
+        f"  %hidden = arith.constant dense<{dense_2d(hidden)}> : "
+        f"tensor<{m}x{h}xbf16>",
+        f"  %table = memref.get_global @table : memref<{len(encoded)}xi8>",
+        f"  %0 = llmcp.lm_head %hidden, %table "
+        f"{{weight_format = \"q8_0_p4\"}} : "
+        f"(tensor<{m}x{h}xbf16>, memref<{len(encoded)}xi8>) -> "
+        f"tensor<{m}x{vocab}xf32>",
+    ]
+    globals_ = [
+        f'memref.global "private" constant @table : '
+        f'memref<{len(encoded)}xi8> = dense<{dense_1d_int(encoded)}>'
+    ]
+    return wrap(body, globals_, m, vocab, "f32", execution_mode)
 
 
 def emit_rms(x, w, zero_centered=True, execution_mode=None) -> str:
@@ -258,6 +322,27 @@ def emit_embedding_q8(tokens, table, execution_mode=None) -> str:
     globals_ = [
         f'memref.global "private" constant @table : memref<{vocab}x{width}xi8> '
         f'= dense<{dense_2d_int(encoded_rows)}>'
+    ]
+    return wrap(body, globals_, rows, d, "bf16", execution_mode)
+
+
+def emit_embedding_q8_p4(tokens, table, execution_mode=None) -> str:
+    rows = len(tokens)
+    vocab, d = len(table), len(table[0])
+    encoded = q8_0_p4_bytes(table)
+    token_text = "[" + ", ".join(str(int(t)) for t in tokens) + "]"
+    body = [
+        f"  %tokens = arith.constant dense<{token_text}> : "
+        f"tensor<{rows}xindex>",
+        f"  %table = memref.get_global @table : memref<{len(encoded)}xi8>",
+        f"  %0 = llmcp.embedding %tokens, %table "
+        f"{{weight_format = \"q8_0_p4\"}} : "
+        f"(tensor<{rows}xindex>, memref<{len(encoded)}xi8>) -> "
+        f"tensor<{rows}x{d}xbf16>",
+    ]
+    globals_ = [
+        f'memref.global "private" constant @table : memref<{len(encoded)}xi8> '
+        f'= dense<{dense_1d_int(encoded)}>'
     ]
     return wrap(body, globals_, rows, d, "bf16", execution_mode)
 
@@ -739,6 +824,39 @@ def main():
                     emit_linear_q8(x.tolist(), w.tolist(), "decode"), ref,
                     (1e-5, 1e-6))
 
+    # Packed four-column Q8_0 layout, shared by decode GEMV and prefill GEMM.
+    x = torch.randn(1, 64).to(bf16)
+    w = torch.randn(64, 64).to(bf16)
+    xq = torch.tensor(q8_0_dequant(x.tolist()), dtype=torch.float32).reshape(
+        x.shape)
+    wq = torch.tensor(q8_0_dequant(w.tolist()), dtype=torch.float32).reshape(
+        w.shape)
+    ref = (xq @ wq.T).to(bf16).float().flatten()
+    compile_and_run(args, "linear_q8_p4_decode",
+                    emit_linear_q8_p4(x.tolist(), w.tolist(), "decode"), ref,
+                    (1e-2, 2e-3))
+    x = torch.randn(8, 64).to(bf16)
+    xq = torch.tensor(q8_0_dequant(x.tolist()), dtype=torch.float32).reshape(
+        x.shape)
+    ref = (xq @ wq.T).to(bf16).float().flatten()
+    compile_and_run(args, "linear_q8_p4_prefill",
+                    emit_linear_q8_p4(x.tolist(), w.tolist(), "prefill"), ref,
+                    (2e-2, 5e-3))
+    x = exact_q8_operand(m)
+    w = exact_q8_operand(n)
+    x[0, -32:] = 0
+    ref = (x.float() @ w.float().T).to(bf16).float().flatten()
+    compile_and_run(args, "linear_q8_p4_prefill_boundaries",
+                    emit_linear_q8_p4(x.tolist(), w.tolist(), "prefill"), ref,
+                    (1e-5, 1e-6))
+    x = exact_q8_operand(1)
+    w = exact_q8_operand(n)
+    x[0, -32:] = 0
+    ref = (x.float() @ w.float().T).to(bf16).float().flatten()
+    compile_and_run(args, "linear_q8_p4_decode_boundaries",
+                    emit_linear_q8_p4(x.tolist(), w.tolist(), "decode"), ref,
+                    (1e-5, 1e-6))
+
 #rms_norm
     x = torch.randn(2, 8).to(bf16)
     w = torch.randn(8).to(bf16)
@@ -791,9 +909,9 @@ def main():
     ref = table[[2, 0]].float().flatten()
     compile_and_run(args, "embedding",
                     emit_embedding(tokens, table.tolist()), ref, (2e-2, 1e-2))
-    table_q8 = torch.randn(4, 32).to(bf16)
+    table_q8 = torch.randn(8, 32).to(bf16)
     tokens = [2, 0]
-    dequantized = torch.tensor(q8_0_dequant(table_q8.tolist())).view(4, 32)
+    dequantized = torch.tensor(q8_0_dequant(table_q8.tolist())).view(8, 32)
     ref = dequantized[tokens].to(bf16).float().flatten()
     compile_and_run(args, "embedding_q8",
                     emit_embedding_q8(tokens, table_q8.tolist()), ref,
@@ -801,6 +919,12 @@ def main():
     compile_and_run(args, "embedding_q8_decode",
                     emit_embedding_q8(tokens, table_q8.tolist(), "decode"), ref,
                     (2e-2, 1e-2))
+    compile_and_run(args, "embedding_q8_p4",
+                    emit_embedding_q8_p4(tokens, table_q8.tolist()), ref,
+                    (2e-2, 1e-2))
+    compile_and_run(args, "embedding_q8_p4_decode",
+                    emit_embedding_q8_p4(tokens, table_q8.tolist(), "decode"),
+                    ref, (2e-2, 1e-2))
 
 #gated_rms_norm
     m, groups, group = 2, 2, 4
@@ -842,7 +966,25 @@ def main():
     ref = (hq @ tq.T).flatten()
     compile_and_run(args, "lm_head_q8",
                     emit_lm_head_q8(hidden.tolist(), table.tolist()), ref,
-                    (1e-2, 2e-3))
+                    (1e-2, 5e-3))
+
+    hidden = torch.randn(2, 64).to(bf16)
+    table = torch.randn(64, 64).to(bf16)
+    hq = torch.tensor(q8_0_dequant(hidden.tolist()),
+                      dtype=torch.float32).reshape(hidden.shape)
+    tq = torch.tensor(q8_0_dequant(table.tolist()),
+                      dtype=torch.float32).reshape(table.shape)
+    ref = (hq @ tq.T).flatten()
+    compile_and_run(args, "lm_head_q8_p4",
+                    emit_lm_head_q8_p4(hidden.tolist(), table.tolist()), ref,
+                    (2e-2, 5e-3))
+    hidden = torch.randn(1, 64).to(bf16)
+    hq = torch.tensor(q8_0_dequant(hidden.tolist()),
+                      dtype=torch.float32).reshape(hidden.shape)
+    ref = (hq @ tq.T).flatten()
+    compile_and_run(args, "lm_head_q8_p4_decode",
+                    emit_lm_head_q8_p4(hidden.tolist(), table.tolist(),
+                                       "decode"), ref, (1e-2, 2e-3))
 
 #vectorized lm_head path
     hidden = torch.randn(2, 64).to(bf16)

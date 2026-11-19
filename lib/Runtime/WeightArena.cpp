@@ -70,7 +70,7 @@ Error Arena::load(StringRef bin) {
     return invalid();
   loaded.quantization = mode->str();
   if (*mode == "q8_0" && (object->getInteger("block_size") != 32 ||
-                          object->getString("quant_layout") != "q8_0_split"))
+                          object->getString("quant_layout") != "q8_0_p4"))
     return invalid();
   for (const json::Value &value : *tensors) {
     auto *entry = value.getAsObject();

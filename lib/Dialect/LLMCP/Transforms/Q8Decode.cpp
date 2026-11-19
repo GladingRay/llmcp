@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llmcp/Dialect/LLMCP/Transforms/MatmulLoweringInternal.h"
+#include "llmcp/Support/Q8PackedLayout.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -41,6 +42,8 @@ public:
 
   Value emit(Value input, Value weight, RankedTensorType resultType,
              StringRef activation);
+  Value emitPacked(Value input, Value weight, RankedTensorType resultType,
+                   StringRef activation);
 
 private:
   Value index(int64_t value) {
@@ -294,8 +297,134 @@ Value Q8Decode::emit(Value input, Value weight, RankedTensorType resultType,
   return output;
 }
 
+Value Q8Decode::emitPacked(Value input, Value weight,
+                           RankedTensorType resultType, StringRef activation) {
+  auto inputType = cast<RankedTensorType>(input.getType());
+  int64_t reduction = inputType.getDimSize(1);
+  int64_t channels = resultType.getDimSize(1);
+  int64_t blockCount = reduction / kQuantBlock;
+  auto outputType = MemRefType::get({ShapedType::kDynamic, channels},
+                                    resultType.getElementType());
+  Value output = builder.create<memref::AllocOp>(
+      loc, outputType, ValueRange{one}, builder.getI64IntegerAttr(128));
+  Value data = builder.create<memref::AllocOp>(
+      loc, MemRefType::get({reduction}, i8), ValueRange{},
+      builder.getI64IntegerAttr(64));
+  Value scales = builder.create<memref::AllocOp>(
+      loc, MemRefType::get({reduction / kQuantBlock}, f32), ValueRange{},
+      builder.getI64IntegerAttr(64));
+  quantize(input, reduction, data, scales);
+
+  auto byteVector = VectorType::get({2 * kQ8PackedLanes}, i8);
+  auto halfVector = VectorType::get({kQ8PackedLanes}, builder.getF16Type());
+  Value groups = index(channels / kQ8PackedLanes);
+  auto groupLoop = loop(zero, groups, 1, ValueRange{});
+  if (channels >= kParallelColumns &&
+      channels * blockCount >= kParallelElements / kQuantBlock)
+    groupLoop->setAttr("llmcp.parallel", builder.getUnitAttr());
+  Value group = groupLoop.getInductionVar();
+  auto blockLoop =
+      loop(zero, index(blockCount), 1, ValueRange{splat(f32x4, zeroF)});
+  Value block = blockLoop.getInductionVar();
+  Value recordBase = builder.create<arith::MulIOp>(
+      loc, group, index(blockCount * kQ8PackedBlockBytes));
+  Value record = builder.create<arith::AddIOp>(
+      loc, recordBase,
+      builder.create<arith::MulIOp>(loc, block, index(kQ8PackedBlockBytes)));
+
+  // One SDOT produces one four-column output tile: lane r accumulates
+  // column 4*group+r over four K elements.
+  Value dot =
+      builder.create<arith::ConstantOp>(loc, builder.getZeroAttr(i32x4));
+  Value blockBase =
+      builder.create<arith::MulIOp>(loc, block, index(kQuantBlock));
+  for (int64_t half = 0; half < kQuantBlock / 16; ++half) {
+    Value a = builder.create<vector::LoadOp>(
+        loc, i8x16, data, ValueRange{add(blockBase, half * 16)});
+    Value words = builder.create<vector::BitCastOp>(loc, i32x4, a);
+    for (int64_t word = 0; word < 4; ++word) {
+      SmallVector<int64_t, 4> mask(4, word);
+      Value broadcast =
+          builder.create<vector::ShuffleOp>(loc, words, words, mask);
+      broadcast = builder.create<vector::BitCastOp>(loc, i8x16, broadcast);
+      int64_t chunkOffset =
+          kQ8PackedScaleBytes + (half * 4 + word) * kQ8PackedChunkBytes;
+      Value chunk = builder.create<vector::LoadOp>(
+          loc, i8x16, weight, ValueRange{add(record, chunkOffset)});
+      dot = builder
+                .create<LLVM::CallIntrinsicOp>(
+                    loc, i32x4, builder.getStringAttr("llvm.aarch64.neon.sdot"),
+                    ValueRange{dot, chunk, broadcast})
+                .getResult(0);
+    }
+  }
+  Value scaleBytes = builder.create<vector::LoadOp>(loc, byteVector, weight,
+                                                    ValueRange{record});
+  Value weightScales =
+      builder.create<vector::BitCastOp>(loc, halfVector, scaleBytes);
+  weightScales = builder.create<arith::ExtFOp>(loc, f32x4, weightScales);
+  Value activationScale =
+      builder.create<memref::LoadOp>(loc, scales, ValueRange{block});
+  Value factor = builder.create<arith::MulFOp>(
+      loc, splat(f32x4, activationScale), weightScales);
+  Value dotF = builder.create<arith::SIToFPOp>(loc, f32x4, dot);
+  Value accumulator = builder.create<math::FmaOp>(
+      loc, dotF, factor, blockLoop.getRegionIterArg(0));
+  builder.create<scf::YieldOp>(loc, accumulator);
+  builder.setInsertionPointAfter(blockLoop);
+
+  Value result = blockLoop.getResult(0);
+  Value column =
+      builder.create<arith::MulIOp>(loc, group, index(kQ8PackedLanes));
+  auto elementType = cast<MemRefType>(output.getType()).getElementType();
+  if (activation == "none") {
+    if (elementType.isBF16())
+      result = builder.create<arith::TruncFOp>(
+          loc, VectorType::get({kQ8PackedLanes}, elementType), result);
+    builder.create<vector::StoreOp>(loc, result, output,
+                                    ValueRange{zero, column});
+  } else {
+    for (int64_t lane = 0; lane < kQ8PackedLanes; ++lane) {
+      Value value = builder.create<vector::ExtractOp>(loc, result, lane);
+      store(value, output, add(column, lane), activation);
+    }
+  }
+  builder.setInsertionPointAfter(groupLoop);
+  return output;
+}
+
 } // namespace
 #endif
+
+Value mlir::llmcp::emitQ8PackedDecodeMatmul(PatternRewriter &rewriter,
+                                            Location loc, Value input,
+                                            Value weight,
+                                            RankedTensorType resultType,
+                                            StringRef activation) {
+#if defined(__aarch64__) && !defined(__AARCH64EB__) &&                         \
+    defined(LLMCP_ENABLE_SDOT)
+  auto inputType = dyn_cast<RankedTensorType>(input.getType());
+  auto weightType = dyn_cast<MemRefType>(weight.getType());
+  if (!inputType || !weightType || inputType.getRank() != 2 ||
+      weightType.getRank() != 1 || resultType.getRank() != 2 ||
+      !weightType.getElementType().isInteger(8) ||
+      (!inputType.getElementType().isBF16() &&
+       !inputType.getElementType().isF32()) ||
+      (!resultType.getElementType().isBF16() &&
+       !resultType.getElementType().isF32()))
+    return Value();
+  int64_t reduction = inputType.getDimSize(1);
+  int64_t channels = resultType.getDimSize(1);
+  if (ShapedType::isDynamic(reduction) || reduction <= 0 ||
+      reduction % kQuantBlock != 0 || ShapedType::isDynamic(channels) ||
+      channels <= 0 || channels % kQ8PackedLanes != 0)
+    return Value();
+  return Q8Decode(rewriter, loc)
+      .emitPacked(input, weight, resultType, activation);
+#else
+  return Value();
+#endif
+}
 
 Value mlir::llmcp::emitQ8DecodeMatmul(PatternRewriter &rewriter, Location loc,
                                       Value input, Value weight,

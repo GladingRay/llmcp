@@ -219,10 +219,17 @@ TEST_F(PackedWeightsTest, PacksAndLoadsTinyCheckpointWithoutSidecar) {
         ++quantizedTensors;
         EXPECT_EQ(weight.dtype, "Q8_0");
         std::vector<uint8_t> expected(entry.size);
-        error = quantizeTensorQ8_0(
-            source,
-            reinterpret_cast<const uint8_t *>(shard.data()) + source.dataOffset,
-            expected.data());
+        error = entry.packed
+                    ? quantizeTensorQ8_0Packed(
+                          source,
+                          reinterpret_cast<const uint8_t *>(shard.data()) +
+                              source.dataOffset,
+                          expected.data())
+                    : quantizeTensorQ8_0(
+                          source,
+                          reinterpret_cast<const uint8_t *>(shard.data()) +
+                              source.dataOffset,
+                          expected.data());
         ASSERT_FALSE(!!error) << llvm::toString(std::move(error));
         EXPECT_EQ(std::memcmp(weight.data, expected.data(), entry.size), 0);
       } else {

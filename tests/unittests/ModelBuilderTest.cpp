@@ -88,8 +88,8 @@ TEST(ModelBuilderTest, BuildsCompleteGraph) {
 
   for (const char *name :
        {"llmcp_embed", "llmcp_forward_prefill", "llmcp_forward_decode",
-        "llmcp_lm_head", "llmcp_model", "llmcp_model_prefill",
-        "llmcp_model_decode"}) {
+        "llmcp_lm_head", "llmcp_lm_head_decode", "llmcp_model",
+        "llmcp_model_prefill", "llmcp_model_decode"}) {
     EXPECT_TRUE(SymbolTable::lookupSymbolIn(module.get(), name));
   }
 
@@ -101,10 +101,13 @@ TEST(ModelBuilderTest, BuildsCompleteGraph) {
     ASSERT_TRUE(func);
     bool found = false;
     bool foundLastLogits = false;
+    StringRef lmHead = entry.first == "llmcp_model_decode"
+                           ? "llmcp_lm_head_decode"
+                           : "llmcp_lm_head";
     func.walk([&](func::CallOp call) {
       if (call.getCallee() == entry.second)
         found = true;
-      if (call.getCallee() == "llmcp_lm_head") {
+      if (call.getCallee() == lmHead) {
         auto cast = call.getOperand(0).getDefiningOp<tensor::CastOp>();
         ASSERT_TRUE(cast);
         auto slice = cast.getSource().getDefiningOp<tensor::ExtractSliceOp>();

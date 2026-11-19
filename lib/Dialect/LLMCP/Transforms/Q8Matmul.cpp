@@ -1,10 +1,11 @@
 //===- Q8Matmul.cpp - Packed Q8 SDOT prefill GEMM -------------------------===//
 //
-// Packs weight and activation panels for an SDOT-by-element microkernel.
+// Reads the pre-packed four-column weights for an SDOT-by-element microkernel.
 //
 //===----------------------------------------------------------------------===//
 
 #include "llmcp/Dialect/LLMCP/Transforms/MatmulLoweringInternal.h"
+#include "llmcp/Support/Q8PackedLayout.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -23,29 +24,25 @@ using namespace mlir::llmcp;
 namespace {
 
 constexpr int64_t kQuantBlock = 32;
-constexpr int64_t kLanes = 4;
+constexpr int64_t kLanes = kQ8PackedLanes;
 constexpr int64_t kRowsPerTile = 4;
 constexpr int64_t kGroupsPerTile = 2;
-constexpr int64_t kColumnsPerPanel = 64;
-constexpr int64_t kRowsPerPanel = 32;
-constexpr int64_t kMinRows = 16;
-constexpr int64_t kMinColumns = 64;
 
-static_assert(kRowsPerPanel % kRowsPerTile == 0);
-static_assert(kColumnsPerPanel % (kGroupsPerTile * kLanes) == 0);
+static_assert(kQ8PackedBlockBytes == kLanes * (kQuantBlock + 2));
 
 class PackedQ8Matmul {
 public:
   PackedQ8Matmul(PatternRewriter &builder, Location loc)
       : builder(builder), loc(loc), f32(builder.getF32Type()),
         i8(builder.getI8Type()), i32(builder.getI32Type()),
-        i8x16(VectorType::get({16}, i8)), i32x4(VectorType::get({4}, i32)),
-        f32x4(VectorType::get({4}, f32)), zero(index(0)),
+        i8x16(VectorType::get({16}, i8)), i8x8(VectorType::get({8}, i8)),
+        i32x4(VectorType::get({4}, i32)), f32x4(VectorType::get({4}, f32)),
+        f16x4(VectorType::get({4}, builder.getF16Type())), zero(index(0)),
         zeroF(
             builder.create<arith::ConstantOp>(loc, builder.getZeroAttr(f32))) {}
 
-  void emit(Value input, Value weight, Value output, Value rows,
-            StringRef activation);
+  Value emit(Value input, Value weight, Value output, Value rows,
+             int64_t blockCount, int64_t channels, StringRef activation);
 
 private:
   Value index(int64_t value) {
@@ -54,10 +51,6 @@ private:
 
   Value add(Value base, int64_t offset) {
     return builder.create<arith::AddIOp>(loc, base, index(offset));
-  }
-
-  Value min(Value lhs, Value rhs) {
-    return builder.create<arith::MinUIOp>(loc, lhs, rhs);
   }
 
   scf::ForOp loop(Value begin, Value end, int64_t step = 1,
@@ -79,12 +72,9 @@ private:
 
   void packActivations(Value input, Value rows, Value blocks, Value data,
                        Value scales);
-  void packWeights(Value weight, Value panelStart, Value groups, int64_t blocks,
-                   Value data, Value scales);
-  void emitTile(Value row, Value panelStart, Value group, Value blocks,
-                int64_t rowCount, Value aData, Value aScales, Value bData,
-                Value bScales, Value output, Type outputElement,
-                StringRef activation);
+  void emitTile(Value row, Value group, Value blocks, int64_t rowCount,
+                Value aData, Value aScales, Value weight, Value output,
+                Type outputElement, StringRef activation, int64_t blockCount);
 
   PatternRewriter &builder;
   Location loc;
@@ -92,8 +82,10 @@ private:
   Type i8;
   Type i32;
   VectorType i8x16;
+  VectorType i8x8;
   VectorType i32x4;
   VectorType f32x4;
+  VectorType f16x4;
   Value zero;
   Value zeroF;
 };
@@ -148,94 +140,15 @@ void PackedQ8Matmul::packActivations(Value input, Value rows, Value blocks,
   builder.setInsertionPointAfter(rowLoop);
 }
 
-void PackedQ8Matmul::packWeights(Value weight, Value panelStart, Value groups,
-                                 int64_t blockCount, Value data, Value scales) {
-  auto groupLoop = loop(zero, groups);
-  Value group = groupLoop.getInductionVar();
-  Value globalGroup = builder.create<arith::AddIOp>(loc, panelStart, group);
-  Value firstColumn =
-      builder.create<arith::MulIOp>(loc, globalGroup, index(kLanes));
-  Value tile =
-      builder.create<arith::DivUIOp>(loc, group, index(kGroupsPerTile));
-  Value groupInTile =
-      builder.create<arith::RemUIOp>(loc, group, index(kGroupsPerTile));
-  Value groupOffset =
-      builder.create<arith::MulIOp>(loc, groupInTile, index(16));
-  auto blockLoop = loop(zero, index(blockCount));
-  Value block = blockLoop.getInductionVar();
-  Value scaleOffset = builder.create<arith::MulIOp>(loc, block, index(2));
-  Value dataOffset =
-      builder.create<arith::MulIOp>(loc, block, index(kQuantBlock));
-  dataOffset = add(dataOffset, blockCount * 2);
-  auto i16 = builder.getI16Type();
-  auto half4 = VectorType::get({kLanes}, builder.getF16Type());
-  Value shift =
-      builder.create<arith::ConstantOp>(loc, builder.getI16IntegerAttr(8));
-
-  SmallVector<Value, kLanes> weightScales;
-  SmallVector<Value, kLanes> columns[kQuantBlock / 16];
-  for (int64_t lane = 0; lane < kLanes; ++lane) {
-    Value column = add(firstColumn, lane);
-    Value lowByte = builder.create<memref::LoadOp>(
-        loc, weight, ValueRange{column, scaleOffset});
-    Value highByte = builder.create<memref::LoadOp>(
-        loc, weight, ValueRange{column, add(scaleOffset, 1)});
-    Value low = builder.create<arith::ExtUIOp>(loc, i16, lowByte);
-    Value high = builder.create<arith::ExtUIOp>(loc, i16, highByte);
-    high = builder.create<arith::ShLIOp>(loc, high, shift);
-    Value bits = builder.create<arith::OrIOp>(loc, low, high);
-    weightScales.push_back(
-        builder.create<arith::BitcastOp>(loc, builder.getF16Type(), bits));
-    for (int64_t halfIndex = 0; halfIndex < kQuantBlock / 16; ++halfIndex) {
-      Value bytes =
-          load(i8x16, weight, {column, add(dataOffset, halfIndex * 16)});
-      columns[halfIndex].push_back(
-          builder.create<vector::BitCastOp>(loc, i32x4, bytes));
-    }
-  }
-  Value halfScales =
-      builder.create<vector::FromElementsOp>(loc, half4, weightScales);
-  Value floatScales = builder.create<arith::ExtFOp>(loc, f32x4, halfScales);
-  builder.create<vector::StoreOp>(loc, floatScales, scales,
-                                  ValueRange{group, block, zero});
-
-  // Transpose four columns of four-byte words. Each SDOT lane then computes
-  // a different output column with the same activation word.
-  for (int64_t halfIndex = 0; halfIndex < kQuantBlock / 16; ++halfIndex) {
-    ArrayRef<Value> c = columns[halfIndex];
-    for (int64_t pair = 0; pair < 2; ++pair) {
-      int64_t first = pair * 2;
-      int64_t second = first + 1;
-      SmallVector<int64_t, 4> mask{first, first + 4, second, second + 4};
-      Value low = builder.create<vector::ShuffleOp>(loc, c[0], c[1], mask);
-      Value high = builder.create<vector::ShuffleOp>(loc, c[2], c[3], mask);
-      for (int64_t word = 0; word < 2; ++word) {
-        int64_t start = word * 2;
-        SmallVector<int64_t, 4> words{start, start + 1, start + 4, start + 5};
-        Value packed = builder.create<vector::ShuffleOp>(loc, low, high, words);
-        Value bytes = builder.create<vector::BitCastOp>(loc, i8x16, packed);
-        int64_t offset = (halfIndex * 4 + first + word) * kGroupsPerTile * 16;
-        builder.create<vector::StoreOp>(
-            loc, bytes, data,
-            ValueRange{tile, block, add(groupOffset, offset)});
-      }
-    }
-  }
-  builder.setInsertionPointAfter(groupLoop);
-}
-
-void PackedQ8Matmul::emitTile(Value row, Value panelStart, Value group,
-                              Value blocks, int64_t rowCount, Value aData,
-                              Value aScales, Value bData, Value bScales,
-                              Value output, Type outputElement,
-                              StringRef activation) {
+void PackedQ8Matmul::emitTile(Value row, Value group, Value blocks,
+                              int64_t rowCount, Value aData, Value aScales,
+                              Value weight, Value output, Type outputElement,
+                              StringRef activation, int64_t blockCount) {
   Value rowTile = builder.create<arith::DivUIOp>(loc, row, index(kRowsPerTile));
   Value firstRow =
       rowCount == kRowsPerTile
           ? zero
           : builder.create<arith::RemUIOp>(loc, row, index(kRowsPerTile));
-  Value columnTile =
-      builder.create<arith::DivUIOp>(loc, group, index(kGroupsPerTile));
   Value zeroF32x4 = splat(f32x4, zeroF);
   Value zeroI32x4 =
       builder.create<arith::ConstantOp>(loc, builder.getZeroAttr(i32x4));
@@ -243,8 +156,18 @@ void PackedQ8Matmul::emitTile(Value row, Value panelStart, Value group,
   auto blockLoop = loop(zero, blocks, 1, init);
   Value block = blockLoop.getInductionVar();
   SmallVector<Value> dots(rowCount * kGroupsPerTile, zeroI32x4);
-  // Unroll one K=32 quantization block. LLVM selects SDOT-by-element
-  // from the splat of a four-byte activation word.
+  Value recordBytes =
+      builder.create<arith::MulIOp>(loc, block, index(kQ8PackedBlockBytes));
+  SmallVector<Value> records;
+  for (int64_t g = 0; g < kGroupsPerTile; ++g) {
+    Value globalGroup = add(group, g);
+    Value groupBase = builder.create<arith::MulIOp>(
+        loc, globalGroup, index(blockCount * kQ8PackedBlockBytes));
+    records.push_back(
+        builder.create<arith::AddIOp>(loc, groupBase, recordBytes).getResult());
+  }
+
+  // Each half of a 32-element block is four four-byte activation words.
   for (int64_t half = 0; half < kQuantBlock / 16; ++half) {
     SmallVector<Value> aWords;
     for (int64_t r = 0; r < rowCount; ++r) {
@@ -255,11 +178,11 @@ void PackedQ8Matmul::emitTile(Value row, Value panelStart, Value group,
     }
     for (int64_t word = 0; word < 4; ++word) {
       SmallVector<Value, kGroupsPerTile> weights;
-      for (int64_t g = 0; g < kGroupsPerTile; ++g)
-        weights.push_back(
-            load(i8x16, bData,
-                 {columnTile, block,
-                  index(((half * 4 + word) * kGroupsPerTile + g) * 16)}));
+      for (int64_t g = 0; g < kGroupsPerTile; ++g) {
+        int64_t offset =
+            kQ8PackedScaleBytes + (half * 4 + word) * kQ8PackedChunkBytes;
+        weights.push_back(load(i8x16, weight, {add(records[g], offset)}));
+      }
       for (int64_t r = 0; r < rowCount; ++r) {
         SmallVector<int64_t, 4> mask(4, word);
         Value a =
@@ -279,21 +202,15 @@ void PackedQ8Matmul::emitTile(Value row, Value panelStart, Value group,
   }
 
   SmallVector<Value, kGroupsPerTile> weightScales;
-  for (int64_t g = 0; g < kGroupsPerTile; ++g)
-    weightScales.push_back(load(f32x4, bScales, {add(group, g), block, zero}));
-  Value activationScales;
-  if (rowCount == kRowsPerTile)
-    activationScales = load(f32x4, aScales, {rowTile, block, zero});
+  for (int64_t g = 0; g < kGroupsPerTile; ++g) {
+    Value scaleBytes = load(i8x8, weight, {records[g]});
+    Value scales = builder.create<vector::BitCastOp>(loc, f16x4, scaleBytes);
+    weightScales.push_back(builder.create<arith::ExtFOp>(loc, f32x4, scales));
+  }
   SmallVector<Value> accumulators;
   for (int64_t r = 0; r < rowCount; ++r) {
-    Value scale =
-        activationScales
-            ? builder.create<vector::ExtractOp>(loc, activationScales, r)
-                  .getResult()
-            : builder
-                  .create<memref::LoadOp>(loc, aScales,
-                                          ValueRange{rowTile, block, firstRow})
-                  .getResult();
+    Value scale = builder.create<memref::LoadOp>(
+        loc, aScales, ValueRange{rowTile, block, add(firstRow, r)});
     Value broadcast = splat(f32x4, scale);
     for (int64_t g = 0; g < kGroupsPerTile; ++g) {
       int64_t tileIndex = r * kGroupsPerTile + g;
@@ -307,12 +224,11 @@ void PackedQ8Matmul::emitTile(Value row, Value panelStart, Value group,
   builder.create<scf::YieldOp>(loc, accumulators);
   builder.setInsertionPointAfter(blockLoop);
 
-  Value globalGroup = builder.create<arith::AddIOp>(loc, panelStart, group);
   for (int64_t r = 0; r < rowCount; ++r) {
     for (int64_t g = 0; g < kGroupsPerTile; ++g) {
       Value result = blockLoop.getResult(r * kGroupsPerTile + g);
-      Value column = builder.create<arith::MulIOp>(loc, add(globalGroup, g),
-                                                   index(kLanes));
+      Value column =
+          builder.create<arith::MulIOp>(loc, add(group, g), index(kLanes));
       if (activation == "none") {
         if (outputElement.isBF16())
           result = builder.create<arith::TruncFOp>(
@@ -333,19 +249,17 @@ void PackedQ8Matmul::emitTile(Value row, Value panelStart, Value group,
   }
 }
 
-void PackedQ8Matmul::emit(Value input, Value weight, Value output, Value rows,
-                          StringRef activation) {
-  auto inputType = cast<RankedTensorType>(input.getType());
+Value PackedQ8Matmul::emit(Value input, Value weight, Value output, Value rows,
+                           int64_t blockCount, int64_t channels,
+                           StringRef activation) {
   auto outputType = cast<MemRefType>(output.getType());
-  int64_t channels = outputType.getDimSize(1);
-  int64_t blockCount = inputType.getDimSize(1) / kQuantBlock;
   auto outputElement = outputType.getElementType();
   Value blocks = index(blockCount);
   Value tileRows =
       builder.create<arith::CeilDivUIOp>(loc, rows, index(kRowsPerTile));
   Value tail = builder.create<arith::RemUIOp>(loc, rows, index(kRowsPerTile));
   Value mainRows = builder.create<arith::SubIOp>(loc, rows, tail);
-  // A packs each row tile's bytes and FP32 scales by quantization block.
+  // Activations change every call, so pack only the A panels.
   constexpr int64_t dyn = ShapedType::kDynamic;
   Value aData = builder.create<memref::AllocOp>(
       loc, MemRefType::get({dyn, blockCount, kRowsPerTile * kQuantBlock}, i8),
@@ -355,105 +269,58 @@ void PackedQ8Matmul::emit(Value input, Value weight, Value output, Value rows,
       ValueRange{tileRows}, builder.getI64IntegerAttr(64));
   packActivations(input, rows, blocks, aData, aScales);
 
-  // Pack B once per task and reuse it across row panels. Each packed K block
-  // interleaves the weight vectors for the two column groups of a tile.
-  constexpr int64_t groupsPerPanel = kColumnsPerPanel / kLanes;
   Value groups = index(channels / kLanes);
-  auto columnPanel = loop(zero, groups, groupsPerPanel, {}, /*parallel=*/true);
-  Value panelStart = columnPanel.getInductionVar();
-  Value remaining = builder.create<arith::SubIOp>(loc, groups, panelStart);
-  Value panelGroups = min(index(groupsPerPanel), remaining);
-  Value bData = builder.create<memref::AllocOp>(
-      loc,
-      MemRefType::get({groupsPerPanel / kGroupsPerTile, blockCount,
-                       kGroupsPerTile * kLanes * kQuantBlock},
-                      i8),
-      ValueRange{}, builder.getI64IntegerAttr(64));
-  Value bScales = builder.create<memref::AllocOp>(
-      loc, MemRefType::get({groupsPerPanel, blockCount, kLanes}, f32),
-      ValueRange{}, builder.getI64IntegerAttr(64));
-  packWeights(weight, panelStart, panelGroups, blockCount, bData, bScales);
+  auto columnTile = loop(zero, groups, kGroupsPerTile, {}, /*parallel=*/true);
+  Value group = columnTile.getInductionVar();
+  auto rowTile = loop(zero, mainRows, kRowsPerTile);
+  emitTile(rowTile.getInductionVar(), group, blocks, kRowsPerTile, aData,
+           aScales, weight, output, outputElement, activation, blockCount);
+  builder.setInsertionPointAfter(rowTile);
 
-  auto rowPanel = loop(zero, mainRows, kRowsPerPanel);
-  Value rowStart = rowPanel.getInductionVar();
-  Value rowEnd = min(add(rowStart, kRowsPerPanel), mainRows);
-  auto columnTile = loop(zero, panelGroups, kGroupsPerTile);
-  auto rowTile = loop(rowStart, rowEnd, kRowsPerTile);
-  emitTile(rowTile.getInductionVar(), panelStart, columnTile.getInductionVar(),
-           blocks, kRowsPerTile, aData, aScales, bData, bScales, output,
-           outputElement, activation);
-  builder.setInsertionPointAfter(rowPanel);
-
+  auto inputType = cast<RankedTensorType>(input.getType());
   if (inputType.isDynamicDim(0) || inputType.getDimSize(0) % kRowsPerTile) {
-    auto tailColumn = loop(zero, panelGroups, kGroupsPerTile);
     auto tailRow = loop(mainRows, rows);
-    emitTile(tailRow.getInductionVar(), panelStart,
-             tailColumn.getInductionVar(), blocks, 1, aData, aScales, bData,
-             bScales, output, outputElement, activation);
+    emitTile(tailRow.getInductionVar(), group, blocks, 1, aData, aScales,
+             weight, output, outputElement, activation, blockCount);
+    builder.setInsertionPointAfter(tailRow);
   }
-  builder.setInsertionPointAfter(columnPanel);
+  builder.setInsertionPointAfter(columnTile);
+  return output;
 }
 
 } // namespace
 #endif
 
-Value mlir::llmcp::emitPackedQ8Matmul(
-    PatternRewriter &rewriter, Location loc, Value input, Value weight,
-    RankedTensorType resultType, StringRef activation,
-    llvm::function_ref<Value(Value)> emitSmallMatmul) {
+Value mlir::llmcp::emitQ8PackedMatmul(PatternRewriter &rewriter, Location loc,
+                                      Value input, Value weight,
+                                      RankedTensorType resultType,
+                                      StringRef activation) {
 #if defined(__aarch64__) && !defined(__AARCH64EB__) &&                         \
     defined(LLMCP_ENABLE_SDOT)
   auto inputType = cast<RankedTensorType>(input.getType());
   auto weightType = cast<MemRefType>(weight.getType());
-  if (inputType.getRank() != 2 || weightType.getRank() != 2 ||
+  if (inputType.getRank() != 2 || weightType.getRank() != 1 ||
       !weightType.getElementType().isInteger(8) ||
       (!inputType.getElementType().isBF16() &&
        !inputType.getElementType().isF32()) ||
       (!resultType.getElementType().isBF16() &&
        !resultType.getElementType().isF32()))
     return Value();
-  int64_t rows = inputType.getDimSize(0);
   int64_t channels = resultType.getDimSize(1);
   int64_t reduction = inputType.getDimSize(1);
-  if ((!ShapedType::isDynamic(rows) && rows < kMinRows) ||
-      ShapedType::isDynamic(channels) || channels < kMinColumns ||
-      channels % (kGroupsPerTile * kLanes) != 0 ||
-      ShapedType::isDynamic(reduction) || reduction == 0 ||
-      reduction % kQuantBlock != 0)
-    return Value();
-  SmallVector<int64_t> strides;
-  int64_t offset;
-  if (failed(weightType.getStridesAndOffset(strides, offset)) ||
-      strides[1] != 1)
+  if (ShapedType::isDynamic(channels) || ShapedType::isDynamic(reduction) ||
+      channels <= 0 || channels % (kGroupsPerTile * kLanes) != 0 ||
+      reduction == 0 || reduction % kQuantBlock != 0)
     return Value();
 
-  Value rowCount = rewriter.create<tensor::DimOp>(loc, input, 0);
+  Value rows = rewriter.create<tensor::DimOp>(loc, input, 0);
   auto outputType = MemRefType::get({ShapedType::kDynamic, channels},
                                     resultType.getElementType());
   Value output = rewriter.create<memref::AllocOp>(
-      loc, outputType, ValueRange{rowCount}, rewriter.getI64IntegerAttr(128));
-  auto emitPacked = [&] {
-    PackedQ8Matmul(rewriter, loc)
-        .emit(input, weight, output, rowCount, activation);
-  };
-  if (!inputType.isDynamicDim(0)) {
-    emitPacked();
-    return output;
-  }
-
-  // Both branches write the same output so bufferization does not need to
-  // merge ownership or clone a branch-local result.
-  Value minimum = rewriter.create<arith::ConstantIndexOp>(loc, kMinRows);
-  Value usePacked = rewriter.create<arith::CmpIOp>(
-      loc, arith::CmpIPredicate::uge, rowCount, minimum);
-  auto dispatch =
-      rewriter.create<scf::IfOp>(loc, usePacked, /*withElseRegion=*/true);
-  rewriter.setInsertionPointToStart(&dispatch.getThenRegion().front());
-  emitPacked();
-  rewriter.setInsertionPointToStart(&dispatch.getElseRegion().front());
-  emitSmallMatmul(output);
-  rewriter.setInsertionPointAfter(dispatch);
-  return output;
+      loc, outputType, ValueRange{rows}, rewriter.getI64IntegerAttr(128));
+  return PackedQ8Matmul(rewriter, loc)
+      .emit(input, weight, output, rows, reduction / kQuantBlock, channels,
+            activation);
 #else
   return Value();
 #endif

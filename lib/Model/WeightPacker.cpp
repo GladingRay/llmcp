@@ -134,7 +134,7 @@ std::string buildManifest(llvm::StringRef modelDir, const WeightLayout &layout) 
   root["quantization"] = stringifyQuantizationMode(layout.getQuantization());
   if (layout.getQuantization() != QuantizationMode::None) {
     root["block_size"] = kQ8_0BlockSize;
-    root["quant_layout"] = "q8_0_split";
+    root["quant_layout"] = "q8_0_p4";
   }
 
   llvm::json::Array entries;
@@ -253,8 +253,11 @@ llvm::Error mlir::llmcp::packWeights(llvm::StringRef modelDir,
                                      "tensor extends past shard: " +
                                          entry.name);
     if (entry.quantized) {
-      if (llvm::Error error = quantizeTensorQ8_0(
-              info, shard.data() + info.dataOffset, output.data() + entry.offset))
+      auto quantize =
+          entry.packed ? quantizeTensorQ8_0Packed : quantizeTensorQ8_0;
+      if (llvm::Error error =
+              quantize(info, shard.data() + info.dataOffset,
+                       output.data() + entry.offset))
         return error;
     } else {
       std::memcpy(output.data() + entry.offset, shard.data() + info.dataOffset,

@@ -23,12 +23,17 @@ Value emitQ8DecodeMatmul(PatternRewriter &rewriter, Location loc, Value input,
                          Value weight, RankedTensorType resultType,
                          llvm::StringRef activation);
 
-/// Returns the output buffer when packed lowering is available. For a dynamic
-/// row count the small-matrix branch writes into the same output buffer.
-Value emitPackedQ8Matmul(PatternRewriter &rewriter, Location loc, Value input,
+/// Returns the output buffer when the packed-layout decode GEMV is available.
+/// The weight is a flat byte payload in the four-column lane layout.
+Value emitQ8PackedDecodeMatmul(PatternRewriter &rewriter, Location loc,
+                               Value input, Value weight,
+                               RankedTensorType resultType,
+                               llvm::StringRef activation);
+
+/// Returns the output buffer when the packed-layout prefill GEMM is available.
+Value emitQ8PackedMatmul(PatternRewriter &rewriter, Location loc, Value input,
                          Value weight, RankedTensorType resultType,
-                         llvm::StringRef activation,
-                         llvm::function_ref<Value(Value)> emitSmallMatmul);
+                         llvm::StringRef activation);
 
 Value lowerMatmulInternal(PatternRewriter &rewriter, Location loc, Value input,
                           Value weight, RankedTensorType resultType,

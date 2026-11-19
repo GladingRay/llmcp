@@ -6,6 +6,8 @@
 
 #include "llmcp/Model/Quantization.h"
 
+#include "llmcp/Support/Q8PackedLayout.h"
+
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/Support/Error.h"
@@ -158,4 +160,55 @@ void mlir::llmcp::dequantizeQ8_0(ArrayRef<Q8_0Block> input,
     for (int64_t i = 0; i < kQ8_0BlockSize; ++i)
       output[block * kQ8_0BlockSize + i] = scale * input[block].qs[i];
   }
+}
+
+Error mlir::llmcp::quantizeTensorQ8_0Packed(const TensorInfo &tensor,
+                                           const uint8_t *source,
+                                           uint8_t *destination) {
+  if (!isQ8PackedShape(tensor.shape))
+    return createStringError(
+        inconvertibleErrorCode(),
+        "packed Q8_0 requires shape [rows, cols] with rows % 4 == 0 and "
+        "cols % 32 == 0");
+  if (tensor.dtype != "BF16" && tensor.dtype != "F32")
+    return createStringError(inconvertibleErrorCode(),
+                             "Q8_0 source must be BF16 or F32");
+
+  const int64_t rows = tensor.shape[0];
+  const int64_t cols = tensor.shape[1];
+  const int64_t blocks = cols / kQ8_0BlockSize;
+  const int64_t groups = rows / kQ8PackedLanes;
+  std::vector<float> values(static_cast<size_t>(cols));
+  std::vector<Q8_0Block> temporary(
+      static_cast<size_t>(kQ8PackedLanes * blocks));
+  for (int64_t group = 0; group < groups; ++group) {
+    for (int64_t lane = 0; lane < kQ8PackedLanes; ++lane) {
+      int64_t row = group * kQ8PackedLanes + lane;
+      for (int64_t col = 0; col < cols; ++col)
+        values[col] = loadFloat(source, row * cols + col, tensor.dtype);
+      quantizeRowQ8_0(
+          values, MutableArrayRef<Q8_0Block>(
+                      temporary.data() + lane * blocks, blocks));
+    }
+    for (int64_t block = 0; block < blocks; ++block) {
+      uint8_t *record = destination +
+                        static_cast<uint64_t>(group * blocks + block) *
+                            kQ8PackedBlockBytes;
+      for (int64_t lane = 0; lane < kQ8PackedLanes; ++lane)
+        std::memcpy(record + lane * 2,
+                    &temporary[lane * blocks + block].d, sizeof(uint16_t));
+      for (int64_t half = 0; half < 2; ++half) {
+        for (int64_t word = 0; word < 4; ++word) {
+          uint8_t *chunk =
+              record + kQ8PackedScaleBytes +
+              (half * 4 + word) * kQ8PackedChunkBytes;
+          for (int64_t lane = 0; lane < kQ8PackedLanes; ++lane)
+            std::memcpy(
+                chunk + lane * 4,
+                temporary[lane * blocks + block].qs + half * 16 + word * 4, 4);
+        }
+      }
+    }
+  }
+  return Error::success();
 }

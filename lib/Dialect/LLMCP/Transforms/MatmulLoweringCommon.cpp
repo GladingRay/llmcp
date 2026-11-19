@@ -1090,6 +1090,19 @@ Value lowerMatmulInternal(PatternRewriter &rewriter, Location loc, Value input,
                           Value weight, RankedTensorType resultType,
                           StringRef weightFormat, bool transposeB, bool decode,
                           StringRef activation) {
+  if (weightFormat == "q8_0_p4") {
+    if (transposeB)
+      return Value();
+    Value output =
+        decode ? emitQ8PackedDecodeMatmul(rewriter, loc, input, weight,
+                                          resultType, activation)
+               : emitQ8PackedMatmul(rewriter, loc, input, weight, resultType,
+                                    activation);
+    if (!output)
+      return Value();
+    return rewriter.create<bufferization::ToTensorOp>(
+        loc, resultType, output, /*restrict=*/true);
+  }
   if (weightFormat == "q8_0") {
     if (transposeB)
       return Value();
@@ -1101,17 +1114,11 @@ Value lowerMatmulInternal(PatternRewriter &rewriter, Location loc, Value input,
         output = emitQ8Matmul(rewriter, loc, input, weight, resultType, decode,
                               activation);
     } else {
-      auto emitSmallMatmul = [&](Value buffer) -> Value {
-        if (Value blocked = emitPrefillQ8Blocked(rewriter, loc, input, weight,
-                                                 resultType, activation, buffer))
-          return blocked;
-        return emitQ8Matmul(rewriter, loc, input, weight, resultType, false,
-                            activation, buffer);
-      };
-      output = emitPackedQ8Matmul(rewriter, loc, input, weight, resultType,
-                                  activation, emitSmallMatmul);
+      output = emitPrefillQ8Blocked(rewriter, loc, input, weight, resultType,
+                                    activation, {});
       if (!output)
-        output = emitSmallMatmul({});
+        output = emitQ8Matmul(rewriter, loc, input, weight, resultType, false,
+                              activation);
     }
     if (!output)
       return Value();

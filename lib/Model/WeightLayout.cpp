@@ -6,6 +6,7 @@
 
 #include "llmcp/Model/WeightLayout.h"
 #include "llmcp/Support/PackedWeights.h"
+#include "llmcp/Support/Q8PackedLayout.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/Error.h"
@@ -77,6 +78,9 @@ llvm::Error WeightLayout::addTensor(StringRef name,
     entry.size = *quantizedSize;
     entry.dtype = "Q8_0";
     entry.quantized = true;
+    // Shapes that do not fill a pair of four-column lane groups keep the
+    // canonical row layout and select the q8_0 kernels.
+    entry.packed = isQ8PackedShape(entry.shape);
   }
   entries_.push_back(std::move(entry));
   offsets_[name] = offset;

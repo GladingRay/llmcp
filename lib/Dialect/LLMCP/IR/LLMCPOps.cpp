@@ -25,22 +25,54 @@ bool areCompatible(int64_t lhs, int64_t rhs) {
   return ShapedType::isDynamic(lhs) || ShapedType::isDynamic(rhs) || lhs == rhs;
 }
 
+/// Returns true for the canonical and packed Q8_0 storage formats.
+bool isQ8Format(StringRef format) {
+  return format == "q8_0" || format == "q8_0_p4";
+}
+
 } // namespace
 
 LogicalResult LinearOp::verify() {
   auto inputType = dyn_cast<ShapedType>(getInput().getType());
   auto weightType = dyn_cast<MemRefType>(getWeight().getType());
   auto outputType = dyn_cast<ShapedType>(getOutput().getType());
+  const StringRef format = getWeightFormat();
 
   if (!inputType || !inputType.hasRank() || inputType.getRank() != 2)
     return emitOpError("input must be a rank-2 tensor");
-  if (!weightType || weightType.getRank() != 2)
+  if (!weightType || (weightType.getRank() != 2 &&
+                      !(format == "q8_0_p4" && weightType.getRank() == 1)))
     return emitOpError("weight must be a rank-2 memref");
   if (!outputType || !outputType.hasRank() || outputType.getRank() != 2)
     return emitOpError("output must be a rank-2 tensor");
 
   const bool transposeB = getTransposeB();
-  const StringRef format = getWeightFormat();
+  if (format == "q8_0_p4") {
+    if (transposeB)
+      return emitOpError("q8_0_p4 weights do not support transpose_b");
+    if (weightType.getRank() != 1 || !weightType.getElementType().isInteger(8))
+      return emitOpError("q8_0_p4 weight must be a rank-1 i8 memref");
+    const int64_t inputK = inputType.getDimSize(1);
+    if (!ShapedType::isDynamic(inputK) && inputK % 32 != 0)
+      return emitOpError("q8_0_p4 requires K to be a multiple of 32");
+    const int64_t channels = outputType.getDimSize(1);
+    if (!ShapedType::isDynamic(channels) && channels % 8 != 0)
+      return emitOpError("q8_0_p4 requires N to be a multiple of 8");
+    const int64_t rowBytes = ShapedType::isDynamic(inputK)
+                                 ? ShapedType::kDynamic
+                                 : inputK + (inputK / 32) * 2;
+    const int64_t expectedBytes =
+        ShapedType::isDynamic(rowBytes) || ShapedType::isDynamic(channels)
+            ? ShapedType::kDynamic
+            : channels * rowBytes;
+    if (!areCompatible(weightType.getDimSize(0), expectedBytes))
+      return emitOpError("q8_0_p4 weight size must be N * (K + (K/32)*2)");
+    if (!areCompatible(inputType.getDimSize(0), outputType.getDimSize(0)))
+      return emitOpError("output outer dimension must match input");
+    if (outputType.getElementType() != inputType.getElementType())
+      return emitOpError("output element type must match input");
+    return success();
+  }
   if (format == "q8_0") {
     if (transposeB)
       return emitOpError("q8_0 weights do not support transpose_b");
@@ -185,13 +217,32 @@ LogicalResult EmbeddingOp::verify() {
   auto result = dyn_cast<ShapedType>(getResult().getType());
   if (!tokens || !tokens.hasRank() || tokens.getRank() != 1)
     return emitOpError("tokens must be a rank-1 tensor");
-  if (!table || table.getRank() != 2)
-    return emitOpError("table must be a rank-2 memref");
+  if (!table)
+    return emitOpError("table must be a memref");
   if (!result || !result.hasRank() || result.getRank() != 2)
     return emitOpError("result must be a rank-2 tensor");
   if (!areCompatible(result.getDimSize(0), tokens.getDimSize(0)))
     return emitOpError("result and tokens must have the same length");
-  if (getWeightFormat() == "q8_0") {
+  if (getWeightFormat() == "q8_0_p4") {
+    if (table.getRank() != 1 || !table.getElementType().isInteger(8))
+      return emitOpError("q8_0_p4 table must be a rank-1 i8 memref");
+    const int64_t hiddenDim = result.getDimSize(1);
+    if (!ShapedType::isDynamic(hiddenDim) && hiddenDim % 32 != 0)
+      return emitOpError("q8_0_p4 requires hidden size to be a multiple of 32");
+    if (!ShapedType::isDynamic(hiddenDim) &&
+        !ShapedType::isDynamic(table.getDimSize(0))) {
+      const int64_t rowBytes = hiddenDim + (hiddenDim / 32) * 2;
+      if (table.getDimSize(0) % (8 * rowBytes) != 0)
+        return emitOpError("q8_0_p4 table size must cover groups of 8 rows");
+    }
+    if (!result.getElementType().isBF16() &&
+        !result.getElementType().isF32())
+      return emitOpError("q8_0_p4 result must be bf16 or f32");
+    return success();
+  }
+  if (table.getRank() != 2)
+    return emitOpError("table must be a rank-2 memref");
+  if (isQ8Format(getWeightFormat())) {
     if (!table.getElementType().isInteger(8))
       return emitOpError("q8_0 table must be i8");
     const int64_t hiddenDim = result.getDimSize(1);
@@ -222,13 +273,32 @@ LogicalResult LmHeadOp::verify() {
   auto logits = dyn_cast<ShapedType>(getLogits().getType());
   if (!hidden || !hidden.hasRank() || hidden.getRank() != 2)
     return emitOpError("hidden must be a rank-2 tensor");
-  if (!table || table.getRank() != 2)
-    return emitOpError("table must be a rank-2 memref");
+  if (!table)
+    return emitOpError("table must be a memref");
   if (!logits || !logits.hasRank() || logits.getRank() != 2)
     return emitOpError("logits must be a rank-2 tensor");
   if (!areCompatible(logits.getDimSize(0), hidden.getDimSize(0)))
     return emitOpError("logits and hidden must have the same length");
-  if (getWeightFormat() == "q8_0") {
+  if (getWeightFormat() == "q8_0_p4") {
+    if (table.getRank() != 1 || !table.getElementType().isInteger(8))
+      return emitOpError("q8_0_p4 table must be a rank-1 i8 memref");
+    const int64_t hiddenDim = hidden.getDimSize(1);
+    if (!ShapedType::isDynamic(hiddenDim) && hiddenDim % 32 != 0)
+      return emitOpError("q8_0_p4 requires hidden size to be a multiple of 32");
+    const int64_t vocab = logits.getDimSize(1);
+    if (!ShapedType::isDynamic(vocab) && vocab % 8 != 0)
+      return emitOpError("q8_0_p4 requires vocabulary to be a multiple of 8");
+    if (!ShapedType::isDynamic(hiddenDim) && !ShapedType::isDynamic(vocab)) {
+      const int64_t rowBytes = hiddenDim + (hiddenDim / 32) * 2;
+      const int64_t expectedBytes = vocab * rowBytes;
+      if (!areCompatible(table.getDimSize(0), expectedBytes))
+        return emitOpError("q8_0_p4 table size must be V * (K + (K/32)*2)");
+    }
+    return success();
+  }
+  if (table.getRank() != 2)
+    return emitOpError("table must be a rank-2 memref");
+  if (isQ8Format(getWeightFormat())) {
     if (!table.getElementType().isInteger(8))
       return emitOpError("q8_0 table must be i8");
     const int64_t hiddenDim = hidden.getDimSize(1);

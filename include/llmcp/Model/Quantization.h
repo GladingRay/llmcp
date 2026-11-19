@@ -42,6 +42,15 @@ llvm::Expected<uint64_t> getQ8_0TensorSize(llvm::ArrayRef<int64_t> shape);
 llvm::Error quantizeTensorQ8_0(const TensorInfo &tensor,
                                const uint8_t *source, uint8_t *destination);
 
+/// Quantizes a dense F32/BF16 tensor into the packed four-column Q8_0 layout.
+///
+/// Each group of four output rows shares one lane group: the four fp16 scales
+/// are contiguous, followed by eight 16-byte chunks of four-byte words. The
+/// resulting size equals the canonical Q8_0 size.
+llvm::Error quantizeTensorQ8_0Packed(const TensorInfo &tensor,
+                                     const uint8_t *source,
+                                     uint8_t *destination);
+
 /// Quantizes one row of float values into Q8_0 blocks.
 void quantizeRowQ8_0(llvm::ArrayRef<float> input,
                      llvm::MutableArrayRef<Q8_0Block> output);

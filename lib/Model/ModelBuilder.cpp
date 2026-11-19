@@ -81,7 +81,8 @@ public:
     auto convType = MemRefType::get({numLinear, kernel - 1, qkvDim}, bf16);
 
     buildEmbed(moduleBuilder, tokensType, arenaType, hiddenType);
-    buildLmHead(moduleBuilder, hiddenType, arenaType, logitsType);
+    buildLmHead(moduleBuilder, hiddenType, arenaType, logitsType, "prefill");
+    buildLmHead(moduleBuilder, hiddenType, arenaType, logitsType, "decode");
     buildForward(moduleBuilder, "llmcp_forward_prefill", "prefill", hiddenType,
                  cosType, arenaType, kvType, deltaType, convType, headDim,
                  numHeads, numKvHeads, rotary);
@@ -130,6 +131,14 @@ private:
     return it->second->dtype;
   }
 
+  StringRef weightFormat(StringRef name) const {
+    auto it = entries.find(name);
+    assert(it != entries.end() && "weight must exist in the layout");
+    if (it->second->dtype != "Q8_0")
+      return "bf16";
+    return it->second->packed ? "q8_0_p4" : "q8_0";
+  }
+
   Value getWeight(OpBuilder &builder, Value arena, StringRef name,
                   llvm::StringMap<Value> &cache) {
     auto cached = cache.find(name);
@@ -152,9 +161,15 @@ private:
     else
       llvm_unreachable("unsupported weight dtype in layout");
 
-    SmallVector<int64_t, 4> weightShape(entry.shape.begin(), entry.shape.end());
-    if (entry.dtype == "Q8_0")
-      weightShape[1] = entry.shape[1] + (entry.shape[1] / 32) * 2;
+    SmallVector<int64_t, 4> weightShape;
+    if (entry.packed) {
+      // Packed Q8_0 groups four rows, so expose the payload as flat bytes.
+      weightShape.push_back(static_cast<int64_t>(entry.size));
+    } else {
+      weightShape.assign(entry.shape.begin(), entry.shape.end());
+      if (entry.dtype == "Q8_0")
+        weightShape[1] = entry.shape[1] + (entry.shape[1] / 32) * 2;
+    }
     auto memrefType = MemRefType::get(weightShape, elementType);
     auto offset = builder.create<arith::ConstantIndexOp>(loc, entry.offset);
     Value view = builder.create<memref::ViewOp>(loc, memrefType, arena, offset,
@@ -175,14 +190,15 @@ private:
   Value linear(OpBuilder &builder, Value input, Value arena, StringRef name,
                llvm::StringMap<Value> &cache) {
     Value weight = getWeight(builder, arena, name, cache);
-    auto weightType = cast<ShapedType>(weight.getType());
     auto inputType = cast<ShapedType>(input.getType());
-    auto resultType = RankedTensorType::get(
-        {inputType.getDimSize(0), weightType.getDimSize(0)},
-        inputType.getElementType());
+    auto it = entries.find(name);
+    assert(it != entries.end() && "weight must exist in the layout");
+    int64_t channels = it->second->shape[0];
+    auto resultType = RankedTensorType::get({inputType.getDimSize(0), channels},
+                                            inputType.getElementType());
     auto op = builder.create<LinearOp>(loc, resultType, input, weight);
     if (entryDtype(name) == "Q8_0")
-      op.setWeightFormat("q8_0");
+      op.setWeightFormat(weightFormat(name));
     return op;
   }
 
@@ -318,23 +334,26 @@ private:
     auto op = bodyBuilder.create<EmbeddingOp>(loc, hiddenType,
                                               func.getArgument(0), table);
     if (entryDtype(name) == "Q8_0")
-      op.setWeightFormat("q8_0");
+      op.setWeightFormat(weightFormat(name));
     bodyBuilder.create<func::ReturnOp>(loc, op.getResult());
   }
 
   void buildLmHead(OpBuilder &moduleBuilder, Type hiddenType, Type arenaType,
-                   Type logitsType) {
+                   Type logitsType, StringRef mode) {
     OpBuilder bodyBuilder(context);
-    auto func = createFunc(moduleBuilder, "llmcp_lm_head",
-                           {hiddenType, arenaType}, {logitsType}, bodyBuilder);
+    StringRef funcName =
+        mode == "decode" ? "llmcp_lm_head_decode" : "llmcp_lm_head";
+    auto func = createFunc(moduleBuilder, funcName, {hiddenType, arenaType},
+                           {logitsType}, bodyBuilder);
+    func->setAttr("llmcp.execution_mode", moduleBuilder.getStringAttr(mode));
     llvm::StringMap<Value> cache;
     Value arena = func.getArgument(1);
     StringRef name = "model.language_model.embed_tokens.weight";
     Value table = getWeight(bodyBuilder, arena, name, cache);
-    auto op = bodyBuilder.create<LmHeadOp>(loc, logitsType,
-                                           func.getArgument(0), table);
+    auto op = bodyBuilder.create<LmHeadOp>(loc, logitsType, func.getArgument(0),
+                                           table);
     if (entryDtype(name) == "Q8_0")
-      op.setWeightFormat("q8_0");
+      op.setWeightFormat(weightFormat(name));
     bodyBuilder.create<func::ReturnOp>(loc, op.getResult());
   }
 
@@ -423,8 +442,9 @@ private:
   }
 
   void buildAotEntry(OpBuilder &moduleBuilder, StringRef entryName,
-                     StringRef forwardName, int64_t rotary, int64_t vocab,
-                     Type arenaType, Type kvType, Type deltaType, Type convType,
+                     StringRef forwardName, StringRef lmHeadName,
+                     int64_t rotary, int64_t vocab, Type arenaType,
+                     Type kvType, Type deltaType, Type convType,
                      Type logitsType) {
     Type indexType = moduleBuilder.getIndexType();
     Type f32 = moduleBuilder.getF32Type();
@@ -492,8 +512,7 @@ private:
                                  bodyBuilder.getIndexAttr(1)});
     lastHidden = bodyBuilder.create<tensor::CastOp>(loc, hiddenType, lastHidden);
     auto lmHead = bodyBuilder.create<func::CallOp>(
-        loc, "llmcp_lm_head",
-        TypeRange{RankedTensorType::get({kDynamic, vocab}, f32)},
+        loc, lmHeadName, TypeRange{RankedTensorType::get({kDynamic, vocab}, f32)},
         ValueRange{lastHidden, arena});
     Value logits = lmHead.getResult(0);
 
@@ -520,11 +539,11 @@ private:
         loc, ::llmcp::kAotAbiVersion, 32);
     bodyBuilder.create<func::ReturnOp>(loc, version);
     buildAotEntry(moduleBuilder, "llmcp_model_prefill", "llmcp_forward_prefill",
-                  rotary, vocab, arenaType, kvType, deltaType, convType,
-                  logitsType);
+                  "llmcp_lm_head", rotary, vocab, arenaType, kvType, deltaType,
+                  convType, logitsType);
     buildAotEntry(moduleBuilder, "llmcp_model_decode", "llmcp_forward_decode",
-                  rotary, vocab, arenaType, kvType, deltaType, convType,
-                  logitsType);
+                  "llmcp_lm_head_decode", rotary, vocab, arenaType, kvType,
+                  deltaType, convType, logitsType);
   }
 
   MLIRContext *context;
