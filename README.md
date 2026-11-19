@@ -104,7 +104,7 @@ Q8 AOT：
 Q8 权重：
   bf16 arena 8.41 GB
   Q8 arena   4.47 GB
-  Q8_0 每个 row 使用 [scales][qs] 分离布局
+  Q8_0 使用四列 lane 打包：每个 block 存 [4×f16 scales][8×16B words]
   embedding/lm_head 共用同一份 Q8_0 表
 ```
 
@@ -137,20 +137,22 @@ macOS 26.6.2，Release 构建，LLVM 20.1.8，AOT 使用 `-O2 -mcpu=native`，bf
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
 | bf16 + bfdot | 1.40 s | 22.87 | 5.55 s | 5.76 |
-| Q8_0 + sdot | 0.48 s | 67.14 | 3.00 s | 10.65 |
+| Q8_0 + sdot | 0.42 s | 76.92 | 2.81 s | 11.39 |
 
 三次测量的吞吐范围：
 
 - bf16 的 prefill 为 22.56–23.03 tok/s，decode 为 5.75–5.77 tok/s。
-- Q8_0 的 prefill 为 66.74–67.88 tok/s，decode 为 10.61–10.69 tok/s。
+- Q8_0 的 prefill 为 76.32–77.49 tok/s，decode 为 11.35–11.39 tok/s。
 
-2026-11-19 的连续改动把 Q8 decode 从 8.18 提升到 10.65 tok/s（+30%）。
-除第 9 节的 GEMV 内核外，还包括：
+2026-11-19 的连续改动把 Q8 decode 从 8.18 提升到 11.39 tok/s（+39%），
+Q8 prefill 从 54.31 提升到 76.92 tok/s。除第 9 节的 GEMV 内核外，还包括：
 
 - decode 的 RMSNorm、逐元素算子和 DeltaNet value tile 改用串行/向量特化 lowering；
-- tied embedding/lm_head 改为 Q8_0，行查表时反量化，权重主循环的 Q8_0 布局不变。
+- tied embedding/lm_head 改为 Q8_0，行查表时反量化；
+- Q8 权重在 `llmcp-pack` 阶段预打包成四列 SDOT lane 布局，prefill GEMM 不再
+  每次调用重新打包，decode GEMV 直接复用同一份权重。
 
-GEMV 内核的单独测量见
+GEMV 与打包布局的测量见
 [GEMV 与整模型测量记录](docs/matmul-benchmark.md#9-q8-sdot-decode-gemv)。
 
 prefill 和 decode 使用不同的 AOT 入口：
@@ -188,11 +190,14 @@ llmcp_model_decode   -> llmcp_forward_decode
 - decode：
   - attention 按 head 并行，query loop 只有 1 次；
   - linear 使用 GEMV：column 并行，去掉 row loop。
-  - Q8 SDOT 沿 N 维每 4 列分块，使用 `ADDP` 合并四列点积并向量累加。
+  - Q8 权重是预打包的四列 lane 布局；一条 `SDOT` 的四个 lane 同时产生四个
+    输出列（每 lane 累加 4 个 K 元素），不再需要 `ADDP` 合并列。
     激活向量量化串行执行，小投影和尾列使用串行循环。
     [decode GEMV 实测](docs/matmul-benchmark.md#9-q8-sdot-decode-gemv)
-  - tied embedding/lm_head 使用同一份 Q8_0 表；embedding 查表按 32 元素块
+  - tied embedding/lm_head 使用同一份 Q8_0 表；embedding 查表按行所在 lane
     读取 f16 scale 并反量化为 bf16。
+
+prefill 的 Q8 GEMM 直接读取同一份预打包权重，只打包每次变化的激活面板。
 
 对应的 arena：
 
@@ -204,9 +209,9 @@ Q8:   4.47 GB
 长上下文 Q8（8 线程，`prefill=1024 / decode=1024`，短序列测试之后单次测量）：
 
 ```text
-prefill: 11.98 s  (85.47 tok/s)
-decode:  113.02 s (9.06 tok/s)
-total:   125.00 s
+prefill: 11.35 s  (90.23 tok/s)
+decode:  98.03 s  (10.45 tok/s)
+total:   109.38 s
 ```
 
 单算子 matmul（`llmcp-matmul-benchmark`）每组运行三次，每次内部预热一次。

@@ -14,7 +14,7 @@
 >   `embedding`、`lm_head`、`causal_conv1d`、`gated_delta_net`、`attention`、
 >   `gated_rms_norm`；
 > - prefill/decode 使用独立 AOT 入口；
-> - Q8_0 权重采用每个 row 内 `[scales][qs]` 分离布局；
+> - Q8_0 权重采用四列 SDOT lane 预打包布局；
 > - BF16 `bfdot` 和 Q8 `sdot` 由 CMake 的硬件+编译器探测控制，可回退；
 > - 全量 CTest 16 项通过。
 >
@@ -263,7 +263,7 @@ y = h + mlp(rms_norm_zero(h))
 | `llmcp_embed` | token ids | hidden `[S, 2560]` | 词嵌入 gather |
 | `llmcp_forward_prefill` | hidden、positions、states | hidden、更新后的 states | 32 层，chunked DeltaNet + tiled attention |
 | `llmcp_forward_decode` | hidden（1 token）、position、states | hidden、更新后的 states | 32 层，recurrent DeltaNet + KV attention |
-| `llmcp_lm_head` | 最后一个 hidden | logits `[248320]` f32 | tied embedding matmul |
+| `llmcp_lm_head` / `llmcp_lm_head_decode` | 最后一个 hidden | logits `[248320]` f32 | tied embedding matmul，prefill/decode 分开 lowering |
 
 运行时还有一个 `llmcp_session` 层面的 `prefill`/`decode` 包装，负责 tokenizer、采样和回调。
 
@@ -1552,7 +1552,7 @@ int llmcp_generate(llmcp_session*, const int32_t* prompt, size_t n_prompt,
 
 - 所有函数返回 `int` 错误码；不跨 ABI 抛异常。
 - `llmcp_prefill` 内部调用 `llmcp_embed` + `llmcp_forward_prefill` + `llmcp_lm_head`（只算最后一个位置），并把 logits 存到 session。
-- `llmcp_decode` 调用 `llmcp_embed` + `llmcp_forward_decode` + `llmcp_lm_head`。
+- `llmcp_decode` 调用 `llmcp_embed` + `llmcp_forward_decode` + `llmcp_lm_head_decode`。
 - 词表大小从 config 读取，调用方不需要知道 248320。
 
 ### 9.2 会话与内存

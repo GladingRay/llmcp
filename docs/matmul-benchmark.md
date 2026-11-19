@@ -226,6 +226,9 @@ Apple M2、LLVM 20.1.8，三次独立运行的中位数。基线使用 `c6158b7`
 
 ## 9. Q8 SDOT decode GEMV
 
+本节描述标准 per-row Q8_0 布局的 decode GEMV（`weight_format="q8_0"`）；模型的
+Q8 arena 使用第 11 节的预打包四列 lane 布局。
+
 2026-11-19 的 decode 内核使用 4 列分块。激活沿 K 每 32 个元素向量量化一次，
 量化循环串行执行。四列的整数点积通过三条 `ADDP` 合成四个输出 lane，然后向量化
 执行 scale 相乘、点积转 FP32 和累加。每列的 K 块累加顺序保留。FP16 权重 scale
@@ -271,8 +274,42 @@ value tile 改用串行/向量特化 lowering。
 
 Apple M2、8 线程、`prefill=32 / decode=32`，每种精度先预热一次，再用新进程测
 三次。Q8 的 decode 中位数为 10.65 tok/s（范围 10.61–10.69），bf16 为 5.76 tok/s
-（范围 5.75–5.77）。长上下文 `prefill=1024 / decode=1024` 单次 Q8 测量为
-prefill 85.47 tok/s、decode 9.06 tok/s。
+（范围 5.75–5.77）。随后第 11 节的预打包布局把 Q8 decode 提升到 11.39 tok/s。
+
+长上下文 `prefill=1024 / decode=1024` 单次 Q8 测量为 prefill 85.47 tok/s、
+decode 9.06 tok/s。
 
 完整命令、样本和二进制哈希见
 [测量记录](benchmarks/2026-11-19-q8-embedding.json)。
+
+## 11. 预打包四列 lane 权重
+
+第 10 节的 10.65 tok/s 仍使用标准 per-row Q8_0 布局：prefill 的 packed GEMM
+每次调用 `packWeights` 重排 B，decode GEMV 每列单独 gather scale。
+
+后续改动把重排移到 `llmcp-pack`。每 4 个输出行组成一个 lane group，每个
+`(group, block)` 记录为：
+
+```text
+[f16 scale lane0..3]                       8 bytes
+[chunk half0 word0..3][chunk half1 ...]    8 × 16 bytes
+```
+
+记录大小 `136 = 4 × 34`，所以 arena 不变。prefill GEMM 直接读取该布局，
+只打包每次变化的激活面板；decode GEMV 直接用一条 `SDOT` 同时计算四列：
+`SDOT(vd, B_chunk, broadcast(A_word))`，四个 lane 对应四个输出列，因此
+删除了 `ADDP` 合并。
+
+Apple M2、8 线程、`prefill=32 / decode=32`，Q8 预热后连续四次：
+
+| 指标 | 预打包前 | 预打包后 |
+|---|---:|---:|
+| prefill | 0.48 s / 67.14 tok/s | 0.416 s / 76.92 tok/s |
+| decode | 3.00 s / 10.65 tok/s | 2.81 s / 11.39 tok/s |
+
+长上下文 `prefill=1024 / decode=1024` 单次：prefill 11.35 s（90.23 tok/s），
+decode 98.03 s（10.45 tok/s）。相对 2026-11-17 的 Q8 decode 8.18 tok/s，
+本轮累计提升 39%。
+
+命令、样本和二进制哈希见
+[测量记录](benchmarks/2026-11-19-q8-packed.json)。

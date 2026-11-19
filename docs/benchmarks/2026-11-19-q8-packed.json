@@ -1,0 +1,111 @@
+{
+  "date": "2026-11-19",
+  "timezone": "Asia/Shanghai",
+  "cpu": "Apple M2",
+  "memory_bytes": 25769803776,
+  "logical_cpus": 8,
+  "macos_version": "26.6.2",
+  "llvm_version": "20.1.8",
+  "build_type": "Release",
+  "bfdot": true,
+  "sdot": true,
+  "aot_clang_opt_level": 2,
+  "source_revision": "worktree-q8-packed",
+  "notes": "Q8 权重在 llmcp-pack 阶段预打包成四列 lane 布局；prefill 不再每次调用重排权重，decode GEMV 复用同一份权重并用 n4k4 SDOT。短序列 8 线程 32/32，预热后四次；长上下文在短序列后单次。未清除 page cache。",
+  "binary_sha256": {
+    "build/bin/llmcp-benchmark": "ae97caf6b5312b95a4fefc5451ca2502abb34b50c6b92fe0eab00d7ba07157c5",
+    "build/libqwen35_aot_q8.dylib": "96597c85884513293001760c92f688b6bcc5e7c401fc0b40d56d6fe5f6413cb6"
+  },
+  "model_runs": [
+    {
+      "sample": 0,
+      "warmup": false,
+      "label": "q8_0_p4",
+      "threads": 8,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "build/libqwen35_aot_q8.dylib",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 0.4133\ndecode_seconds: 2.8201\ntotal_seconds: 3.2334\nprefill_tokens_per_second: 77.4256\ndecode_tokens_per_second: 11.3471\n"
+    },
+    {
+      "sample": 1,
+      "warmup": false,
+      "label": "q8_0_p4",
+      "threads": 8,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "build/libqwen35_aot_q8.dylib",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 0.4186\ndecode_seconds: 2.8096\ntotal_seconds: 3.2282\nprefill_tokens_per_second: 76.4453\ndecode_tokens_per_second: 11.3895\n"
+    },
+    {
+      "sample": 2,
+      "warmup": false,
+      "label": "q8_0_p4",
+      "threads": 8,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "build/libqwen35_aot_q8.dylib",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 0.4130\ndecode_seconds: 2.8085\ntotal_seconds: 3.2215\nprefill_tokens_per_second: 77.4818\ndecode_tokens_per_second: 11.3940\n"
+    },
+    {
+      "sample": 3,
+      "warmup": false,
+      "label": "q8_0_p4",
+      "threads": 8,
+      "command": [
+        "build/bin/llmcp-benchmark",
+        "--weights",
+        "build/weights-q8.bin",
+        "--aot",
+        "build/libqwen35_aot_q8.dylib",
+        "--prefill-tokens",
+        "32",
+        "--decode-tokens",
+        "32"
+      ],
+      "stdout": "prefill_tokens: 32\ndecode_tokens: 32\nprefill_seconds: 0.4193\ndecode_seconds: 2.8086\ntotal_seconds: 3.2279\nprefill_tokens_per_second: 76.3177\ndecode_tokens_per_second: 11.3936\n"
+    }
+  ],
+  "long_context": {
+    "label": "q8_0_p4",
+    "threads": 8,
+    "prefill_tokens": 1024,
+    "decode_tokens": 1024,
+    "command": [
+      "build/bin/llmcp-benchmark",
+      "--weights",
+      "build/weights-q8.bin",
+      "--aot",
+      "build/libqwen35_aot_q8.dylib",
+      "--prefill-tokens",
+      "1024",
+      "--decode-tokens",
+      "1024"
+    ],
+    "stdout": "prefill_tokens: 1024\ndecode_tokens: 1024\nprefill_seconds: 11.3487\ndecode_seconds: 98.0290\ntotal_seconds: 109.3777\nprefill_tokens_per_second: 90.2307\ndecode_tokens_per_second: 10.4459\n"
+  }
+}

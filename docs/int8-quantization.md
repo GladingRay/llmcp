@@ -253,19 +253,26 @@ qs:     int8[M][K]
 - 避免每 32 个 int8 读一个 4/8 字节 header；
 - 更适合 NEON load。
 
-### 4.3 对齐
+### 4.3 权重布局
 
-当前 arena 64 字节对齐，每个 Q8 row 的 scale 区域连续，q 数据区域连续：
+当前 arena 64 字节对齐。Q8 权重在 `llmcp-pack` 阶段打包成四列 lane：
 
 ```text
-row: [scales K/32 * 2 bytes][qs K bytes]
+group of 4 output rows, block b:
+  [f16 scale row0][row1][row2][row3]                    8 bytes
+  [lane0 word0][lane1 word0][lane2 word0][lane3 word0]  16 bytes
+  ... 2 halves × 4 words = 8 chunks，共 128 bytes
 ```
 
-因此：
+每个 `(group, block)` 记录 136 字节，与标准 Q8_0 的 `4 × 34` 字节相同，
+arena 不增大。SDOT 的四个 lane 直接对应四个输出列：一条 SDOT 处理
+4 列 × 4 个 K 元素，不需要 `ADDP` 再合并四列。
 
-- scale load 是连续 2-byte / 批量访问；
-- q 数据从 `K/32*2` 偏移开始；
-- 不再需要 block 内部的 `+2` 交错偏移。
+prefill 和 decode 共用这份预打包权重：
+
+- prefill GEMM 直接按 `(group, block)` 读取，不再在每次调用时重排 B；
+- decode GEMV 直接按 lane 读取，四个 lane 同时完成四列；
+- embedding 查表按 token 所在 lane 反量化。
 
 `llmcp-pack` 的 arena 与 AOT kernel 使用同一布局。
 
@@ -285,7 +292,7 @@ manifest 增加：
 ```json
 "quantization": "q8_0",
 "block_size": 32,
-"quant_layout": "q8_0_split"
+"quant_layout": "q8_0_p4"
 ```
 
 
@@ -740,7 +747,7 @@ ARM `sdot` 并接入真实模型 AOT。当前状态以第 16 节为准。
 
 - activation 预量化到 `[rows, K] i8` + `[rows, K/32] f32`；
 - 每个 activation block 只量化一次，不再对每个 N 列重复；
-- 每个 row 使用 `[scales][qs]` 分离布局；
+- 每 4 个 row 使用四列 SDOT lane 打包布局；
 - ARM `llvm.aarch64.neon.sdot`；
 - 每个 32-element block 用 2 条 sdot；
 - int32 点积后 f32 scale 累加；
@@ -773,10 +780,13 @@ Q8 的收益主要来自：
 
 - `llmcp-compile --quant q8_0`；
 - `WeightLayout` 的 Q8 布局与 `llmcp-pack --quant q8_0` 一致；
-- `ModelBuilder` 对量化 entry 生成 i8 view 和 `weight_format="q8_0"`；
+- `ModelBuilder` 对量化 entry 生成预打包 lane 的 i8 view 和
+  `weight_format="q8_0_p4"`；
+- prefill GEMM 和 decode GEMV 共用同一份预打包权重，不再每次调用重排；
 - `llmcp-run --weights weights-q8.bin --aot ...`；
 - Q8 AOT `next 11`，greedy `0 271 760 2614`；
-- Q8 vs bf16 logits：`max_abs 0.509`、`mean_abs 0.083`，top1/top5 一致。
+- Q8 vs bf16 logits：`max_abs 0.509`、`mean_abs 0.083`，top1/top5 一致；
+- Apple M2 8 线程 32/32：prefill 76.92 tok/s、decode 11.39 tok/s。
 
 当前 Q8 量化 linear matmul 与 tied embedding/lm_head；attn/DeltaNet 的 state
 和 KV cache 仍保持 bf16。

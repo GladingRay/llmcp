@@ -160,7 +160,7 @@ Q8 目前量化 linear 权重与 tied embedding/lm_head；KV cache、DeltaNet st
 仍保持 bf16/f32。embedding 查表按 Q8_0 块反量化，lm_head 与 embedding 共用
 同一份 Q8_0 表。
 
-Q8_0 的每个 row 使用 `[scales][qs]` 分离布局；BF16 使用 `bfdot`、Q8 使用
+Q8_0 使用四列 SDOT lane 预打包布局；BF16 使用 `bfdot`、Q8 使用
 `sdot`，不支持时分别回退 vector/f32 和 scalar。
 
 ## 边界
