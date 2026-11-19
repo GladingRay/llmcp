@@ -253,6 +253,7 @@ Value mlir::llmcp::emitQ8PackedDecodeMatmul(PatternRewriter &rewriter,
   return Q8Decode(rewriter, loc)
       .emitPacked(input, weight, resultType, activation);
 #else
-  return Value();
+  return emitQ8PackedScalarMatmul(rewriter, loc, input, weight, resultType,
+                                  activation);
 #endif
 }

@@ -44,6 +44,7 @@ endif()
 if(LLMCP_ENABLE_BFDOT)
   add_compile_definitions(LLMCP_ENABLE_BFDOT=1)
 endif()
+message(STATUS "llmcp: BFDOT=${LLMCP_ENABLE_BFDOT}")
 
 option(LLMCP_ENABLE_SDOT
        "Enable Arm int8 dot-product intrinsics when the host supports them" ON)
@@ -75,6 +76,7 @@ endif()
 if(LLMCP_ENABLE_SDOT)
   add_compile_definitions(LLMCP_ENABLE_SDOT=1)
 endif()
+message(STATUS "llmcp: SDOT=${LLMCP_ENABLE_SDOT}")
 
 # Directory of the real Qwen3.5 model used by integration tests. It can be
 # overridden at configure time (-DLLMCP_MODEL_DIR=...) or through the

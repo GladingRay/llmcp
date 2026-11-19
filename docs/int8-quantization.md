@@ -755,7 +755,7 @@ ARM `sdot` 并接入真实模型 AOT。当前状态以第 16 节为准。
 - int32 点积后 f32 scale 累加；
 - Q8 prefill 使用 4-row × 8-column（两个 lane group）register tile；
 - configure 阶段同时检查 `FEAT_DotProd` 和编译器后端；
-- 不支持 DotProd 时 Q8 lowering 返回失败；Q8 只在 ARM SDOT 上启用；
+- 不支持 DotProd 时使用标量回退（同一份 p4 权重），保证 M1 等环境可运行；
 - numeric 覆盖 `linear_q8_p4_decode` / `linear_q8_p4_prefill`；
 - `llmcp-matmul-benchmark --q8`；
 - `llmcp-matmul-benchmark-q8` CTest。

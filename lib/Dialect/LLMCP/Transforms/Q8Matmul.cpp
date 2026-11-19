@@ -322,6 +322,7 @@ Value mlir::llmcp::emitQ8PackedMatmul(PatternRewriter &rewriter, Location loc,
       .emit(input, weight, output, rows, reduction / kQuantBlock, channels,
             activation);
 #else
-  return Value();
+  return emitQ8PackedScalarMatmul(rewriter, loc, input, weight, resultType,
+                                  activation);
 #endif
 }

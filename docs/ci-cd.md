@@ -286,9 +286,9 @@ cmake -S . -B build -G Ninja -DLLMCP_ENABLE_SDOT=OFF
 sdot 不可用时：
 
 ```text
-Q8 lowering 返回 failure（q8_0_p4 仅支持 ARM SDOT）
+Q8 走 Q8Scalar.cpp 的标量回退（读取同一份 q8_0_p4 权重）
 microbench 不注册 neon_i8_dot
-numeric Q8 用例需要 SDOT
+numeric Q8 用例继续验证标量路径
 ```
 
 当前 `LLMCP_ENABLE_BFDOT` 与 `LLMCP_ENABLE_SDOT` 相互独立：

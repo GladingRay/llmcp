@@ -30,6 +30,12 @@ Value emitQ8PackedMatmul(PatternRewriter &rewriter, Location loc, Value input,
                          Value weight, RankedTensorType resultType,
                          llvm::StringRef activation);
 
+/// Portable scalar matmul over the packed layout, used without DotProd.
+Value emitQ8PackedScalarMatmul(PatternRewriter &rewriter, Location loc,
+                               Value input, Value weight,
+                               RankedTensorType resultType,
+                               llvm::StringRef activation);
+
 Value lowerMatmulInternal(PatternRewriter &rewriter, Location loc, Value input,
                           Value weight, RankedTensorType resultType,
                           llvm::StringRef weightFormat, bool transposeB,

@@ -10,6 +10,7 @@ add_mlir_library(MLIRLLMCPTransforms
   MatmulLoweringCommon.cpp
   Q8Matmul.cpp
   Q8Decode.cpp
+  Q8Scalar.cpp
   DecodeNormalization.cpp
 
   ADDITIONAL_HEADER_DIRS
