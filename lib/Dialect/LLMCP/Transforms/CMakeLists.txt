@@ -9,6 +9,7 @@ add_mlir_library(MLIRLLMCPTransforms
   LowerDecodeGemm.cpp
   MatmulLoweringCommon.cpp
   Q8Matmul.cpp
+  Q8Decode.cpp
 
   ADDITIONAL_HEADER_DIRS
     ${PROJECT_SOURCE_DIR}/include/llmcp/Dialect/LLMCP/Transforms

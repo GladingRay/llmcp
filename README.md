@@ -141,6 +141,10 @@ macOS 26.6.2，Release 构建，LLVM 20.1.8，AOT 使用 `-O2 -mcpu=native`，bf
 - bf16 的 prefill 为 20.80–22.44 tok/s，decode 为 5.22–5.45 tok/s。
 - Q8_0 的 prefill 为 53.80–56.08 tok/s，decode 为 8.15–8.22 tok/s。
 
+2026-11-19 的 Q8 decode 内核优化另做了 8 线程、32/32 token 的交替复测，
+decode 中位数从 8.23 提升到 8.49 tok/s，增幅 3.2%。
+[GEMV 与整模型测量记录](docs/matmul-benchmark.md#9-q8-sdot-decode-gemv)
+
 prefill 和 decode 使用不同的 AOT 入口：
 
 ```text
@@ -176,8 +180,9 @@ llmcp_model_decode   -> llmcp_forward_decode
 - decode：
   - attention 按 head 并行，query loop 只有 1 次；
   - linear 使用 GEMV：column 并行，去掉 row loop。
-  - Q8 SDOT 沿 N 维每 4 列分块。每个 K 量化 block 内展开四列点积，共用
-    activation 向量和 scale。尾部不足 4 列时逐列计算。
+  - Q8 SDOT 沿 N 维每 4 列分块，使用 `ADDP` 合并四列点积并向量累加。
+    激活向量量化串行执行，小投影和尾列使用串行循环。
+    [decode GEMV 实测](docs/matmul-benchmark.md#9-q8-sdot-decode-gemv)
 
 对应的 arena：
 

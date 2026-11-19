@@ -51,6 +51,8 @@ cl::opt<bool> noParallel("no-parallel",
                          cl::init(false));
 cl::opt<bool> q8("q8", cl::desc("Benchmark a Q8_0 weight matmul"),
                  cl::init(false));
+cl::opt<bool> decode("decode", cl::desc("Use decode lowering (requires m=1)"),
+                     cl::init(false));
 cl::opt<std::string> llmcpOptPath("llmcp-opt", cl::desc("Path to llmcp-opt"),
                                   cl::init(""));
 cl::opt<std::string>
@@ -107,7 +109,10 @@ std::string generateMlir(int64_t m, int64_t n, int64_t k, bool useQ8) {
      << "xbf16>, %b: memref<" << n << "x"
      << (useQ8 ? k + (k / 32) * 2 : k) << (useQ8 ? "xi8" : "xbf16")
      << ">, %c: memref<" << m << "x" << n
-     << "xbf16>) attributes {llvm.emit_c_interface} {\n";
+     << "xbf16>) attributes {llvm.emit_c_interface";
+  if (decode)
+    os << ", llmcp.execution_mode = \"decode\"";
+  os << "} {\n";
   os << "    %c0 = arith.constant 0 : index\n";
   os << "    %c1 = arith.constant 1 : index\n";
   os << "    %cm = arith.constant " << m << " : index\n";
@@ -147,6 +152,8 @@ int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "llmcp-matmul-benchmark\n");
   if (mDim <= 0 || nDim <= 0 || kDim <= 0 || iterations <= 0)
     return fail("m, n, k and iters must be positive");
+  if (decode && mDim != 1)
+    return fail("--decode requires m=1");
 
   auto llmcpOptOrErr = findTool(llmcpOptPath, "llmcp-opt", argv[0]);
   if (!llmcpOptOrErr)
@@ -307,6 +314,8 @@ int main(int argc, char **argv) {
   std::cout << "iters: " << iterations << "\n";
   if (q8)
     std::cout << "mode: q8_0\n";
+  if (decode)
+    std::cout << "execution_mode: decode\n";
   if (threads > 0)
     std::cout << "threads: " << threads << "\n";
   std::cout << "seconds: " << seconds << "\n";

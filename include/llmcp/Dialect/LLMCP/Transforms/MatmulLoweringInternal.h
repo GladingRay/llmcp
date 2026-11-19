@@ -18,6 +18,11 @@ namespace llmcp {
 Value applyMatmulActivation(PatternRewriter &rewriter, Location loc,
                             Value value, llvm::StringRef activation);
 
+/// Returns the output buffer when the vectorized SDOT decode path is available.
+Value emitQ8DecodeMatmul(PatternRewriter &rewriter, Location loc, Value input,
+                         Value weight, RankedTensorType resultType,
+                         llvm::StringRef activation);
+
 /// Returns the output buffer when packed lowering is available. For a dynamic
 /// row count the small-matrix branch writes into the same output buffer.
 Value emitPackedQ8Matmul(PatternRewriter &rewriter, Location loc, Value input,

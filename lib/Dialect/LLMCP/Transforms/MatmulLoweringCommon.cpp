@@ -1095,8 +1095,11 @@ Value lowerMatmulInternal(PatternRewriter &rewriter, Location loc, Value input,
       return Value();
     Value output;
     if (decode) {
-      output = emitQ8Matmul(rewriter, loc, input, weight, resultType, decode,
-                            activation);
+      output = emitQ8DecodeMatmul(rewriter, loc, input, weight, resultType,
+                                  activation);
+      if (!output)
+        output = emitQ8Matmul(rewriter, loc, input, weight, resultType, decode,
+                              activation);
     } else {
       auto emitSmallMatmul = [&](Value buffer) -> Value {
         if (Value blocked = emitPrefillQ8Blocked(rewriter, loc, input, weight,

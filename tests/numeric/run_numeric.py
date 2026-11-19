@@ -702,6 +702,15 @@ def main():
                     emit_linear_q8(x.tolist(), w.tolist(), "prefill"), ref,
                     (1e-5, 1e-6))
 
+    # Exercise decode column tails and multiple K blocks with exact operands.
+    x = exact_q8_operand(1)
+    w = exact_q8_operand(19)
+    x[0, -32:] = 0
+    ref = (x.float() @ w.float().T).to(bf16).float().flatten()
+    compile_and_run(args, "linear_q8_decode_boundaries",
+                    emit_linear_q8(x.tolist(), w.tolist(), "decode"), ref,
+                    (1e-5, 1e-6))
+
 #rms_norm
     x = torch.randn(2, 8).to(bf16)
     w = torch.randn(8).to(bf16)
