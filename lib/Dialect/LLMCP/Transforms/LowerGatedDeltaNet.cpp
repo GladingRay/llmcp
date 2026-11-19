@@ -14,6 +14,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 
@@ -23,6 +24,8 @@ using namespace mlir;
 using namespace mlir::llmcp;
 
 namespace {
+
+constexpr int64_t kValueTile = 16;
 
 scf::ForOp
 createLoop(PatternRewriter &rewriter, Location loc, Value lower, Value upper,
@@ -57,9 +60,16 @@ public:
     const int64_t numV = op.getNumVHeads();
     const int64_t headK = op.getHeadKDim();
     const int64_t headV = op.getHeadVDim();
-    const int64_t ratio = numV / numK;
     if (numK <= 0 || numV <= 0 || headK <= 0 || headV <= 0 || numV % numK != 0)
       return failure();
+    const int64_t ratio = numV / numK;
+    SmallVector<int64_t> stateStrides;
+    int64_t stateOffset;
+    const int64_t valueTile = headV % kValueTile == 0 ? kValueTile : 4;
+    bool vectorize =
+        headV % valueTile == 0 &&
+        succeeded(stateType.getStridesAndOffset(stateStrides, stateOffset)) &&
+        stateStrides.back() == 1;
 
     Type f32 = rewriter.getF32Type();
     Type bf16 = rewriter.getBF16Type();
@@ -102,11 +112,13 @@ public:
                  1.0 / std::sqrt(static_cast<double>(headK)))));
 
     auto qnType = MemRefType::get({numV, headK}, f32);
-    auto knType = MemRefType::get({numV, headV}, f32);
+    auto knType = MemRefType::get({numV, headK}, f32);
     auto deltaType = MemRefType::get({numV, headV}, f32);
     Value qn = rewriter.create<memref::AllocOp>(loc, qnType);
     Value kn = rewriter.create<memref::AllocOp>(loc, knType);
-    Value delta = rewriter.create<memref::AllocOp>(loc, deltaType);
+    Value delta;
+    if (!vectorize)
+      delta = rewriter.create<memref::AllocOp>(loc, deltaType);
 
     auto loadBf16 = [&](Value tensor, Value index0, Value index1) -> Value {
       Value value = rewriter.create<tensor::ExtractOp>(
@@ -220,6 +232,112 @@ public:
                 Value g =
                     rewriter.create<arith::MulFOp>(loc, minusExpA, softplus);
                 Value decay = rewriter.create<math::ExpOp>(loc, g);
+
+                if (vectorize) {
+                  auto f32Vector = VectorType::get({valueTile}, f32);
+                  auto bf16Vector = VectorType::get({valueTile}, bf16);
+                  Value vectorStep =
+                      rewriter.create<arith::ConstantIndexOp>(loc, valueTile);
+                  Value vectorZero = rewriter.create<arith::ConstantOp>(
+                      loc, rewriter.getZeroAttr(f32Vector));
+                  Value vectorDecay = rewriter.create<vector::BroadcastOp>(
+                      loc, f32Vector, decay);
+                  Value vectorBeta = rewriter.create<vector::BroadcastOp>(
+                      loc, f32Vector, beta);
+                  auto valuesLoop = createLoop(
+                      rewriter, loc, zero, headVValue, vectorStep, ValueRange{},
+                      [&](OpBuilder &builder, Location loc, Value valueStart,
+                          ValueRange) {
+                        // Each lane retains the scalar K accumulation order.
+                        auto dotLoop = createLoop(
+                            rewriter, loc, zero, headKValue, one,
+                            ValueRange{vectorZero},
+                            [&](OpBuilder &builder, Location loc, Value kIndex,
+                                ValueRange args) {
+                              Value state = rewriter.create<vector::LoadOp>(
+                                  loc, f32Vector, op.getState(),
+                                  ValueRange{layerValue, head, kIndex,
+                                             valueStart});
+                              Value decayed = rewriter.create<arith::MulFOp>(
+                                  loc, state, vectorDecay);
+                              Value key = rewriter.create<memref::LoadOp>(
+                                  loc, kn, ValueRange{head, kIndex});
+                              Value keyVector =
+                                  rewriter.create<vector::BroadcastOp>(
+                                      loc, f32Vector, key);
+                              Value product = rewriter.create<arith::MulFOp>(
+                                  loc, decayed, keyVector);
+                              Value sum = rewriter.create<arith::AddFOp>(
+                                  loc, args[0], product);
+                              rewriter.create<scf::YieldOp>(loc, sum);
+                            });
+                        rewriter.setInsertionPointAfter(dotLoop);
+                        Value offset = rewriter.create<arith::AddIOp>(
+                            loc, vOffset, valueStart);
+                        auto rowMap = AffineMap::getMinorIdentityMap(
+                            2, 1, rewriter.getContext());
+                        Value values = rewriter.create<vector::TransferReadOp>(
+                            loc, bf16Vector, op.getConv(),
+                            ValueRange{time, offset}, rowMap,
+                            ArrayRef<bool>{true});
+                        values = rewriter.create<arith::ExtFOp>(loc, f32Vector,
+                                                                values);
+                        Value difference = rewriter.create<arith::SubFOp>(
+                            loc, values, dotLoop.getResult(0));
+                        Value deltas = rewriter.create<arith::MulFOp>(
+                            loc, difference, vectorBeta);
+
+                        // Update a contiguous state slice and consume its new
+                        // values immediately for the output dot product.
+                        auto updateOutputLoop = createLoop(
+                            rewriter, loc, zero, headKValue, one,
+                            ValueRange{vectorZero},
+                            [&](OpBuilder &builder, Location loc, Value kIndex,
+                                ValueRange args) {
+                              Value state = rewriter.create<vector::LoadOp>(
+                                  loc, f32Vector, op.getState(),
+                                  ValueRange{layerValue, head, kIndex,
+                                             valueStart});
+                              Value decayed = rewriter.create<arith::MulFOp>(
+                                  loc, state, vectorDecay);
+                              Value key = rewriter.create<memref::LoadOp>(
+                                  loc, kn, ValueRange{head, kIndex});
+                              Value keyVector =
+                                  rewriter.create<vector::BroadcastOp>(
+                                      loc, f32Vector, key);
+                              Value update = rewriter.create<arith::MulFOp>(
+                                  loc, keyVector, deltas);
+                              Value updated = rewriter.create<arith::AddFOp>(
+                                  loc, decayed, update);
+                              rewriter.create<vector::StoreOp>(
+                                  loc, updated, op.getState(),
+                                  ValueRange{layerValue, head, kIndex,
+                                             valueStart});
+                              Value query = rewriter.create<memref::LoadOp>(
+                                  loc, qn, ValueRange{head, kIndex});
+                              Value queryVector =
+                                  rewriter.create<vector::BroadcastOp>(
+                                      loc, f32Vector, query);
+                              Value product = rewriter.create<arith::MulFOp>(
+                                  loc, updated, queryVector);
+                              Value sum = rewriter.create<arith::AddFOp>(
+                                  loc, args[0], product);
+                              rewriter.create<scf::YieldOp>(loc, sum);
+                            });
+                        rewriter.setInsertionPointAfter(updateOutputLoop);
+                        Value result = rewriter.create<arith::TruncFOp>(
+                            loc, bf16Vector, updateOutputLoop.getResult(0));
+                        Value column = rewriter.create<arith::AddIOp>(
+                            loc,
+                            rewriter.create<arith::MulIOp>(loc, head,
+                                                           headVValue),
+                            valueStart);
+                        rewriter.create<vector::StoreOp>(
+                            loc, result, output, ValueRange{time, column});
+                      });
+                  rewriter.setInsertionPointAfter(valuesLoop);
+                  return;
+                }
 
                 // delta[v] = (v - S^T k) * beta, using the old state.
                 auto deltaLoop = createLoop(

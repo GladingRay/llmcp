@@ -7,6 +7,7 @@
 #include "llmcp/Dialect/LLMCP/Transforms/Passes.h"
 
 #include "llmcp/Dialect/LLMCP/IR/LLMCP.h"
+#include "llmcp/Dialect/LLMCP/Transforms/DecodeNormalization.h"
 #include "llmcp/Dialect/LLMCP/Transforms/MatmulLowering.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -212,6 +213,12 @@ public:
 
   LogicalResult matchAndRewrite(RmsNormOp op,
                                 PatternRewriter &rewriter) const override {
+    if (getExecutionMode(op) == ExecutionMode::Decode) {
+      if (Value result = emitDecodeRmsNorm(rewriter, op)) {
+        rewriter.replaceOp(op, result);
+        return success();
+      }
+    }
     Location loc = op.getLoc();
     auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
     auto resultType = dyn_cast<RankedTensorType>(op.getOutput().getType());
@@ -299,26 +306,69 @@ public:
   }
 };
 
+/// Uses serial loops for decode pointwise operations and keeps tensor Linalg
+/// operations available for prefill fusion.
+Value emitPointwise(
+    PatternRewriter &rewriter, Location loc, RankedTensorType resultType,
+    ValueRange inputs, ExecutionMode mode,
+    function_ref<Value(OpBuilder &, Location, ValueRange)> compute) {
+  if (mode != ExecutionMode::Decode) {
+    Value output = createEmpty(rewriter, loc, resultType, inputs.front());
+    SmallVector<AffineMap> maps(inputs.size() + 1,
+                                rewriter.getMultiDimIdentityMap(2));
+    SmallVector<utils::IteratorType> iterators(2,
+                                               utils::IteratorType::parallel);
+    return rewriter
+        .create<linalg::GenericOp>(
+            loc, resultType, inputs, ValueRange{output}, maps, iterators,
+            [&](OpBuilder &builder, Location loc, ValueRange args) {
+              Value value =
+                  compute(builder, loc, args.take_front(inputs.size()));
+              builder.create<linalg::YieldOp>(loc, value);
+            })
+        .getResult(0);
+  }
+
+  auto outputType =
+      MemRefType::get(resultType.getShape(), resultType.getElementType());
+  Value output = rewriter.create<memref::AllocOp>(
+      loc, outputType,
+      getDynamicSizes(rewriter, loc, resultType, inputs.front()));
+  Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+  Value rows = rewriter.create<tensor::DimOp>(loc, inputs.front(), 0);
+  Value columns = rewriter.create<tensor::DimOp>(loc, inputs.front(), 1);
+  auto rowLoop = rewriter.create<scf::ForOp>(loc, zero, rows, one);
+  rewriter.setInsertionPointToStart(rowLoop.getBody());
+  auto columnLoop = rewriter.create<scf::ForOp>(loc, zero, columns, one);
+  rewriter.setInsertionPointToStart(columnLoop.getBody());
+  Value row = rowLoop.getInductionVar();
+  Value column = columnLoop.getInductionVar();
+  SmallVector<Value> values;
+  for (Value input : inputs)
+    values.push_back(rewriter.create<tensor::ExtractOp>(
+        loc, input, ValueRange{row, column}));
+  Value value = compute(rewriter, loc, values);
+  rewriter.create<memref::StoreOp>(loc, value, output, ValueRange{row, column});
+  rewriter.setInsertionPointAfter(rowLoop);
+  return rewriter.create<bufferization::ToTensorOp>(loc, resultType, output,
+                                                    /*restrict=*/true);
+}
+
 class AddOpLowering : public OpRewritePattern<AddOp> {
 public:
   using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(AddOp op,
                                 PatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
     auto resultType = cast<RankedTensorType>(op.getResult().getType());
-    Value output = createEmpty(rewriter, loc, resultType, op.getLhs());
-    SmallVector<AffineMap> maps(3, rewriter.getMultiDimIdentityMap(2));
-    SmallVector<utils::IteratorType> iterators(2,
-                                               utils::IteratorType::parallel);
-    auto generic = rewriter.create<linalg::GenericOp>(
-        loc, resultType, ValueRange{op.getLhs(), op.getRhs()},
-        ValueRange{output}, maps, iterators,
-        [&](OpBuilder &builder, Location loc, ValueRange args) {
-          Value value = builder.create<arith::AddFOp>(loc, args[0], args[1]);
-          builder.create<linalg::YieldOp>(loc, value);
+    Value result = emitPointwise(
+        rewriter, op.getLoc(), resultType, ValueRange{op.getLhs(), op.getRhs()},
+        getExecutionMode(op),
+        [](OpBuilder &builder, Location loc, ValueRange args) -> Value {
+          return builder.create<arith::AddFOp>(loc, args[0], args[1]);
         });
-    rewriter.replaceOp(op, generic.getResult(0));
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
@@ -329,20 +379,14 @@ public:
 
   LogicalResult matchAndRewrite(MulOp op,
                                 PatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
     auto resultType = cast<RankedTensorType>(op.getResult().getType());
-    Value output = createEmpty(rewriter, loc, resultType, op.getLhs());
-    SmallVector<AffineMap> maps(3, rewriter.getMultiDimIdentityMap(2));
-    SmallVector<utils::IteratorType> iterators(2,
-                                               utils::IteratorType::parallel);
-    auto generic = rewriter.create<linalg::GenericOp>(
-        loc, resultType, ValueRange{op.getLhs(), op.getRhs()},
-        ValueRange{output}, maps, iterators,
-        [&](OpBuilder &builder, Location loc, ValueRange args) {
-          Value value = builder.create<arith::MulFOp>(loc, args[0], args[1]);
-          builder.create<linalg::YieldOp>(loc, value);
+    Value result = emitPointwise(
+        rewriter, op.getLoc(), resultType, ValueRange{op.getLhs(), op.getRhs()},
+        getExecutionMode(op),
+        [](OpBuilder &builder, Location loc, ValueRange args) -> Value {
+          return builder.create<arith::MulFOp>(loc, args[0], args[1]);
         });
-    rewriter.replaceOp(op, generic.getResult(0));
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
@@ -353,22 +397,17 @@ public:
 
   LogicalResult matchAndRewrite(SiluMulOp op,
                                 PatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
     auto resultType = cast<RankedTensorType>(op.getResult().getType());
-    auto f32Type = rewriter.getF32Type();
-    Value output = createEmpty(rewriter, loc, resultType, op.getGate());
-    SmallVector<AffineMap> maps(3, rewriter.getMultiDimIdentityMap(2));
-    SmallVector<utils::IteratorType> iterators(2,
-                                               utils::IteratorType::parallel);
-    auto generic = rewriter.create<linalg::GenericOp>(
-        loc, resultType, ValueRange{op.getGate(), op.getUp()},
-        ValueRange{output}, maps, iterators,
-        [&](OpBuilder &builder, Location loc, ValueRange args) {
+    Value result = emitPointwise(
+        rewriter, op.getLoc(), resultType, ValueRange{op.getGate(), op.getUp()},
+        getExecutionMode(op),
+        [&](OpBuilder &builder, Location loc, ValueRange args) -> Value {
+          auto f32 = builder.getF32Type();
           Value gate = args[0];
           Value up = args[1];
           if (gate.getType().isBF16()) {
-            gate = builder.create<arith::ExtFOp>(loc, f32Type, gate);
-            up = builder.create<arith::ExtFOp>(loc, f32Type, up);
+            gate = builder.create<arith::ExtFOp>(loc, f32, gate);
+            up = builder.create<arith::ExtFOp>(loc, f32, up);
           }
           Value negated = builder.create<arith::NegFOp>(loc, gate);
           Value exponent = builder.create<math::ExpOp>(loc, negated);
@@ -378,11 +417,10 @@ public:
           Value sigmoid = builder.create<arith::DivFOp>(loc, one, denominator);
           Value silu = builder.create<arith::MulFOp>(loc, gate, sigmoid);
           Value value = builder.create<arith::MulFOp>(loc, silu, up);
-          Value truncated = builder.create<arith::TruncFOp>(
+          return builder.create<arith::TruncFOp>(
               loc, resultType.getElementType(), value);
-          builder.create<linalg::YieldOp>(loc, truncated);
         });
-    rewriter.replaceOp(op, generic.getResult(0));
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
@@ -425,6 +463,12 @@ public:
 
   LogicalResult matchAndRewrite(GatedRmsNormOp op,
                                 PatternRewriter &rewriter) const override {
+    if (getExecutionMode(op) == ExecutionMode::Decode) {
+      if (Value result = emitDecodeGatedRmsNorm(rewriter, op)) {
+        rewriter.replaceOp(op, result);
+        return success();
+      }
+    }
     Location loc = op.getLoc();
     auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
     auto resultType = dyn_cast<RankedTensorType>(op.getResult().getType());

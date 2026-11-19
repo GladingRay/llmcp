@@ -182,22 +182,23 @@ def emit_lm_head_q8(hidden, table) -> str:
     return wrap(body, globals_, m, vocab, "f32")
 
 
-def emit_rms(x, w) -> str:
+def emit_rms(x, w, zero_centered=True, execution_mode=None) -> str:
     m, d = len(x), len(w)
+    attributes = "" if zero_centered else " {zero_centered = false}"
     body = [
         f"  %x = arith.constant dense<{dense_2d(x)}> : tensor<{m}x{d}xbf16>",
         f"  %w = memref.get_global @w : memref<{d}xbf16>",
-        f"  %0 = llmcp.rms_norm %x, %w : tensor<{m}x{d}xbf16>, "
+        f"  %0 = llmcp.rms_norm %x, %w{attributes} : tensor<{m}x{d}xbf16>, "
         f"memref<{d}xbf16> -> tensor<{m}x{d}xbf16>",
     ]
     globals_ = [
         f'memref.global "private" constant @w : memref<{d}xbf16> = '
         f'dense<{dense_1d(w)}>'
     ]
-    return wrap(body, globals_, m, d, "bf16")
+    return wrap(body, globals_, m, d, "bf16", execution_mode)
 
 
-def emit_add(a, b) -> str:
+def emit_add(a, b, execution_mode=None) -> str:
     m, n = len(a), len(a[0])
     body = [
         f"  %a = arith.constant dense<{dense_2d(a)}> : tensor<{m}x{n}xbf16>",
@@ -205,10 +206,10 @@ def emit_add(a, b) -> str:
         f"  %0 = llmcp.add %a, %b : (tensor<{m}x{n}xbf16>, "
         f"tensor<{m}x{n}xbf16>) -> tensor<{m}x{n}xbf16>",
     ]
-    return wrap(body, [], m, n, "bf16")
+    return wrap(body, [], m, n, "bf16", execution_mode)
 
 
-def emit_silu_mul(gate, up) -> str:
+def emit_silu_mul(gate, up, execution_mode=None) -> str:
     m, n = len(gate), len(gate[0])
     body = [
         f"  %g = arith.constant dense<{dense_2d(gate)}> : "
@@ -218,7 +219,7 @@ def emit_silu_mul(gate, up) -> str:
         f"  %0 = llmcp.silu_mul %g, %u : (tensor<{m}x{n}xbf16>, "
         f"tensor<{m}x{n}xbf16>) -> tensor<{m}x{n}xbf16>",
     ]
-    return wrap(body, [], m, n, "bf16")
+    return wrap(body, [], m, n, "bf16", execution_mode)
 
 
 def emit_embedding(tokens, table) -> str:
@@ -239,7 +240,8 @@ def emit_embedding(tokens, table) -> str:
     return wrap(body, globals_, rows, d, "bf16")
 
 
-def emit_gated_rms_norm(x, gate, weight, group_size) -> str:
+def emit_gated_rms_norm(x, gate, weight, group_size, gate_activated=False,
+                        execution_mode=None) -> str:
     m, h = len(x), len(x[0])
     d = len(weight)
     body = [
@@ -248,7 +250,8 @@ def emit_gated_rms_norm(x, gate, weight, group_size) -> str:
         f"tensor<{m}x{h}xbf16>",
         f"  %w = memref.get_global @w : memref<{d}xf32>",
         f"  %0 = llmcp.gated_rms_norm %x, %g, %w "
-        f"{{group_size = {group_size} : i64, eps = 1.000000e-06 : f64}} : "
+        f"{{group_size = {group_size} : i64, eps = 1.000000e-06 : f64, "
+        f"gate_activated = {str(gate_activated).lower()}}} : "
         f"(tensor<{m}x{h}xbf16>, tensor<{m}x{h}xbf16>, memref<{d}xf32>) "
         f"-> tensor<{m}x{h}xbf16>",
     ]
@@ -256,7 +259,7 @@ def emit_gated_rms_norm(x, gate, weight, group_size) -> str:
         f'memref.global "private" constant @w : memref<{d}xf32> = '
         f'dense<{dense_1d(weight)}>'
     ]
-    return wrap(body, globals_, m, h, "bf16")
+    return wrap(body, globals_, m, h, "bf16", execution_mode)
 
 
 def emit_lm_head(hidden, table, last_only=False) -> str:
@@ -340,11 +343,14 @@ def emit_causal_conv1d(x, weight, state) -> str:
     return "\n".join(lines)
 
 
-def emit_gated_delta_net(conv, a, b, a_log, dt_bias, state) -> str:
+def emit_gated_delta_net(conv, a, b, a_log, dt_bias, state, num_k=2,
+                         mode="prefill") -> str:
     seq = len(conv)
     channels = len(conv[0])
     num_v = len(a[0])
     state_shape = (len(state), len(state[0]), len(state[0][0]), len(state[0][0][0]))
+    head_k, head_v = state_shape[2:]
+    output_columns = num_v * head_v
     lines = [
         "func.func private @printF32(f32)",
         "func.func private @printNewline()",
@@ -370,22 +376,22 @@ def emit_gated_delta_net(conv, a, b, a_log, dt_bias, state) -> str:
         f"memref<{state_shape[0]}x{state_shape[1]}x{state_shape[2]}x"
         f"{state_shape[3]}xf32>",
         f"  %0 = llmcp.gated_delta_net %conv, %a, %b, %alog, %dt, %state "
-        f"{{layer_index = 0 : i64, num_k_heads = 2 : i64, "
-        f"num_v_heads = {num_v} : i64, head_k_dim = 2 : i64, "
-        f"head_v_dim = 2 : i64, mode = \"prefill\"}} : "
+        f"{{layer_index = 0 : i64, num_k_heads = {num_k} : i64, "
+        f"num_v_heads = {num_v} : i64, head_k_dim = {head_k} : i64, "
+        f"head_v_dim = {head_v} : i64, mode = \"{mode}\"}} : "
         f"(tensor<{seq}x{channels}xbf16>, tensor<{seq}x{num_v}xbf16>, "
         f"tensor<{seq}x{num_v}xbf16>, memref<{num_v}xf32>, "
         f"memref<{num_v}xbf16>, memref<{state_shape[0]}x{state_shape[1]}x"
         f"{state_shape[2]}x{state_shape[3]}xf32>) -> "
-        f"tensor<{seq}x{num_v * 2}xbf16>",
+        f"tensor<{seq}x{output_columns}xbf16>",
     ]
     for t in range(seq):
-        for c in range(num_v * 2):
+        for c in range(output_columns):
             lines += [
                 f"  %oc{t}_{c} = arith.constant {t} : index",
                 f"  %oc{t}_{c}b = arith.constant {c} : index",
                 f"  %oe{t}_{c} = tensor.extract %0[%oc{t}_{c}, %oc{t}_{c}b] : "
-                f"tensor<{seq}x{num_v * 2}xbf16>",
+                f"tensor<{seq}x{output_columns}xbf16>",
                 f"  %of{t}_{c} = arith.extf %oe{t}_{c} : bf16 to f32",
                 f"  func.call @printF32(%of{t}_{c}) : (f32) -> ()",
                 "  func.call @printNewline() : () -> ()",
@@ -720,12 +726,22 @@ def main():
     ref = (xf * rstd * (1.0 + w.float())).to(bf16).float().flatten()
     compile_and_run(args, "rms", emit_rms(x.tolist(), w.tolist()), ref,
                     (2e-2, 1e-2))
+    compile_and_run(args, "rms_decode_zero_centered",
+                    emit_rms(x.tolist(), w.tolist(), True, "decode"), ref,
+                    (2e-2, 1e-2))
+    ref = (xf * rstd * w.float()).to(bf16).float().flatten()
+    compile_and_run(args, "rms_decode",
+                    emit_rms(x.tolist(), w.tolist(), False, "decode"), ref,
+                    (2e-2, 1e-2))
 
 #add
     a = torch.randn(2, 4).to(bf16)
     b = torch.randn(2, 4).to(bf16)
     ref = (a.float() + b.float()).to(bf16).float().flatten()
     compile_and_run(args, "add", emit_add(a.tolist(), b.tolist()), ref,
+                    (2e-2, 1e-2))
+    compile_and_run(args, "add_decode",
+                    emit_add(a.tolist(), b.tolist(), "decode"), ref,
                     (2e-2, 1e-2))
 
 #silu_mul
@@ -735,6 +751,17 @@ def main():
         bf16).float().flatten()
     compile_and_run(args, "silu_mul", emit_silu_mul(gate.tolist(), up.tolist()),
                     ref, (2e-2, 1e-2))
+    # Preserve the intermediate BF16 rounding when composing pointwise ops.
+    product = (gate.float() * up.float()).to(bf16).float()
+    ref = (gate.float() * torch.sigmoid(gate.float()) * product).to(
+        bf16).float().flatten()
+    ir = emit_silu_mul(gate.tolist(), up.tolist(), "decode")
+    ir = ir.replace(
+        "  %0 = llmcp.silu_mul %g, %u",
+        "  %product = llmcp.mul %g, %u : "
+        "(tensor<2x4xbf16>, tensor<2x4xbf16>) -> tensor<2x4xbf16>\n"
+        "  %0 = llmcp.silu_mul %g, %product")
+    compile_and_run(args, "mul_silu_mul_decode", ir, ref, (2e-2, 1e-2))
 
 #embedding
     table = torch.randn(4, 3).to(bf16)
@@ -756,6 +783,16 @@ def main():
     compile_and_run(args, "gated_rms_norm",
                     emit_gated_rms_norm(x.tolist(), gate.tolist(),
                                         weight.tolist(), group),
+                    ref, (2e-2, 1e-2))
+    compile_and_run(args, "gated_rms_norm_decode_unactivated",
+                    emit_gated_rms_norm(x.tolist(), gate.tolist(),
+                                        weight.tolist(), group, False, "decode"),
+                    ref, (2e-2, 1e-2))
+    ref = (xf * rstd * weight.float() * gf).view(
+        m, groups * group).to(bf16).float().flatten()
+    compile_and_run(args, "gated_rms_norm_decode",
+                    emit_gated_rms_norm(x.tolist(), gate.tolist(),
+                                        weight.tolist(), group, True, "decode"),
                     ref, (2e-2, 1e-2))
 
 #lm_head
@@ -913,6 +950,50 @@ def main():
                                          a_log.tolist(), dt_bias.tolist(),
                                          state.tolist()),
                     ref, (2e-2, 1e-2))
+
+    # Cover contiguous value tiles, sequential recurrence, and rectangular
+    # state matrices whose key dimension exceeds their value dimension.
+    shapes = ((1, 5, 8), (3, 5, 8), (3, 5, 16), (1, 5, 7), (1, 9, 4))
+    for seq, head_k, head_v in shapes:
+        num_k, num_v = 2, 4
+        channels = 2 * num_k * head_k + num_v * head_v
+        conv = torch.randn(seq, channels).to(bf16)
+        a = torch.randn(seq, num_v).to(bf16)
+        b = torch.randn(seq, num_v).to(bf16)
+        a_log = torch.randn(num_v).float()
+        dt_bias = torch.randn(num_v).to(bf16)
+        state = torch.randn(1, num_v, head_k, head_v).float()
+        q = conv[:, :num_k * head_k].float().view(seq, num_k, head_k)
+        k = conv[:, num_k * head_k:2 * num_k * head_k].float().view(
+            seq, num_k, head_k)
+        v = conv[:, 2 * num_k * head_k:].float().view(seq, num_v, head_v)
+        ref_state = state.clone()
+        ref_out = torch.empty(seq, num_v * head_v, dtype=bf16)
+        for t in range(seq):
+            for h in range(num_v):
+                kh = h // (num_v // num_k)
+                qh = q[t, kh]
+                key = k[t, kh]
+                qh = qh * torch.rsqrt((qh * qh).sum() + 1e-6)
+                key = key * torch.rsqrt((key * key).sum() + 1e-6)
+                qh = qh / (head_k ** 0.5)
+                beta = torch.sigmoid(b[t, h].float())
+                gate = -torch.exp(a_log[h]) * torch.nn.functional.softplus(
+                    a[t, h].float() + dt_bias[h].float())
+                ref_state[0, h] = ref_state[0, h] * torch.exp(gate)
+                predicted = (ref_state[0, h] * key.unsqueeze(-1)).sum(dim=0)
+                delta = (v[t, h] - predicted) * beta
+                ref_state[0, h] = ref_state[0, h] + key.unsqueeze(-1) * delta
+                output = (ref_state[0, h] * qh.unsqueeze(-1)).sum(dim=0)
+                ref_out[t, h * head_v:(h + 1) * head_v] = output.to(bf16)
+        ref = torch.cat([ref_out.float().flatten(), ref_state.flatten()])
+        mode = "decode" if seq == 1 else "prefill"
+        name = f"gated_delta_net_{mode}_{seq}_{head_k}_{head_v}"
+        compile_and_run(args, name,
+                        emit_gated_delta_net(
+                            conv.tolist(), a.tolist(), b.tolist(),
+                            a_log.tolist(), dt_bias.tolist(), state.tolist(),
+                            num_k, mode), ref, (2e-2, 1e-3))
 
 #attention : q / gate split, q / k norm, partial RoPE, GQA, causal softmax,
 #output gate, and KV cache write.
