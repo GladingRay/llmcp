@@ -261,3 +261,18 @@ Apple M2、LLVM 20.1.8、8 线程，基线为 `16acef3` 的 decode lowering。
 完整 Qwen3.5-4B 模型以 8 线程、32-token prefill 和 32-token decode 做交替复测，
 两种 AOT 各预热一次，再测三次。decode 中位数从 8.2288 提升到 8.4932 tok/s，
 增幅为 3.2%。该测量还包括 BF16 LM head、attention、DeltaNet 和运行时开销。
+
+## 10. 整模型 decode：tied embedding/lm_head 量化
+
+第 9 节的 8.49 tok/s 测量发生在 tied embedding/lm_head 仍为 bf16 时。后续改动
+把 `embed_tokens` 与 `lm_head` 共用的表改为 Q8_0，embedding 查表按 32 元素块
+反量化，lm_head 复用同一份表；同时 decode 的 RMSNorm、逐元素算子和 DeltaNet
+value tile 改用串行/向量特化 lowering。
+
+Apple M2、8 线程、`prefill=32 / decode=32`，每种精度先预热一次，再用新进程测
+三次。Q8 的 decode 中位数为 10.65 tok/s（范围 10.61–10.69），bf16 为 5.76 tok/s
+（范围 5.75–5.77）。长上下文 `prefill=1024 / decode=1024` 单次 Q8 测量为
+prefill 85.47 tok/s、decode 9.06 tok/s。
+
+完整命令、样本和二进制哈希见
+[测量记录](benchmarks/2026-11-19-q8-embedding.json)。

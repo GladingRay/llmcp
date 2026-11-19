@@ -161,7 +161,7 @@ N=248320,K=2560   x 1
 | `linear_attn.in_proj_*` | Q8_0 |
 | `linear_attn.out_proj` | Q8_0 |
 | `mlp.gate/up/down_proj` | Q8_0 |
-| `embed_tokens` / `lm_head` | Q8_0，可选 |
+| `embed_tokens` / `lm_head` | Q8_0，tied，共用一份表 |
 | RMSNorm / q_norm / k_norm | 保持 bf16/f32 |
 | `A_log` / `dt_bias` | 保持 f32/bf16 |
 | conv1d 权重 | 保持 bf16 |
@@ -326,10 +326,10 @@ bf16 原大小：
 
 约为 53%。
 
-整个 8.41 GB arena 的 Q8_0 权重约：
+整个 8.41 GB arena 在 Q8_0 模式（含 tied embedding/lm_head）下约：
 
 ```text
-4.5 GB 左右
+4.47 GB
 ```
 
 ## 6. Dialect / IR 设计
@@ -632,7 +632,6 @@ llmcp-benchmark --quant q8_0 --prefill-tokens 32 --decode-tokens 32
 
 - KV cache Q8_0；
 - Q8_K activation；
-- embedding 量化；
 - 更低位宽 K-quants。
 
 ## 12. 风险
@@ -658,8 +657,9 @@ llmcp-benchmark --quant q8_0 --prefill-tokens 32 --decode-tokens 32
    - 新增层需要 fallback bf16 或补零。
 
 6. **tied embedding**
-   - embedding 和 lm_head 共用权重；
-   - 若量化，需要同时支持 embedding 查表反量化和 lm_head Q8 matmul。
+   - embedding 和 lm_head 共用一份 Q8_0 表；
+   - embedding 查表必须按块反量化，不能直接当 bf16 读取；
+   - 布局或 `weight_format` 不一致时，`EmbeddingOp`/`LmHeadOp` verifier 会拒绝。
 
 ## 13. 结论
 
@@ -706,16 +706,17 @@ ARM sdot kernel
 - manifest 中的 `quantization`、`block_size`、`quant_layout`、`source_size`；
 - 单元测试和 `llmcp-pack-real-q8` dry-run。
 
-真实模型打包结果（embedding/lm_head 保持 bf16，其余 matmul 权重 Q8_0）：
+真实模型打包结果（含 tied embedding/lm_head，全部 matmul 权重 Q8_0）：
 
 ```text
 source bytes: 8,411,510,272
-arena bytes:  5,065,487,936
+arena bytes:  4,469,519,936
 tensors:      426
 ```
 
-Arena 约 5.07 GB。如果 embedding 也量化，可降到约 4.47 GB，但需要额外的
-Q8 embedding 查表 lowering；首期保持 tied embedding 为 bf16。
+Arena 约 4.47 GB。tied embedding 与 lm_head 共用同一份 Q8_0 表，embedding
+查表按 32 元素块读取 f16 scale 并反量化为 bf16；lm_head 直接复用 decode
+GEMV/prefill GEMM。
 
 
 ## 15. M2 实现状态
@@ -775,7 +776,7 @@ Q8 的收益主要来自：
 - `ModelBuilder` 对量化 entry 生成 i8 view 和 `weight_format="q8_0"`；
 - `llmcp-run --weights weights-q8.bin --aot ...`；
 - Q8 AOT `next 11`，greedy `0 271 760 2614`；
-- Q8 vs bf16 logits：`max_abs 0.509`、`mean_abs 0.087`，top1/top5 一致。
+- Q8 vs bf16 logits：`max_abs 0.509`、`mean_abs 0.083`，top1/top5 一致。
 
-当前 Q8 只量化 linear matmul 权重；embedding/lm_head（tied）保持 bf16，
-attn/DeltaNet 的 state 和 KV cache 仍保持 bf16。
+当前 Q8 量化 linear matmul 与 tied embedding/lm_head；attn/DeltaNet 的 state
+和 KV cache 仍保持 bf16。

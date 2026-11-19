@@ -796,7 +796,7 @@ struct ModelConfig {
 
 ```text
 offset 0:      header (magic, version, arena size, manifest offset/size)
-offset 64:     embedding                  [248320 × 2560] bf16
+offset 64:     embedding                  [248320 × 2560] bf16/Q8_0
 offset ...:    group 0 (layers 0..3)      3 × linear + 1 × full
 offset ...:    group 1 (layers 4..7)
 ...

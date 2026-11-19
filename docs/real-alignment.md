@@ -150,14 +150,15 @@ Q8 AOT:
   tokens: 0 271 760 2614
 
 Q8 vs bf16 logits:
-  max_abs  0.509457
-  mean_abs 0.087098
+  max_abs  0.508783
+  mean_abs 0.082832
   top1     11 / 11
   top5     [11, 0, 1017, 13, 4858] 一致
 ```
 
-Q8 目前只量化 linear 权重；embedding / lm_head、KV cache、DeltaNet state
-仍保持 bf16/f32。
+Q8 目前量化 linear 权重与 tied embedding/lm_head；KV cache、DeltaNet state
+仍保持 bf16/f32。embedding 查表按 Q8_0 块反量化，lm_head 与 embedding 共用
+同一份 Q8_0 表。
 
 Q8_0 的每个 row 使用 `[scales][qs]` 分离布局；BF16 使用 `bfdot`、Q8 使用
 `sdot`，不支持时分别回退 vector/f32 和 scalar。

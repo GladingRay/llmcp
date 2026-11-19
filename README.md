@@ -98,14 +98,14 @@ safetensors
 Q8 AOT：
   next 11
   tokens: 0 271 760 2614
-  Q8 vs bf16 logits: max_abs 0.509, mean_abs 0.087
+  Q8 vs bf16 logits: max_abs 0.509, mean_abs 0.083
   top1/top5 一致
 
 Q8 权重：
   bf16 arena 8.41 GB
-  Q8 arena   5.07 GB
+  Q8 arena   4.47 GB
   Q8_0 每个 row 使用 [scales][qs] 分离布局
-  （embedding/lm_head 仍为 bf16）
+  embedding/lm_head 共用同一份 Q8_0 表
 ```
 
 当前限制：
@@ -113,18 +113,21 @@ Q8 权重：
 - 只支持文本模型，视觉塔和 MTP 尚未纳入；
 - 长序列 AOT decode 还没有系统性对齐；
 - 采样目前只有 greedy，temperature/top-k/top-p 未实现；
-- Q8 只量化 linear matmul，embedding/lm_head、KV cache、DeltaNet state 仍为 bf16/f32；
+- Q8 量化 linear matmul 与 tied embedding/lm_head；KV cache、DeltaNet state
+  仍为 bf16/f32；
 - 没有通用 tiling pass，性能仍主要依赖 OpenMP、bfdot/sdot 和循环顺序；
 - 所有性能数字受本机 page cache / 内存压力影响，趋势比绝对值更可靠。
 
 ## 性能
 
-以下数据为 **2026-11-17** 在 Apple M2（24 GiB 内存、8 个逻辑核）上使用
-`dd4c2da` 的实测。
+以下数据为 **2026-11-19** 在 Apple M2（24 GiB 内存、8 个逻辑核）上使用
+`b4b001e` 的实测。
 macOS 26.6.2，Release 构建，LLVM 20.1.8，AOT 使用 `-O2 -mcpu=native`，bfdot/sdot 均启用。
 测试串行执行；短序列每种精度先完整预热一次，再用新进程测量三次，表中为中位数。
 未主动清除系统 page cache，因此这些是预热后的结果，不代表冷启动性能。
-原始输出、命令和二进制 SHA-256 见 [本次测量记录](docs/benchmarks/2026-11-17.json)。
+原始输出和命令见
+[本次测量记录](docs/benchmarks/2026-11-19-q8-embedding.json)。
+[2026-11-17 的测量记录](docs/benchmarks/2026-11-17.json) 和
 [2026-11-08 的测量记录](docs/benchmarks/2026-11-08.json) 保留作历史参考。
 
 全模型短序列使用 `OMP_NUM_THREADS=8`、`prefill=32 / decode=32`，prompt 为重复的
@@ -133,17 +136,22 @@ macOS 26.6.2，Release 构建，LLVM 20.1.8，AOT 使用 `-O2 -mcpu=native`，bf
 
 | 模型 | prefill | prefill tok/s | decode | decode tok/s |
 |---|---:|---:|---:|---:|
-| bf16 + bfdot | 1.44 s | 22.21 | 5.93 s | 5.40 |
-| Q8_0 + sdot | 0.59 s | 54.31 | 3.91 s | 8.18 |
+| bf16 + bfdot | 1.40 s | 22.87 | 5.55 s | 5.76 |
+| Q8_0 + sdot | 0.48 s | 67.14 | 3.00 s | 10.65 |
 
 三次测量的吞吐范围：
 
-- bf16 的 prefill 为 20.80–22.44 tok/s，decode 为 5.22–5.45 tok/s。
-- Q8_0 的 prefill 为 53.80–56.08 tok/s，decode 为 8.15–8.22 tok/s。
+- bf16 的 prefill 为 22.56–23.03 tok/s，decode 为 5.75–5.77 tok/s。
+- Q8_0 的 prefill 为 66.74–67.88 tok/s，decode 为 10.61–10.69 tok/s。
 
-2026-11-19 的 Q8 decode 内核优化另做了 8 线程、32/32 token 的交替复测，
-decode 中位数从 8.23 提升到 8.49 tok/s，增幅 3.2%。
-[GEMV 与整模型测量记录](docs/matmul-benchmark.md#9-q8-sdot-decode-gemv)
+2026-11-19 的连续改动把 Q8 decode 从 8.18 提升到 10.65 tok/s（+30%）。
+除第 9 节的 GEMV 内核外，还包括：
+
+- decode 的 RMSNorm、逐元素算子和 DeltaNet value tile 改用串行/向量特化 lowering；
+- tied embedding/lm_head 改为 Q8_0，行查表时反量化，权重主循环的 Q8_0 布局不变。
+
+GEMV 内核的单独测量见
+[GEMV 与整模型测量记录](docs/matmul-benchmark.md#9-q8-sdot-decode-gemv)。
 
 prefill 和 decode 使用不同的 AOT 入口：
 
@@ -183,20 +191,22 @@ llmcp_model_decode   -> llmcp_forward_decode
   - Q8 SDOT 沿 N 维每 4 列分块，使用 `ADDP` 合并四列点积并向量累加。
     激活向量量化串行执行，小投影和尾列使用串行循环。
     [decode GEMV 实测](docs/matmul-benchmark.md#9-q8-sdot-decode-gemv)
+  - tied embedding/lm_head 使用同一份 Q8_0 表；embedding 查表按 32 元素块
+    读取 f16 scale 并反量化为 bf16。
 
 对应的 arena：
 
 ```text
 bf16: 8.41 GB
-Q8:   5.07 GB
+Q8:   4.47 GB
 ```
 
 长上下文 Q8（8 线程，`prefill=1024 / decode=1024`，短序列测试之后单次测量）：
 
 ```text
-prefill: 15.08 s  (67.88 tok/s)
-decode:  136.38 s (7.51 tok/s)
-total:   151.47 s
+prefill: 11.98 s  (85.47 tok/s)
+decode:  113.02 s (9.06 tok/s)
+total:   125.00 s
 ```
 
 单算子 matmul（`llmcp-matmul-benchmark`）每组运行三次，每次内部预热一次。
