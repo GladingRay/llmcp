@@ -120,40 +120,47 @@ Q8 权重：
 
 ## 性能
 
-以下数据为 **2026-11-19** 在 Apple M2（24 GiB 内存、8 个逻辑核）上使用
-`b4b001e` 的实测。
-macOS 26.6.2，Release 构建，LLVM 20.1.8，AOT 使用 `-O2 -mcpu=native`，bfdot/sdot 均启用。
-测试串行执行；短序列每种精度先完整预热一次，再用新进程测量三次，表中为中位数。
-未主动清除系统 page cache，因此这些是预热后的结果，不代表冷启动性能。
-原始输出和命令见
-[本次测量记录](docs/benchmarks/2026-11-19-q8-embedding.json)。
-[2026-11-17 的测量记录](docs/benchmarks/2026-11-17.json) 和
-[2026-11-08 的测量记录](docs/benchmarks/2026-11-08.json) 保留作历史参考。
+### Qwen3.5-4B 整模型推理
 
-全模型短序列使用 `OMP_NUM_THREADS=8`、`prefill=32 / decode=32`，prompt 为重复的
-合成 token `9419`。计时包含 forward 内的运行时开销，排除权重文件加载、动态库加载
-和 tokenizer；decode 吞吐统计 32 次自回归 forward。
+2026-11-20 在 Apple M2（4 个性能核、4 个能效核，24 GiB 内存）上实测
+`bd7f326`。环境为 macOS 26.6.2、LLVM 20.1.8、Release 构建，
+AOT 使用 `-O2 -mcpu=native`，启用 bfdot 和 sdot。
 
-| 模型 | prefill | prefill tok/s | decode | decode tok/s |
-|---|---:|---:|---:|---:|
-| bf16 + bfdot | 1.40 s | 22.87 | 5.55 s | 5.76 |
-| Q8_0 + sdot | 0.42 s | 76.92 | 2.81 s | 11.39 |
+`llmcp-benchmark` 使用 1024 个重复的合成 token `9419` 做 prefill，再执行
+128 步 greedy decode。通过 `OMP_NUM_THREADS` 设置 4 或 8 个线程，关闭 OpenMP
+动态线程调整。各轮评测均串行执行，每组完成一次预热后用独立进程测量三次，
+测试期间保留系统页缓存。计时覆盖推理运行时和 decode 的 argmax，
+权重映射与模型初始化在计时前完成，输入直接使用 token ID。
 
-三次测量的吞吐范围：
+Q8_0 采用同日单独复测的数据。各列为三次正式测量的中位数，吞吐量括号内为最小值至最大值。
 
-- bf16 的 prefill 为 22.56–23.03 tok/s，decode 为 5.75–5.77 tok/s。
-- Q8_0 的 prefill 为 76.32–77.49 tok/s，decode 为 11.35–11.39 tok/s。
+| 线程数 | 精度 | prefill（s） | prefill（tok/s） | decode（s） | decode（tok/s） | 总耗时（s） |
+|---:|---|---:|---:|---:|---:|---:|
+| 4 | bf16 + bfdot | 50.18 | 20.41（19.54–20.90） | 20.45 | 6.26（5.64–6.35） | 70.33 |
+| 4 | Q8_0 + sdot | 14.25 | 71.84（70.05–72.21） | 11.23 | 11.39（11.37–11.43） | 25.51 |
+| 8 | bf16 + bfdot | 40.36 | 25.37（25.04–26.61） | 22.83 | 5.61（5.58–5.63） | 63.08 |
+| 8 | Q8_0 + sdot | 11.83 | 86.55（86.16–90.32） | 12.09 | 10.58（10.38–10.62） | 23.92 |
 
-2026-11-19 的连续改动把 Q8 decode 从 8.18 提升到 11.39 tok/s（+39%），
-Q8 prefill 从 54.31 提升到 76.92 tok/s。除第 9 节的 GEMV 内核外，还包括：
+两种精度均在 8 线程时获得更高的 prefill 吞吐，在 4 线程时获得更高的 decode 吞吐。
 
-- decode 的 RMSNorm、逐元素算子和 DeltaNet value tile 改用串行/向量特化 lowering；
-- tied embedding/lm_head 改为 Q8_0，行查表时反量化；
-- Q8 权重在 `llmcp-pack` 阶段预打包成四列 SDOT lane 布局，prefill GEMM 不再
-  每次调用重新打包，decode GEMV 直接复用同一份权重。
+使用“常用命令”中的权重和 AOT 动态库复测。每次运行输出两阶段的耗时、吞吐和总耗时。
 
-GEMV 与打包布局的测量见
+```bash
+for threads in 4 8; do
+  OMP_DYNAMIC=FALSE OMP_NUM_THREADS="$threads" ./build/bin/llmcp-benchmark \
+    --weights build/weights.bin --aot build/libqwen35_aot.dylib \
+    --prefill-tokens 1024 --decode-tokens 128 --token 9419
+  OMP_DYNAMIC=FALSE OMP_NUM_THREADS="$threads" ./build/bin/llmcp-benchmark \
+    --weights build/weights-q8.bin --aot build/libqwen35_aot_q8.dylib \
+    --prefill-tokens 1024 --decode-tokens 128 --token 9419
+done
+```
+
+早期结果见 [Q8 预打包测量记录](docs/benchmarks/2026-11-19-q8-packed.json)、
+[Q8 embedding 测量记录](docs/benchmarks/2026-11-19-q8-embedding.json) 和
 [GEMV 与整模型测量记录](docs/matmul-benchmark.md#9-q8-sdot-decode-gemv)。
+
+### AOT 推理实现
 
 prefill 和 decode 使用不同的 AOT 入口：
 
@@ -191,6 +198,7 @@ llmcp_model_decode   -> llmcp_forward_decode
 - decode：
   - attention 按 head 并行，query loop 只有 1 次；
   - linear 使用 GEMV：column 并行，去掉 row loop。
+  - RMSNorm、逐元素算子和 DeltaNet value tile 使用针对单 token 的串行或向量化 lowering。
   - Q8 权重是预打包的四列 lane 布局；一条 `SDOT` 的四个 lane 同时产生四个
     输出列（每 lane 累加 4 个 K 元素），不再需要 `ADDP` 合并列。
     激活向量量化串行执行，小投影和尾列使用串行循环。
@@ -207,13 +215,10 @@ bf16: 8.41 GB
 Q8:   4.47 GB
 ```
 
-长上下文 Q8（8 线程，`prefill=1024 / decode=1024`，短序列测试之后单次测量）：
+### 历史单算子与硬件微基准
 
-```text
-prefill: 11.35 s  (90.23 tok/s)
-decode:  98.03 s  (10.45 tok/s)
-total:   109.38 s
-```
+原始数据见 [2026-11-17 的测量记录](docs/benchmarks/2026-11-17.json) 和
+[2026-11-08 的测量记录](docs/benchmarks/2026-11-08.json)。
 
 单算子 matmul（`llmcp-matmul-benchmark`）每组运行三次，每次内部预热一次。
 1024 方阵计时 80 次迭代，其余形状计时 20 次。下表为吞吐中位数，括号内为
@@ -255,25 +260,9 @@ compute 单线程，每项预热后计时至少 1 秒；带宽使用 8 线程、
 `--sdot-threads N` 仅测 SDOT，N 个线程预热后同步开始，用 `32 × 总指令数`
 除以共同的墙钟时间计算吞吐量。测量 Q8 GEMM 峰值占比时，使用相同线程数并重复采样。
 
-以下为单次运行示例：短序列每种精度先预热一次，再重复三次；matmul 和微基准各
-重复三次，长上下文只运行一次。所有实际命令均保存在本次测量记录中。
+单算子与微基准的运行示例如下。
 
 ```bash
-OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
-  --weights build/weights.bin \
-  --aot build/libqwen35_aot.dylib \
-  --prefill-tokens 32 --decode-tokens 32
-
-OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
-  --weights build/weights-q8.bin \
-  --aot build/libqwen35_aot_q8.dylib \
-  --prefill-tokens 32 --decode-tokens 32
-
-OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
-  --weights build/weights-q8.bin \
-  --aot build/libqwen35_aot_q8.dylib \
-  --prefill-tokens 1024 --decode-tokens 1024
-
 ./build/bin/llmcp-matmul-benchmark \
   --m 16 --n 8192 --k 2560 --iters 20 --threads 4 --q8
 
@@ -283,14 +272,6 @@ OMP_NUM_THREADS=8 ./build/bin/llmcp-benchmark \
 ./build/bin/llmcp-microbench --seconds 1 --buffer-mb 256 --threads 8
 ./build/bin/llmcp-microbench --sdot-threads 8 --seconds 0.5
 ```
-
-注意：
-
-- 该机器在反复加载 8 GB 权重后会出现明显 page cache / 内存压力，
-  绝对值可能波动；本次保留全部样本并报告中位数和范围；
-- 短序列为 32/32，长序列为 1024/1024；decode 计时包括 argmax 和运行时开销；
-- 尚未做 CUDA/Metal 等 GPU 后端对比；
-- prefill/decode 的性能差异来自独立入口、attention 调度以及 GEMM/GEMV 分叉。
 
 ## 构建与测试
 
@@ -392,9 +373,9 @@ arena bytes: 8411510336 (header 64, group stride 892513344, groups 8)
   --aot build/libqwen35_aot.dylib
 
 # AOT 性能测试
-./build/bin/llmcp-benchmark --weights build/weights.bin \
+OMP_DYNAMIC=FALSE OMP_NUM_THREADS=4 ./build/bin/llmcp-benchmark --weights build/weights.bin \
   --aot build/libqwen35_aot.dylib \
-  --prefill-tokens 32 --decode-tokens 32
+  --prefill-tokens 1024 --decode-tokens 128 --token 9419
 
 # 单算子 matmul benchmark；--q8 走 Q8/sdot
 ./build/bin/llmcp-matmul-benchmark --m 256 --n 256 --k 256 --iters 10 --threads 4
